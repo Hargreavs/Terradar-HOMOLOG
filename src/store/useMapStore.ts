@@ -1,0 +1,352 @@
+import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
+import { PROCESSOS_MOCK } from '../data/processos.mock'
+import { cloneFiltrosState } from '../lib/intelMapDrill'
+import {
+  type CamadaGeoId,
+  defaultCamadasGeo,
+  mergeCamadasGeoPersisted,
+} from '../lib/mapCamadasGeo'
+import {
+  UF_FILTRO_NENHUM,
+  type FiltrosState,
+  type Processo,
+  type Regime,
+} from '../types'
+
+export type { CamadaGeoId } from '../lib/mapCamadasGeo'
+
+export type PendingNavigation =
+  | { type: 'processo'; payload: string; timestamp: number }
+  | { type: 'estado'; payload: string; timestamp: number }
+  | { type: 'regime'; payload: Regime; timestamp: number }
+  | { type: 'titular'; payload: string; timestamp: number }
+  | { type: 'substancia'; payload: string; timestamp: number }
+
+const REGIMES: Regime[] = [
+  'concessao_lavra',
+  'autorizacao_pesquisa',
+  'req_lavra',
+  'licenciamento',
+  'mineral_estrategico',
+  'bloqueio_permanente',
+  'bloqueio_provisorio',
+]
+
+function defaultCamadas(): Record<Regime, boolean> {
+  return REGIMES.reduce(
+    (acc, r) => {
+      acc[r] = true
+      return acc
+    },
+    {} as Record<Regime, boolean>,
+  )
+}
+
+function defaultFiltros(): FiltrosState {
+  return {
+    camadas: defaultCamadas(),
+    substancias: [],
+    periodo: [1960, 2026],
+    uf: null,
+    municipio: null,
+    riskScoreMin: 0,
+    riskScoreMax: 100,
+    searchQuery: '',
+  }
+}
+
+/** Garante todas as chaves de regime; só exclui camada se for explicitamente false no persist. */
+function mergeCamadas(
+  saved?: Partial<Record<Regime, boolean>>,
+): Record<Regime, boolean> {
+  const base = defaultCamadas()
+  if (!saved || typeof saved !== 'object') return base
+  const merged = { ...base }
+  for (const r of REGIMES) {
+    if (r in saved && typeof saved[r] === 'boolean') {
+      merged[r] = saved[r]!
+    }
+  }
+  const todasDesligadas = REGIMES.every((r) => merged[r] === false)
+  return todasDesligadas ? base : merged
+}
+
+function mergePeriodo(raw: unknown): [number, number] {
+  const d = defaultFiltros().periodo
+  if (!Array.isArray(raw) || raw.length !== 2) return d
+  let a = Number(raw[0])
+  let b = Number(raw[1])
+  if (!Number.isFinite(a)) a = d[0]
+  if (!Number.isFinite(b)) b = d[1]
+  if (a > b) [a, b] = [b, a]
+  return [Math.max(1800, a), Math.min(2100, b)] as [number, number]
+}
+
+function mergeRiskRange(saved: Partial<FiltrosState> | undefined) {
+  const d = defaultFiltros()
+  let lo = Number(saved?.riskScoreMin)
+  let hi = Number(saved?.riskScoreMax)
+  if (!Number.isFinite(lo)) lo = d.riskScoreMin
+  if (!Number.isFinite(hi)) hi = d.riskScoreMax
+  lo = Math.max(0, Math.min(100, lo))
+  hi = Math.max(0, Math.min(100, hi))
+  if (lo > hi) [lo, hi] = [hi, lo]
+  return { riskScoreMin: lo, riskScoreMax: hi }
+}
+
+function loadProcessos(): Processo[] {
+  localStorage.removeItem('terrae-processos')
+  return PROCESSOS_MOCK
+}
+
+const NUMERO_RX = /\d{3}\.\d{3}\/\d{4}/
+
+export interface MapStore {
+  processos: Processo[]
+  filtros: FiltrosState
+  processoSelecionado: Processo | null
+  flyTo: { lat: number; lng: number; zoom: number } | null
+  hoveredProcessoId: string | null
+  /** Drawer "Relatório completo" visível (UI transitória, não persistida). */
+  relatorioDrawerAberto: boolean
+
+  pendingNavigation: PendingNavigation | null
+  /** Filtro extra aplicado após drill por titular (não persistido). */
+  intelTitularFilter: string | null
+  /** Snapshot de `filtros` antes da primeira drill com banner; restaurado ao ✕ do banner. */
+  intelDrillRestoreFiltros: FiltrosState | null
+  /** Impressão digital dos filtros após aplicar drill; divergência → banner some. */
+  intelDrillExpectedFiltrosJson: string | null
+
+  /** Overlays geoespaciais (não filtram processos; só visualização no mapa). */
+  camadasGeo: Record<CamadaGeoId, boolean>
+  toggleCamadaGeo: (id: CamadaGeoId) => void
+
+  setFiltro: <K extends keyof FiltrosState>(
+    key: K,
+    value: FiltrosState[K],
+  ) => void
+  toggleCamada: (regime: Regime) => void
+  selecionarProcesso: (processo: Processo | null) => void
+  setHoveredProcessoId: (id: string | null) => void
+  getProcessosFiltrados: () => Processo[]
+  requestFlyTo: (lat: number, lng: number, zoom?: number) => void
+  clearFlyTo: () => void
+  setRelatorioDrawerAberto: (aberto: boolean) => void
+  /** Volta todos os filtros ao padrão (camadas, período, substâncias, UF, município, risk range, busca). */
+  resetFiltros: () => void
+  /**
+   * Reset só da sidebar (filtros + filtro extra por titular), sem mexer em banner/snapshot.
+   * Usado no fluxo `pendingNavigation` da Inteligência antes de aplicar o filtro específico.
+   */
+  applySidebarFiltrosPadrao: () => void
+
+  setPendingNavigation: (nav: PendingNavigation | null) => void
+  setIntelTitularFilter: (titular: string | null) => void
+  /** Remove banner e filtro por titular; descarta snapshot (ex.: após mudança manual nos filtros). */
+  dismissIntelDrillUi: () => void
+  /** Restaura filtros do snapshot, limpa drill e banner (botão ✕). */
+  restoreIntelDrillSnapshot: () => void
+}
+
+function applyFilters(
+  processos: Processo[],
+  f: FiltrosState,
+  intelTitularFilter: string | null,
+): Processo[] {
+  const q = f.searchQuery.trim().toLowerCase()
+  const numeroMatch = q.match(NUMERO_RX)?.[0]
+
+  return processos.filter((p) => {
+    if (intelTitularFilter && p.titular !== intelTitularFilter) return false
+
+    if (f.camadas[p.regime] === false) return false
+
+    const [y0, y1] = f.periodo
+    if (p.ano_protocolo < y0 || p.ano_protocolo > y1) return false
+
+    if (f.uf === UF_FILTRO_NENHUM) return false
+    if (f.uf && p.uf !== f.uf) return false
+
+    if (f.municipio) {
+      const m = f.municipio.toLowerCase()
+      if (!p.municipio.toLowerCase().includes(m)) return false
+    }
+
+    if (p.risk_score === null) {
+      /* bloqueados: não filtrar por faixa numérica */
+    } else if (
+      p.risk_score < f.riskScoreMin ||
+      p.risk_score > f.riskScoreMax
+    ) {
+      return false
+    }
+
+    if (f.substancias.length > 0) {
+      const norm = (s: string) =>
+        s
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toUpperCase()
+      const sub = norm(p.substancia)
+      if (!f.substancias.map(norm).includes(sub)) return false
+    }
+
+    if (q.length > 0) {
+      if (numeroMatch && p.numero.includes(numeroMatch.replace(/\s/g, ''))) {
+        /* ok */
+      } else if (numeroMatch) {
+        return false
+      } else {
+        const blob = `${p.numero} ${p.titular} ${p.municipio} ${p.uf} ${p.substancia}`.toLowerCase()
+        if (!blob.includes(q)) return false
+      }
+    }
+
+    return true
+  })
+}
+
+/** Só isto vai para o localStorage; evita F5 com busca/UF/etc. que zera o mapa. */
+type FiltrosPersistidos = Pick<
+  FiltrosState,
+  'camadas' | 'periodo' | 'riskScoreMin' | 'riskScoreMax'
+>
+
+export const useMapStore = create<MapStore>()(
+  persist(
+    (set, get) => ({
+      processos: loadProcessos(),
+      filtros: defaultFiltros(),
+      processoSelecionado: null,
+      flyTo: null,
+      hoveredProcessoId: null,
+      relatorioDrawerAberto: false,
+
+      pendingNavigation: null,
+      intelTitularFilter: null,
+      intelDrillRestoreFiltros: null,
+      intelDrillExpectedFiltrosJson: null,
+
+      camadasGeo: defaultCamadasGeo(),
+
+      toggleCamadaGeo: (id) =>
+        set((s) => ({
+          camadasGeo: { ...s.camadasGeo, [id]: !s.camadasGeo[id] },
+        })),
+
+      setFiltro: (key, value) =>
+        set((s) => ({
+          filtros: { ...s.filtros, [key]: value },
+        })),
+
+      toggleCamada: (regime) =>
+        set((s) => ({
+          filtros: {
+            ...s.filtros,
+            camadas: {
+              ...s.filtros.camadas,
+              [regime]: !s.filtros.camadas[regime],
+            },
+          },
+        })),
+
+      selecionarProcesso: (processo) =>
+        set({
+          processoSelecionado: processo,
+        }),
+
+      setHoveredProcessoId: (id) => set({ hoveredProcessoId: id }),
+
+      getProcessosFiltrados: () =>
+        applyFilters(
+          get().processos,
+          get().filtros,
+          get().intelTitularFilter,
+        ),
+
+      requestFlyTo: (lat, lng, zoom = 9) => set({ flyTo: { lat, lng, zoom } }),
+
+      clearFlyTo: () => set({ flyTo: null }),
+
+      setRelatorioDrawerAberto: (aberto) => set({ relatorioDrawerAberto: aberto }),
+
+      resetFiltros: () =>
+        set({
+          filtros: defaultFiltros(),
+          intelTitularFilter: null,
+          intelDrillRestoreFiltros: null,
+          intelDrillExpectedFiltrosJson: null,
+        }),
+
+      applySidebarFiltrosPadrao: () =>
+        set({
+          filtros: defaultFiltros(),
+          intelTitularFilter: null,
+        }),
+
+      setPendingNavigation: (nav) => set({ pendingNavigation: nav }),
+
+      setIntelTitularFilter: (titular) => set({ intelTitularFilter: titular }),
+
+      dismissIntelDrillUi: () =>
+        set({
+          intelTitularFilter: null,
+          intelDrillExpectedFiltrosJson: null,
+          intelDrillRestoreFiltros: null,
+        }),
+
+      restoreIntelDrillSnapshot: () => {
+        const snap = get().intelDrillRestoreFiltros
+        if (snap) {
+          set({
+            filtros: cloneFiltrosState(snap),
+            intelTitularFilter: null,
+            intelDrillExpectedFiltrosJson: null,
+            intelDrillRestoreFiltros: null,
+          })
+        } else {
+          get().dismissIntelDrillUi()
+        }
+      },
+    }),
+    {
+      name: 'terrae-filtros',
+      partialize: (s): { filtros: FiltrosPersistidos; camadasGeo: Record<CamadaGeoId, boolean> } => ({
+        filtros: {
+          camadas: s.filtros.camadas,
+          periodo: s.filtros.periodo,
+          riskScoreMin: s.filtros.riskScoreMin,
+          riskScoreMax: s.filtros.riskScoreMax,
+        },
+        camadasGeo: s.camadasGeo,
+      }),
+      merge: (persistedState, currentState) => {
+        const box = persistedState as
+          | {
+              filtros?: Partial<FiltrosState> & Partial<FiltrosPersistidos>
+              camadasGeo?: Partial<Record<CamadaGeoId, boolean>>
+            }
+          | undefined
+        const s = box?.filtros
+        const { riskScoreMin, riskScoreMax } = mergeRiskRange(s)
+        const filtros: FiltrosState = {
+          ...defaultFiltros(),
+          camadas: mergeCamadas(s?.camadas),
+          periodo: mergePeriodo(s?.periodo),
+          riskScoreMin,
+          riskScoreMax,
+        }
+        return {
+          ...currentState,
+          filtros,
+          camadasGeo: mergeCamadasGeoPersisted(box?.camadasGeo),
+          processos: loadProcessos(),
+        }
+      },
+    },
+  ),
+)
+
+export { REGIMES }

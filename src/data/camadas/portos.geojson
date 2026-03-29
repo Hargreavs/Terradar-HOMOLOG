@@ -1,0 +1,70 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Terminal Ponta da Madeira",
+        "municipio": "São Luís",
+        "uf": "MA",
+        "tipo": "Granéis sólidos"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-44.245, -2.555]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Porto de Tubarão",
+        "municipio": "Vitória",
+        "uf": "ES",
+        "tipo": "Minério de ferro"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-40.288, -20.288]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Porto de Santos",
+        "municipio": "Santos",
+        "uf": "SP",
+        "tipo": "Multipropósito"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-46.305, -23.965]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Terminal da Alumar",
+        "municipio": "São Luís",
+        "uf": "MA",
+        "tipo": "Alumina/alumínio"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-44.22, -2.58]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Porto do Itaqui",
+        "municipio": "São Luís",
+        "uf": "MA",
+        "tipo": "Multipropósito"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-44.38, -2.52]
+      }
+    }
+  ]
+}

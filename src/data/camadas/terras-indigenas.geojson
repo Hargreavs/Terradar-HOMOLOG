@@ -1,0 +1,57 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Terra Indígena Kayapó",
+        "etnia": "Kayapó",
+        "situacao": "Regularizada",
+        "area_ha": 3284000
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-55.4, -8.2], [-50.8, -8.2], [-50.8, -4.5], [-55.4, -4.5], [-55.4, -8.2]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Terra Indígena Xingu",
+        "etnia": "Multiétnica",
+        "situacao": "Regularizada",
+        "area_ha": 2650000
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-54.2, -14.5], [-51.5, -14.5], [-51.5, -11.8], [-54.2, -11.8], [-54.2, -14.5]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Terra Indígena Yanomami",
+        "etnia": "Yanomami",
+        "situacao": "Regularizada",
+        "area_ha": 9600000
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-64.5, 2.5], [-61.0, 2.5], [-61.0, 5.2], [-64.5, 5.2], [-64.5, 2.5]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Terra Indígena Apinajé",
+        "etnia": "Apinajé",
+        "situacao": "Regularizada",
+        "area_ha": 141000
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-48.5, -6.2], [-47.2, -6.2], [-47.2, -5.1], [-48.5, -5.1], [-48.5, -6.2]]]
+      }
+    }
+  ]
+}

@@ -1,0 +1,571 @@
+@import 'tailwindcss';
+@config '../tailwind.config.ts';
+
+:root {
+  --terrae-50: #faeeda;
+  --terrae-100: #fac775;
+  --terrae-200: #ef9f27;
+  --terrae-400: #ba7517;
+  --terrae-600: #854f0b;
+  --terrae-800: #633806;
+  --terrae-900: #412402;
+
+  --bg-primary: #0d0d0c;
+  --bg-secondary: #111110;
+  --bg-tertiary: #1a1a18;
+  --bg-border: #2c2c2a;
+
+  --text-primary: #f1efe8;
+  --text-secondary: #888780;
+  --text-tertiary: #5f5e5a;
+
+  /* Títulos de secção (sidebar, mapa, popup); alinhado a “Camadas disponíveis” */
+  --text-section-title: #b4b2a9;
+
+  /* Chrome do mapa: saída rápida (Mapa → Inteligência), entrada mais suave (volta). */
+  --terrae-chrome-exit-ms: 180ms;
+  --terrae-chrome-enter-ms: 280ms;
+  --terrae-chrome-transition-ms: var(--terrae-chrome-enter-ms);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --terrae-chrome-exit-ms: 1ms;
+    --terrae-chrome-enter-ms: 1ms;
+  }
+}
+
+@keyframes terrae-badge-pulse {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.25);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.terrae-badge-pulse {
+  animation: terrae-badge-pulse 300ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terrae-badge-pulse {
+    animation: none;
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+}
+
+/* Mapbox GL: preencher o painel (evita mapa preto com flex / ordem de layout) */
+.mapboxgl-map {
+  width: 100%;
+  height: 100%;
+}
+
+.mapboxgl-canvas-container {
+  width: 100%;
+  height: 100%;
+  /* Garantir ordem de pintura: canvas abaixo dos popups (alguns GPUs/compósitos punham o WebGL por cima). */
+  position: relative;
+  z-index: 0;
+}
+
+.mapboxgl-ctrl-logo {
+  opacity: 0.35;
+}
+
+.mapboxgl-ctrl-attrib {
+  font-size: 10px !important;
+  color: var(--text-tertiary) !important;
+  background: rgba(13, 13, 12, 0.85) !important;
+}
+
+.mapboxgl-ctrl-attrib a {
+  color: var(--text-secondary) !important;
+}
+
+/* Popup de processo: alinhar ao painel Terrae (conteúdo é o card React) */
+.terrae-processo-popup.mapboxgl-popup {
+  background: transparent;
+  box-shadow: none !important;
+  /* Acima do canvas (0) e dos controlos Mapbox (2). */
+  z-index: 10 !important;
+  pointer-events: none;
+}
+
+/* Evita flash: âncora só depois de medir o layout do React */
+.terrae-processo-popup--layout-pending.mapboxgl-popup {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.terrae-processo-popup .mapboxgl-popup-content {
+  padding: 0 !important;
+  background: transparent !important;
+  border-radius: 10px;
+  box-shadow: none !important;
+  pointer-events: auto;
+}
+
+/* Mapbox: âncora bottom → seta usa border-top; âncora top (card abaixo) → border-bottom */
+.terrae-processo-popup.mapboxgl-popup-anchor-bottom .mapboxgl-popup-tip,
+.terrae-processo-popup.mapboxgl-popup-anchor-bottom-left .mapboxgl-popup-tip,
+.terrae-processo-popup.mapboxgl-popup-anchor-bottom-right .mapboxgl-popup-tip {
+  border-top-color: #1a1a18 !important;
+}
+
+.terrae-processo-popup.mapboxgl-popup-anchor-top .mapboxgl-popup-tip,
+.terrae-processo-popup.mapboxgl-popup-anchor-top-left .mapboxgl-popup-tip,
+.terrae-processo-popup.mapboxgl-popup-anchor-top-right .mapboxgl-popup-tip {
+  border-bottom-color: #1a1a18 !important;
+}
+
+/* Cartão à direita do ponto: seta à esquerda apontando para o polígono */
+.terrae-processo-popup.mapboxgl-popup-anchor-left .mapboxgl-popup-tip {
+  border-right-color: #1a1a18 !important;
+}
+
+/* Cartão à esquerda do ponto: seta à direita apontando para o polígono */
+.terrae-processo-popup.mapboxgl-popup-anchor-right .mapboxgl-popup-tip {
+  border-left-color: #1a1a18 !important;
+}
+
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-tertiary);
+  outline: none;
+  cursor: pointer;
+}
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--terrae-200);
+  cursor: pointer;
+  border: 2px solid var(--terrae-400);
+}
+
+input[type='range']::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--terrae-200);
+  cursor: pointer;
+  border: 2px solid var(--terrae-400);
+}
+
+input[type='range']::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(
+    to right,
+    var(--terrae-600),
+    var(--terrae-200)
+  );
+}
+
+input[type='range']::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-tertiary);
+}
+
+/* Dashboard Inteligência: scroll escuro; thumb ao hover */
+.terrae-intel-dashboard-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  padding-right: 6px;
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.terrae-intel-dashboard-scroll:hover {
+  scrollbar-color: #4a4a48 #1a1a18;
+}
+
+.terrae-intel-dashboard-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.terrae-intel-dashboard-scroll::-webkit-scrollbar-track {
+  background: #1a1a18;
+  border-radius: 4px;
+}
+
+.terrae-intel-dashboard-scroll::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 4px;
+  border: 2px solid #1a1a18;
+  background-clip: padding-box;
+}
+
+.terrae-intel-dashboard-scroll:hover::-webkit-scrollbar-thumb {
+  background-color: #4a4a48;
+}
+
+/* Card Processos por Estado — lista de UFs (thumb visível, 6px) */
+.terrae-uf-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+  box-sizing: border-box;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: #3d3d3a #1a1a18;
+}
+
+.terrae-uf-scroll:hover {
+  scrollbar-color: #4a4a48 #1a1a18;
+}
+
+.terrae-uf-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.terrae-uf-scroll::-webkit-scrollbar-track {
+  background: #1a1a18;
+  border-radius: 999px;
+}
+
+.terrae-uf-scroll::-webkit-scrollbar-thumb {
+  background-color: #3d3d3a;
+  border-radius: 999px;
+}
+
+.terrae-uf-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: #4a4a48;
+}
+
+/* Scroll vertical padrão: dropdowns (sidebar Mapa, Inteligência, futuros) */
+.sidebar-uf-dropdown-scroll,
+.terrae-dropdown-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #4a4a48 #1a1a18;
+}
+
+.sidebar-uf-dropdown-scroll::-webkit-scrollbar,
+.terrae-dropdown-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sidebar-uf-dropdown-scroll::-webkit-scrollbar-track,
+.terrae-dropdown-scroll::-webkit-scrollbar-track {
+  background: #1a1a18;
+  border-radius: 3px;
+}
+
+.sidebar-uf-dropdown-scroll::-webkit-scrollbar-thumb,
+.terrae-dropdown-scroll::-webkit-scrollbar-thumb {
+  background: #4a4a48;
+  border-radius: 3px;
+}
+
+/* Drawer Relatório Completo */
+.terrae-relatorio-drawer-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #2c2c2a transparent;
+}
+
+.terrae-relatorio-drawer-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.terrae-relatorio-drawer-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terrae-relatorio-drawer-scroll::-webkit-scrollbar-thumb {
+  background: #2c2c2a;
+  border-radius: 2px;
+}
+
+.terrae-relatorio-drawer-scroll::-webkit-scrollbar-thumb:hover {
+  background: #5f5e5a;
+}
+
+/* Aba Inteligência: painéis com borda mais clara ao hover */
+.terrae-intel-hover-panel {
+  box-sizing: border-box;
+  border: 1px solid #2c2c2a;
+  transition: border-color 0.2s ease-out;
+}
+
+.terrae-intel-hover-panel:hover {
+  border-color: #888780;
+}
+
+.terrae-intel-hover-subpanel {
+  box-sizing: border-box;
+  border: 1px solid #2c2c2a;
+  transition: border-color 0.2s ease-out;
+}
+
+.terrae-intel-hover-subpanel:hover {
+  border-color: #6e6e6a;
+}
+
+.terrae-intel-stat-badge {
+  transition:
+    border-color 0.2s ease-out,
+    box-shadow 0.2s ease-out;
+}
+
+.terrae-intel-stat-badge:hover {
+  border-color: #888780;
+  box-shadow: 0 0 0 1px rgba(136, 135, 128, 0.2);
+}
+
+.terrae-intel-border-interactive {
+  transition: border-color 0.2s ease-out;
+}
+
+.terrae-intel-border-interactive:hover,
+.terrae-intel-border-interactive:focus-visible {
+  border-color: #888780 !important;
+}
+
+.terrae-intel-chart-pill-inactive {
+  transition: border-color 0.2s ease-out;
+}
+
+.terrae-intel-chart-pill-inactive:hover {
+  border-color: #888780 !important;
+}
+
+.terrae-intel-rank-toggle {
+  border: 1px solid #2c2c2a;
+  transition:
+    border-color 0.2s ease-out,
+    background-color 0.15s ease-out;
+}
+
+.terrae-intel-rank-toggle:hover {
+  border-color: #888780;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .terrae-radar-pulse-icon {
+    animation: terrae-radar-pulse-opacity 2s ease-in-out infinite;
+  }
+
+  .terrae-radar-spin-slow {
+    animation: terrae-radar-rotate 3s ease-in-out infinite;
+  }
+
+  @keyframes terrae-radar-pulse-opacity {
+    0%,
+    100% {
+      opacity: 0.6;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+
+  @keyframes terrae-radar-rotate {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @keyframes terraeRadarFadeMsg {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes terrae-radar-kpi-impacto-opacity {
+    0%,
+    100% {
+      opacity: 0.5;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+
+  .terrae-radar-kpi-impacto-pulse {
+    animation: terrae-radar-kpi-impacto-opacity 2s ease-in-out infinite;
+  }
+
+  @keyframes terrae-radar-live-scale {
+    0%,
+    100% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.4);
+    }
+  }
+
+  .terrae-radar-live-dot {
+    animation: terrae-radar-live-scale 1.5s ease-in-out infinite;
+    transform-origin: center;
+  }
+
+  @keyframes terraeRadarDrawerIn {
+    from {
+      transform: translateX(100%);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes terraeRadarTimelineEnter {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
+/* Overlay durante exportação PDF (blur abaixo do header com nº do processo / Exportar / Fechar) */
+.terrae-relatorio-pdf-export-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  box-sizing: border-box;
+  pointer-events: all;
+  background-color: rgba(17, 17, 16, 0.52);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.terrae-relatorio-pdf-export-spinner {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 3px solid rgba(239, 159, 39, 0.28);
+  border-top-color: #ef9f27;
+  animation: terrae-pdf-export-spin 0.85s linear infinite;
+}
+
+@keyframes terrae-pdf-export-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Durante exportação PDF: layout ao ancho ~A4; tabela de vizinhos deixa de forçar coluna Titular estreita */
+.terrae-relatorio--pdf-export table {
+  table-layout: auto;
+  width: 100%;
+}
+/* TextoTruncadoComTooltip usa overflow:hidden inline; no html2canvas isso corta ascendentes/descendentes */
+.terrae-relatorio--pdf-export .terrae-pdf-titular-wrap {
+  max-width: none !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  white-space: normal !important;
+  word-break: break-word;
+  line-height: 1.5 !important;
+  min-height: 0;
+}
+.terrae-relatorio--pdf-export table th,
+.terrae-relatorio--pdf-export table td {
+  overflow: visible !important;
+  vertical-align: top;
+  line-height: 1.5 !important;
+  padding-top: 11px !important;
+  padding-bottom: 11px !important;
+}
+.terrae-relatorio--pdf-export th:nth-child(2),
+.terrae-relatorio--pdf-export td:nth-child(2) {
+  min-width: 200px;
+  width: 42%;
+}
+
+/* Campo de busca — tabela de processos (Inteligência) */
+.terrae-intel-busca-processos {
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+}
+
+.terrae-intel-busca-processos::placeholder {
+  color: #5f5e5a;
+}
+
+/* Só o botão ✕ customizado; esconde o clear nativo (Chrome / Edge legacy). */
+.terrae-intel-busca-processos::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+  display: none;
+}
+
+.terrae-intel-busca-processos::-ms-clear {
+  display: none;
+}
+
+/* Scrollbar customizada para dark theme */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3a3a38 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #3a3a38;
+  border-radius: 3px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #5f5e5a;
+}
+
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type='number'] {
+  -moz-appearance: textfield;
+}

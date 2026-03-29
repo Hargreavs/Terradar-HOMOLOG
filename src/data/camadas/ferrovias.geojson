@@ -1,0 +1,57 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Estrada de Ferro Carajás",
+        "operadora": "Vale",
+        "situacao": "Ativa",
+        "extensao_km": 892
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[-50.5, -5.5], [-49.8, -6.2], [-48.9, -6.8], [-47.5, -7.2]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "EFVM (Vitória a Minas)",
+        "operadora": "Vale",
+        "situacao": "Ativa",
+        "extensao_km": 905
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[-40.35, -20.32], [-42.0, -19.5], [-44.0, -19.0], [-46.0, -18.5]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Ferrovia Norte-Sul (trecho)",
+        "operadora": "VLI",
+        "situacao": "Ativa",
+        "extensao_km": 755
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[-48.2, -16.3], [-49.5, -15.0], [-51.0, -13.5]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Ferrovia Transnordestina (trecho)",
+        "operadora": "Transnordestina",
+        "situacao": "Em obras/parcial",
+        "extensao_km": 1782
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[-38.5, -12.9], [-40.5, -9.5], [-43.2, -7.8]]
+      }
+    }
+  ]
+}

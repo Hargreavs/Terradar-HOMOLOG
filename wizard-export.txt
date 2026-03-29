@@ -1,0 +1,3746 @@
+=== ARQUIVO: src\components\dashboard\ProspeccaoWizard.tsx ===
+import { useCallback, useMemo, useState, type CSSProperties } from 'react'
+import { BarChart3, MapPin, Scale, Shield, TrendingUp } from 'lucide-react'
+import { MultiSelectDropdown, UFS_INTEL_DASHBOARD } from './InteligenciaDashboard'
+import { ProspeccaoAnimations } from './ProspeccaoAnimations'
+import { ObjetivoCard, RiscoCard } from './ProspeccaoCards'
+import type { ObjetivoProspeccao, PerfilRisco } from '../../lib/opportunityScore'
+
+const TODAS_SUBST = '__TODAS__'
+
+export function ProspeccaoWizard({
+  reducedMotion,
+  prospeccaoSubstOpcoes,
+  proPrefixSub,
+  proObjetivo,
+  setProObjetivo,
+  proSubst,
+  setProSubst,
+  proRisco,
+  setProRisco,
+  proUfs,
+  setProUfs,
+  proDdSub,
+  setProDdSub,
+  proDdUf,
+  setProDdUf,
+  onCancel,
+  onAnalisar,
+}: {
+  reducedMotion: boolean
+  prospeccaoSubstOpcoes: string[]
+  proPrefixSub: string
+  proObjetivo: ObjetivoProspeccao | null
+  setProObjetivo: (o: ObjetivoProspeccao | null) => void
+  proSubst: string[]
+  setProSubst: (s: string[]) => void
+  proRisco: PerfilRisco | null
+  setProRisco: (r: PerfilRisco | null) => void
+  proUfs: string[]
+  setProUfs: (u: string[]) => void
+  proDdSub: boolean
+  setProDdSub: (v: boolean) => void
+  proDdUf: boolean
+  setProDdUf: (v: boolean) => void
+  onCancel: () => void
+  onAnalisar: () => void
+}) {
+  const [currentStep, setCurrentStep] = useState(1)
+  const [stepContentVisible, setStepContentVisible] = useState(true)
+  const [animationVisible, setAnimationVisible] = useState(true)
+  const [animationStep, setAnimationStep] = useState<1 | 2 | 3 | 4>(1)
+
+  const onProSubstChange = useCallback(
+    (next: string[]) => {
+      if (next.includes(TODAS_SUBST)) {
+        if (!proSubst.includes(TODAS_SUBST)) {
+          setProSubst([TODAS_SUBST])
+          return
+        }
+        setProSubst(next.filter((x) => x !== TODAS_SUBST))
+        return
+      }
+      setProSubst(next)
+    },
+    [proSubst, setProSubst],
+  )
+
+  const stepValido = useMemo(() => {
+    switch (currentStep) {
+      case 1:
+        return proObjetivo != null
+      case 2:
+        return proSubst.length > 0
+      case 3:
+        return proRisco != null
+      case 4:
+        return true
+      default:
+        return false
+    }
+  }, [currentStep, proObjetivo, proRisco, proSubst.length])
+
+  const changeStep = useCallback(
+    (newStep: number) => {
+      const ns = newStep as 1 | 2 | 3 | 4
+      if (reducedMotion) {
+        setCurrentStep(ns)
+        setAnimationStep(ns)
+        return
+      }
+      setStepContentVisible(false)
+      setAnimationVisible(false)
+      window.setTimeout(() => {
+        setCurrentStep(ns)
+        setAnimationStep(ns)
+        window.setTimeout(() => {
+          setStepContentVisible(true)
+          setAnimationVisible(true)
+        }, 50)
+      }, 200)
+    },
+    [reducedMotion],
+  )
+
+  const handleNextStep = () => {
+    if (currentStep < 4) changeStep(currentStep + 1)
+  }
+
+  const handlePrevStep = () => {
+    if (currentStep > 1) changeStep(currentStep - 1)
+  }
+
+  const stepContentStyle: CSSProperties = reducedMotion
+    ? {}
+    : {
+        opacity: stepContentVisible ? 1 : 0,
+        transform: stepContentVisible ? 'translateY(0)' : 'translateY(10px)',
+        transition: 'opacity 200ms ease, transform 200ms ease',
+      }
+
+  const subtextStyle: CSSProperties = {
+    fontSize: 15,
+    color: '#B4B2A9',
+    marginTop: 8,
+    marginBottom: 24,
+  }
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flex: 1,
+        minHeight: 0,
+        gap: 0,
+        marginTop: 24,
+        alignItems: 'stretch',
+      }}
+    >
+      <div
+        style={{
+          flex: '0 0 50%',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          padding: '40px 60px 40px 40px',
+          boxSizing: 'border-box',
+          minHeight: 0,
+          overflow: 'hidden',
+        }}
+      >
+        <div style={{ maxWidth: 480, width: '100%' }}>
+          <div style={{ marginBottom: 32 }}>
+            <div
+              style={{
+                fontSize: 13,
+                letterSpacing: 1.5,
+                textTransform: 'uppercase',
+                color: '#888780',
+                fontWeight: 500,
+                marginBottom: 12,
+              }}
+            >
+              Etapa {currentStep} de 4
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                gap: 4,
+                width: '100%',
+                maxWidth: 280,
+              }}
+            >
+              {[1, 2, 3, 4].map((step) => (
+                <div
+                  key={step}
+                  style={{
+                    flex: 1,
+                    height: 3,
+                    borderRadius: 2,
+                    backgroundColor: step <= currentStep ? '#EF9F27' : '#2C2C2A',
+                    transition: 'background-color 300ms ease',
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+
+          <div style={stepContentStyle}>
+            {currentStep === 1 ? (
+              <div>
+                <h2
+                  style={{
+                    fontSize: 22,
+                    fontWeight: 500,
+                    color: '#F1EFE8',
+                    margin: 0,
+                    lineHeight: 1.3,
+                  }}
+                >
+                  Qual seu objetivo com esta prospecção?
+                </h2>
+                <p style={subtextStyle}>Escolha o que melhor descreve sua busca.</p>
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 12,
+                    width: '100%',
+                  }}
+                >
+                <ObjetivoCard
+                  selected={proObjetivo === 'investir'}
+                  onClick={() => setProObjetivo('investir')}
+                  icon={<TrendingUp size={20} />}
+                  label="Investir em processo existente"
+                />
+                <ObjetivoCard
+                  selected={proObjetivo === 'novo_requerimento'}
+                  onClick={() => setProObjetivo('novo_requerimento')}
+                  icon={<MapPin size={20} />}
+                  label="Identificar áreas para novo requerimento"
+                />
+                <ObjetivoCard
+                  selected={proObjetivo === 'avaliar_portfolio'}
+                  onClick={() => setProObjetivo('avaliar_portfolio')}
+                  icon={<BarChart3 size={20} />}
+                  label="Avaliar portfólio atual"
+                />
+              </div>
+            </div>
+          ) : null}
+
+          {currentStep === 2 ? (
+            <div>
+              <h2
+                style={{
+                  fontSize: 22,
+                  fontWeight: 500,
+                  color: '#F1EFE8',
+                  margin: 0,
+                  lineHeight: 1.3,
+                }}
+              >
+                Quais substâncias te interessam?
+              </h2>
+              <p style={subtextStyle}>Selecione uma ou mais substâncias para filtrar.</p>
+              <MultiSelectDropdown
+                prefix={proPrefixSub}
+                options={prospeccaoSubstOpcoes}
+                selected={proSubst}
+                onChange={onProSubstChange}
+                aberto={proDdSub}
+                setAberto={setProDdSub}
+              />
+            </div>
+          ) : null}
+
+          {currentStep === 3 ? (
+            <div>
+              <h2
+                style={{
+                  fontSize: 22,
+                  fontWeight: 500,
+                  color: '#F1EFE8',
+                  margin: 0,
+                  lineHeight: 1.3,
+                }}
+              >
+                Qual seu apetite de risco?
+              </h2>
+              <p style={subtextStyle}>Isso ajusta os pesos do Opportunity Score.</p>
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 12,
+                  width: '100%',
+                }}
+              >
+                <RiscoCard
+                  selected={proRisco === 'conservador'}
+                  onClick={() => setProRisco('conservador')}
+                  icon={<Shield size={20} />}
+                  iconSelectedColor="#1D9E75"
+                  label="Conservador"
+                  desc="Prioriza segurança e processos consolidados"
+                />
+                <RiscoCard
+                  selected={proRisco === 'moderado'}
+                  onClick={() => setProRisco('moderado')}
+                  icon={<Scale size={20} />}
+                  iconSelectedColor="#E8A830"
+                  label="Moderado"
+                  desc="Equilíbrio entre risco e retorno"
+                />
+                <RiscoCard
+                  selected={proRisco === 'arrojado'}
+                  onClick={() => setProRisco('arrojado')}
+                  icon={<TrendingUp size={20} />}
+                  iconSelectedColor="#E24B4A"
+                  label="Arrojado"
+                  desc="Aceita risco elevado por alta recompensa"
+                />
+              </div>
+            </div>
+          ) : null}
+
+          {currentStep === 4 ? (
+            <div>
+              <h2
+                style={{
+                  fontSize: 22,
+                  fontWeight: 500,
+                  color: '#F1EFE8',
+                  margin: 0,
+                  lineHeight: 1.3,
+                }}
+              >
+                Preferência geográfica
+              </h2>
+              <p style={subtextStyle}>Opcional. Deixe em branco para analisar todo o Brasil.</p>
+              <MultiSelectDropdown
+                prefix={proUfs.length === 0 ? 'Todo o Brasil' : `${proUfs.length} UFs`}
+                options={[...UFS_INTEL_DASHBOARD]}
+                selected={proUfs}
+                onChange={setProUfs}
+                aberto={proDdUf}
+                setAberto={setProDdUf}
+              />
+            </div>
+          ) : null}
+          </div>
+
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 16,
+              marginTop: 32,
+            }}
+          >
+            {currentStep > 1 ? (
+              <button
+                type="button"
+                onClick={handlePrevStep}
+                style={{
+                  border: 'none',
+                  background: 'none',
+                  padding: 0,
+                  fontSize: 14,
+                  color: '#888780',
+                  cursor: 'pointer',
+                }}
+              >
+                ← Voltar
+              </button>
+            ) : null}
+            {currentStep === 1 ? (
+              <button
+                type="button"
+                onClick={onCancel}
+                style={{
+                  border: 'none',
+                  background: 'none',
+                  padding: 0,
+                  fontSize: 14,
+                  color: '#888780',
+                  cursor: 'pointer',
+                }}
+              >
+                Cancelar
+              </button>
+            ) : null}
+            <button
+              type="button"
+              disabled={!stepValido}
+              onClick={currentStep < 4 ? handleNextStep : onAnalisar}
+              style={{
+                backgroundColor: '#EF9F27',
+                color: '#0D0D0C',
+                fontSize: 15,
+                fontWeight: 600,
+                borderRadius: 8,
+                padding: '10px 28px',
+                border: 'none',
+                cursor: stepValido ? 'pointer' : 'not-allowed',
+                opacity: stepValido ? 1 : 0.4,
+                transition: 'filter 0.15s ease-out, box-shadow 0.15s ease-out',
+              }}
+              onMouseEnter={(e) => {
+                if (!stepValido) return
+                e.currentTarget.style.filter = 'brightness(1.1)'
+                e.currentTarget.style.boxShadow = '0 0 24px rgba(239, 159, 39, 0.35)'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.filter = 'none'
+                e.currentTarget.style.boxShadow = 'none'
+              }}
+            >
+              {currentStep < 4 ? 'Próximo' : 'Analisar oportunidades'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <ProspeccaoAnimations
+        currentStep={animationStep}
+        visible={animationVisible}
+        reducedMotion={reducedMotion}
+      />
+    </div>
+  )
+}
+
+=== FIM: src\components\dashboard\ProspeccaoWizard.tsx ===
+
+=== ARQUIVO: src\components\dashboard\ProspeccaoAnimations.tsx ===
+import type { CSSProperties } from 'react'
+import { RadarSweepAnimation } from './animations/RadarSweepAnimation'
+import { SubstanciasRadarAnimation } from './animations/SubstanciasRadarAnimation'
+import { RiskCalibrationAnimation } from './animations/RiskCalibrationAnimation'
+import { RegionFocusAnimation } from './animations/RegionFocusAnimation'
+
+export function ProspeccaoAnimations({
+  currentStep,
+  visible,
+  reducedMotion,
+}: {
+  currentStep: 1 | 2 | 3 | 4
+  visible: boolean
+  reducedMotion: boolean
+}) {
+  const animContainerStyle: CSSProperties = reducedMotion
+    ? { opacity: 1 }
+    : {
+        opacity: visible ? 1 : 0,
+        transition: 'opacity 200ms ease',
+      }
+
+  return (
+    <div
+      style={{
+        flex: '0 0 50%',
+        alignSelf: 'stretch',
+        position: 'relative',
+        overflow: 'hidden',
+        borderRadius: '0 0 8px 0',
+        minHeight: 0,
+        backgroundColor: '#0D0D0C',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      <div
+        style={{
+          ...animContainerStyle,
+          position: 'relative',
+          width: '100%',
+          flex: 1,
+          minHeight: 280,
+        }}
+      >
+        {currentStep === 1 ? <RadarSweepAnimation /> : null}
+        {currentStep === 2 ? <SubstanciasRadarAnimation /> : null}
+        {currentStep === 3 ? <RiskCalibrationAnimation /> : null}
+        {currentStep === 4 ? <RegionFocusAnimation /> : null}
+      </div>
+    </div>
+  )
+}
+
+=== FIM: src\components\dashboard\ProspeccaoAnimations.tsx ===
+
+=== ARQUIVO: src\components\dashboard\ProspeccaoCards.tsx ===
+import {
+  cloneElement,
+  isValidElement,
+  useState,
+  type CSSProperties,
+  type ReactElement,
+  type ReactNode,
+} from 'react'
+import { Check } from 'lucide-react'
+
+const baseLayout: CSSProperties = {
+  textAlign: 'left',
+  borderRadius: 10,
+  padding: '18px 20px',
+  cursor: 'pointer',
+  transition: 'border-color 0.15s ease-out, background-color 0.15s ease-out, box-shadow 0.15s ease-out',
+  width: '100%',
+  boxSizing: 'border-box',
+  position: 'relative',
+  borderWidth: 1,
+  borderStyle: 'solid',
+}
+
+function cardSurface(selected: boolean, isHovered: boolean): Pick<
+  CSSProperties,
+  'borderColor' | 'backgroundColor' | 'boxShadow'
+> {
+  if (selected) {
+    return {
+      borderColor: '#EF9F27',
+      backgroundColor: 'rgba(239, 159, 39, 0.06)',
+      boxShadow: '0 0 12px rgba(239, 159, 39, 0.08)',
+    }
+  }
+  if (isHovered) {
+    return {
+      borderColor: '#888780',
+      backgroundColor: '#1A1A18',
+      boxShadow: 'none',
+    }
+  }
+  return {
+    borderColor: '#2C2C2A',
+    backgroundColor: '#111110',
+    boxShadow: 'none',
+  }
+}
+
+export function ObjetivoCard({
+  selected,
+  onClick,
+  icon,
+  label,
+}: {
+  selected: boolean
+  onClick: () => void
+  icon: ReactNode
+  label: string
+}) {
+  const [hover, setHover] = useState(false)
+  const isHovered = hover && !selected
+  const surface = cardSurface(selected, isHovered)
+
+  const iconColor = selected ? '#EF9F27' : isHovered ? '#B4B2A9' : '#888780'
+  const iconEl =
+    isValidElement(icon) && icon != null
+      ? cloneElement(icon as ReactElement<{ size?: number; color?: string }>, {
+          size: 18,
+          color: iconColor,
+        })
+      : icon
+
+  const iconContainerBg = selected
+    ? 'rgba(239, 159, 39, 0.12)'
+    : isHovered
+      ? '#2C2C2A'
+      : '#1A1A18'
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        ...baseLayout,
+        ...surface,
+      }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 14,
+        }}
+      >
+        <div
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 8,
+            backgroundColor: iconContainerBg,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+            transition: 'background-color 0.15s ease',
+          }}
+        >
+          {iconEl}
+        </div>
+        <div>
+          <div
+            style={{
+              fontSize: 15,
+              fontWeight: 500,
+              color: selected || isHovered ? '#F1EFE8' : '#D3D1C7',
+            }}
+          >
+            {label}
+          </div>
+        </div>
+      </div>
+      {selected ? (
+        <div
+          style={{
+            position: 'absolute',
+            top: '50%',
+            right: 12,
+            transform: 'translateY(-50%)',
+            width: 20,
+            height: 20,
+            borderRadius: '50%',
+            backgroundColor: '#EF9F27',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Check size={12} color="#0D0D0C" strokeWidth={3} />
+        </div>
+      ) : null}
+    </button>
+  )
+}
+
+export function RiscoCard({
+  selected,
+  onClick,
+  icon,
+  iconSelectedColor,
+  label,
+  desc,
+}: {
+  selected: boolean
+  onClick: () => void
+  icon: ReactNode
+  iconSelectedColor: string
+  label: string
+  desc: string
+}) {
+  const [hover, setHover] = useState(false)
+  const isHovered = hover && !selected
+  const surface = cardSurface(selected, isHovered)
+
+  const iconColor = selected ? iconSelectedColor : isHovered ? '#B4B2A9' : '#888780'
+  const iconEl =
+    isValidElement(icon) && icon != null
+      ? cloneElement(icon as ReactElement<{ size?: number; color?: string }>, {
+          size: 18,
+          color: iconColor,
+        })
+      : icon
+
+  const iconContainerBg = selected
+    ? 'rgba(239, 159, 39, 0.12)'
+    : isHovered
+      ? '#2C2C2A'
+      : '#1A1A18'
+
+  const descColor = selected ? '#B4B2A9' : isHovered ? '#B4B2A9' : '#888780'
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        ...baseLayout,
+        ...surface,
+      }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 14,
+        }}
+      >
+        <div
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 8,
+            backgroundColor: iconContainerBg,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+            transition: 'background-color 0.15s ease',
+          }}
+        >
+          {iconEl}
+        </div>
+        <div>
+          <div
+            style={{
+              fontSize: 15,
+              fontWeight: 500,
+              color: selected || isHovered ? '#F1EFE8' : '#D3D1C7',
+            }}
+          >
+            {label}
+          </div>
+          <div
+            style={{
+              fontSize: 13,
+              color: descColor,
+              marginTop: 2,
+            }}
+          >
+            {desc}
+          </div>
+        </div>
+      </div>
+      {selected ? (
+        <div
+          style={{
+            position: 'absolute',
+            top: '50%',
+            right: 12,
+            transform: 'translateY(-50%)',
+            width: 20,
+            height: 20,
+            borderRadius: '50%',
+            backgroundColor: '#EF9F27',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Check size={12} color="#0D0D0C" strokeWidth={3} />
+        </div>
+      ) : null}
+    </button>
+  )
+}
+
+=== FIM: src\components\dashboard\ProspeccaoCards.tsx ===
+
+=== ARQUIVO: src\components\dashboard\animations\RadarSweepAnimation.tsx ===
+import { useEffect, useRef, useState } from 'react'
+
+const COLORS = {
+  ambar: '#EF9F27',
+  ambarLight: '#F1B85A',
+}
+
+const DETECTION_POINTS = [
+  { x: 140, y: -220, color: '#5AA3D4', delay: 0.5 },
+  { x: -110, y: -150, color: '#6DBF82', delay: 1.0 },
+  { x: 230, y: 100, color: '#E0A96A', delay: 1.7 },
+  { x: -190, y: 260, color: '#35B88A', delay: 2.3 },
+  { x: 80, y: 320, color: '#A08FD4', delay: 3.0 },
+  { x: -240, y: -80, color: '#CC6B6B', delay: 3.7 },
+  { x: 170, y: -350, color: '#8DB86A', delay: 4.2 },
+  { x: -60, y: 420, color: '#5AA3D4', delay: 4.6 },
+]
+
+const W = 600
+const H = 1100
+const CX = W / 2
+const CY = H / 2
+const RADII = [80, 160, 240, 320, 400]
+
+/** IDs únicos para não colidir com outros SVGs na página */
+const I = {
+  sg: 'rsw_sg',
+  cg: 'rsw_cg',
+  sm: 'rsw_sm',
+  gl: 'rsw_gl',
+  sgl: 'rsw_sgl',
+}
+
+export function RadarSweepAnimation() {
+  const [elapsed, setElapsed] = useState(0)
+  const raf = useRef<number | null>(null)
+  const t0 = useRef<number | null>(null)
+
+  useEffect(() => {
+    const tick = (ts: number) => {
+      if (t0.current == null) t0.current = ts
+      setElapsed((ts - t0.current!) / 1000)
+      raf.current = requestAnimationFrame(tick)
+    }
+    raf.current = requestAnimationFrame(tick)
+    return () => {
+      if (raf.current != null) cancelAnimationFrame(raf.current)
+    }
+  }, [])
+
+  const sweep = (elapsed * 120) % 360
+  const pulse = 1 + 0.3 * Math.abs(Math.sin(elapsed * Math.PI * 0.67))
+  const rp1 = (elapsed * 0.67) % 1
+  const rp2 = ((elapsed + 0.75) * 0.67) % 1
+
+  return (
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        position: 'absolute',
+        inset: 0,
+        background: 'transparent',
+        overflow: 'hidden',
+        fontFamily: "'Helvetica Neue', Helvetica, Arial, sans-serif",
+      }}
+    >
+      <svg
+        width="100%"
+        height="100%"
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="xMidYMid meet"
+        style={{ position: 'absolute', inset: 0 }}
+      >
+        <defs>
+          <radialGradient id={I.sg} cx="0" cy="0" r="1">
+            <stop offset="0%" stopColor={COLORS.ambar} stopOpacity="0.28" />
+            <stop offset="70%" stopColor={COLORS.ambar} stopOpacity="0.06" />
+            <stop offset="100%" stopColor={COLORS.ambar} stopOpacity="0" />
+          </radialGradient>
+          <radialGradient id={I.cg} cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor={COLORS.ambar} stopOpacity="0.08" />
+            <stop offset="100%" stopColor={COLORS.ambar} stopOpacity="0" />
+          </radialGradient>
+          <mask id={I.sm}>
+            <rect width={W} height={H} fill="black" />
+            {(() => {
+              const a1 = ((sweep - 35) * Math.PI) / 180
+              const a2 = ((sweep + 35) * Math.PI) / 180
+              const r = 460
+              return (
+                <path
+                  d={`M ${CX} ${CY} L ${CX + r * Math.cos(a1)} ${CY + r * Math.sin(a1)} A ${r} ${r} 0 0 1 ${CX + r * Math.cos(a2)} ${CY + r * Math.sin(a2)} Z`}
+                  fill="white"
+                />
+              )
+            })()}
+          </mask>
+          <filter id={I.gl}>
+            <feGaussianBlur stdDeviation="4" result="b" />
+            <feMerge>
+              <feMergeNode in="b" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+          <filter id={I.sgl}>
+            <feGaussianBlur stdDeviation="8" result="b" />
+            <feMerge>
+              <feMergeNode in="b" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+
+        <circle cx={CX} cy={CY} r={300} fill={`url(#${I.cg})`} />
+
+        {Array.from({ length: Math.ceil(H / 45) + 1 }, (_, i) => (
+          <line
+            key={`h${i}`}
+            x1={0}
+            y1={i * 45}
+            x2={W}
+            y2={i * 45}
+            stroke={COLORS.ambar}
+            strokeOpacity={0.03}
+            strokeWidth={0.5}
+          />
+        ))}
+        {Array.from({ length: Math.ceil(W / 45) + 1 }, (_, i) => (
+          <line
+            key={`v${i}`}
+            x1={i * 45}
+            y1={0}
+            x2={i * 45}
+            y2={H}
+            stroke={COLORS.ambar}
+            strokeOpacity={0.03}
+            strokeWidth={0.5}
+          />
+        ))}
+
+        {RADII.map((r) => (
+          <circle
+            key={r}
+            cx={CX}
+            cy={CY}
+            r={r}
+            fill="none"
+            stroke={COLORS.ambar}
+            strokeOpacity={0.07}
+            strokeWidth={0.7}
+            strokeDasharray={r > 320 ? '4 6' : 'none'}
+          />
+        ))}
+
+        <line
+          x1={CX}
+          y1={CY - 450}
+          x2={CX}
+          y2={CY + 450}
+          stroke={COLORS.ambar}
+          strokeOpacity={0.05}
+          strokeWidth={0.5}
+        />
+        <line
+          x1={CX - 450}
+          y1={CY}
+          x2={CX + 450}
+          y2={CY}
+          stroke={COLORS.ambar}
+          strokeOpacity={0.05}
+          strokeWidth={0.5}
+        />
+        <line
+          x1={CX - 320}
+          y1={CY - 320}
+          x2={CX + 320}
+          y2={CY + 320}
+          stroke={COLORS.ambar}
+          strokeOpacity={0.025}
+          strokeWidth={0.5}
+        />
+        <line
+          x1={CX + 320}
+          y1={CY - 320}
+          x2={CX - 320}
+          y2={CY + 320}
+          stroke={COLORS.ambar}
+          strokeOpacity={0.025}
+          strokeWidth={0.5}
+        />
+
+        <circle cx={CX} cy={CY} r={420} fill={`url(#${I.sg})`} mask={`url(#${I.sm})`} />
+        {(() => {
+          const a = ((sweep + 35) * Math.PI) / 180
+          return (
+            <line
+              x1={CX}
+              y1={CY}
+              x2={CX + 420 * Math.cos(a)}
+              y2={CY + 420 * Math.sin(a)}
+              stroke={COLORS.ambar}
+              strokeOpacity={0.4}
+              strokeWidth={1}
+            />
+          )
+        })()}
+        {(() => {
+          const a = ((sweep - 35) * Math.PI) / 180
+          return (
+            <line
+              x1={CX}
+              y1={CY}
+              x2={CX + 420 * Math.cos(a)}
+              y2={CY + 420 * Math.sin(a)}
+              stroke={COLORS.ambar}
+              strokeOpacity={0.1}
+              strokeWidth={0.5}
+            />
+          )
+        })()}
+
+        <circle
+          cx={CX}
+          cy={CY}
+          r={8 * (1 + rp1 * 7)}
+          fill="none"
+          stroke={COLORS.ambar}
+          strokeOpacity={0.3 * (1 - rp1)}
+          strokeWidth={0.8}
+        />
+        <circle
+          cx={CX}
+          cy={CY}
+          r={8 * (1 + rp2 * 7)}
+          fill="none"
+          stroke={COLORS.ambar}
+          strokeOpacity={0.2 * (1 - rp2)}
+          strokeWidth={0.6}
+        />
+
+        {DETECTION_POINTS.map((pt, i) => {
+          if (elapsed <= pt.delay) return null
+          const age = elapsed - pt.delay
+          const e = Math.min(1, age / 0.5)
+          const s = (1 - (1 - e) ** 3) * (1 + 0.05 * Math.sin(age * 2))
+          const px = CX + pt.x
+          const py = CY + pt.y
+          const sz = 16
+          return (
+            <g key={i} opacity={e}>
+              <rect
+                x={px - sz * s}
+                y={py - sz * s}
+                width={sz * s * 2}
+                height={sz * s * 2}
+                rx={6}
+                fill={pt.color}
+                opacity={0.12}
+                filter={`url(#${I.sgl})`}
+              />
+              <rect
+                x={px - (sz * s) / 2}
+                y={py - (sz * s) / 2}
+                width={sz * s}
+                height={sz * s}
+                rx={3}
+                fill={pt.color}
+                opacity={0.9}
+              />
+              <rect
+                x={px - (sz * s) / 2 + 2}
+                y={py - (sz * s) / 2 + 2}
+                width={sz * s - 4}
+                height={Math.max(0, sz * s * 0.3)}
+                rx={1.5}
+                fill="white"
+                opacity={0.12}
+              />
+              <line
+                x1={px}
+                y1={py}
+                x2={CX}
+                y2={CY}
+                stroke={pt.color}
+                strokeOpacity={0.06}
+                strokeWidth={0.5}
+                strokeDasharray="3 4"
+              />
+            </g>
+          )
+        })}
+
+        <circle cx={CX} cy={CY} r={5 * pulse} fill={COLORS.ambar} filter={`url(#${I.gl})`} opacity={0.9} />
+        <circle cx={CX} cy={CY} r={3} fill={COLORS.ambarLight} />
+        <circle cx={CX} cy={CY} r={1.5} fill="white" opacity={0.6} />
+
+        {RADII.map((r) => (
+          <text
+            key={`l${r}`}
+            x={CX + r + 5}
+            y={CY - 5}
+            fill={COLORS.ambar}
+            fillOpacity={0.12}
+            fontSize={7}
+            fontFamily="monospace"
+            letterSpacing={0.5}
+          >
+            {r}km
+          </text>
+        ))}
+
+        {Array.from({ length: 72 }, (_, i) => {
+          const a = (i * 5 * Math.PI) / 180
+          const major = i % 18 === 0
+          const minor = i % 9 === 0
+          const inn = major ? 405 : minor ? 410 : 415
+          return (
+            <line
+              key={`t${i}`}
+              x1={CX + inn * Math.cos(a)}
+              y1={CY + inn * Math.sin(a)}
+              x2={CX + 420 * Math.cos(a)}
+              y2={CY + 420 * Math.sin(a)}
+              stroke={COLORS.ambar}
+              strokeOpacity={major ? 0.2 : minor ? 0.1 : 0.05}
+              strokeWidth={major ? 1 : 0.5}
+            />
+          )
+        })}
+
+        {[
+          { l: 'N', a: -90 },
+          { l: 'S', a: 90 },
+          { l: 'E', a: 0 },
+          { l: 'W', a: 180 },
+        ].map(({ l, a }) => {
+          const rad = (a * Math.PI) / 180
+          return (
+            <text
+              key={l}
+              x={CX + 440 * Math.cos(rad)}
+              y={CY + 440 * Math.sin(rad) + 3}
+              fill={COLORS.ambar}
+              fillOpacity={0.12}
+              fontSize={9}
+              fontFamily="monospace"
+              textAnchor="middle"
+              letterSpacing={2}
+            >
+              {l}
+            </text>
+          )
+        })}
+      </svg>
+    </div>
+  )
+}
+
+=== FIM: src\components\dashboard\animations\RadarSweepAnimation.tsx ===
+
+=== ARQUIVO: src\components\dashboard\animations\SubstanciasRadarAnimation.tsx ===
+import { useState, useEffect, useRef } from 'react'
+
+const COLORS = {
+  ambar: "#EF9F27",
+  ambarLight: "#F1B85A",
+  verde: "#1D9E75",
+  textPrimary: "#F1EFE8",
+  textSecondary: "#888780",
+  bgPrimary: "#0D0D0C",
+  border: "#2C2C2A",
+};
+
+const MINERALS = [
+  { label: "Fe", name: "Ferro", color: "#7EADD4", x: 140, y: -220 },
+  { label: "Cu", name: "Cobre", color: "#C87C5B", x: -110, y: -150 },
+  { label: "Au", name: "Ouro", color: "#D4A843", x: 230, y: 100 },
+  { label: "Nb", name: "Nióbio", color: "#5CBFA0", x: -190, y: 200 },
+  { label: "TR", name: "Terras Raras", color: "#3D8B7A", x: 80, y: 320 },
+  { label: "Li", name: "Lítio", color: "#9BB8D0", x: -240, y: -80 },
+  { label: "Ni", name: "Níquel", color: "#8FAA8D", x: 170, y: -350 },
+  { label: "Bx", name: "Bauxita", color: "#B8917A", x: -60, y: 400 },
+  { label: "Qz", name: "Quartzo", color: "#C4B89A", x: 200, y: -50 },
+];
+
+const W = 600;
+const H = 1100;
+const CX = W / 2;
+const CY = H / 2;
+const RADII = [80, 160, 240, 320, 400];
+
+function angleBetween(cx, cy, px, py) {
+  return Math.atan2(py - cy, px - cx) * 180 / Math.PI;
+}
+
+function angleDiff(a, b) {
+  let d = ((b - a + 180) % 360) - 180;
+  if (d < -180) d += 360;
+  return d;
+}
+
+export function SubstanciasRadarAnimation() {
+  const [elapsed, setElapsed] = useState(0)
+  const raf = useRef<number | null>(null)
+  const t0 = useRef<number | null>(null)
+
+  useEffect(() => {
+    const tick = (ts: number) => {
+      if (t0.current == null) t0.current = ts
+      setElapsed((ts - t0.current!) / 1000)
+      raf.current = requestAnimationFrame(tick)
+    }
+    raf.current = requestAnimationFrame(tick)
+    return () => {
+      if (raf.current != null) cancelAnimationFrame(raf.current)
+    }
+  }, [])
+
+  const sweepAngle = (elapsed * 90) % 360;
+  const pulseScale = 1 + 0.25 * Math.abs(Math.sin(elapsed * Math.PI * 0.67));
+  const rp1 = (elapsed * 0.5) % 1;
+  const rp2 = ((elapsed + 0.9) * 0.5) % 1;
+
+  return (
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        position: 'absolute',
+        inset: 0,
+        background: 'transparent',
+        overflow: 'hidden',
+        fontFamily: "'Helvetica Neue', Helvetica, Arial, sans-serif",
+      }}
+    >
+      <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ position: "absolute", inset: 0 }}>
+        <defs>
+          <radialGradient id="sg2" cx="0" cy="0" r="1">
+            <stop offset="0%" stopColor={COLORS.ambar} stopOpacity="0.22" />
+            <stop offset="60%" stopColor={COLORS.ambar} stopOpacity="0.05" />
+            <stop offset="100%" stopColor={COLORS.ambar} stopOpacity="0" />
+          </radialGradient>
+          <radialGradient id="cg2" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor={COLORS.ambar} stopOpacity="0.06" />
+            <stop offset="100%" stopColor={COLORS.ambar} stopOpacity="0" />
+          </radialGradient>
+          <mask id="sm2">
+            <rect width={W} height={H} fill="black" />
+            {(() => {
+              const a1 = ((sweepAngle - 40) * Math.PI) / 180;
+              const a2 = ((sweepAngle + 40) * Math.PI) / 180;
+              const r = 480;
+              return <path d={`M ${CX} ${CY} L ${CX + r * Math.cos(a1)} ${CY + r * Math.sin(a1)} A ${r} ${r} 0 0 1 ${CX + r * Math.cos(a2)} ${CY + r * Math.sin(a2)} Z`} fill="white" />;
+            })()}
+          </mask>
+          <filter id="gl2"><feGaussianBlur stdDeviation="4" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+          <filter id="sgl2"><feGaussianBlur stdDeviation="12" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+        </defs>
+
+        {/* Ambient glow */}
+        <circle cx={CX} cy={CY} r={350} fill="url(#cg2)" />
+
+        {/* Grid */}
+        {Array.from({ length: Math.ceil(H / 45) + 1 }, (_, i) => <line key={`h${i}`} x1={0} y1={i * 45} x2={W} y2={i * 45} stroke={COLORS.ambar} strokeOpacity={0.03} strokeWidth={0.5} />)}
+        {Array.from({ length: Math.ceil(W / 45) + 1 }, (_, i) => <line key={`v${i}`} x1={i * 45} y1={0} x2={i * 45} y2={H} stroke={COLORS.ambar} strokeOpacity={0.03} strokeWidth={0.5} />)}
+
+        {/* Concentric circles */}
+        {RADII.map(r => <circle key={r} cx={CX} cy={CY} r={r} fill="none" stroke={COLORS.ambar} strokeOpacity={0.06} strokeWidth={0.6} strokeDasharray={r > 320 ? "4 6" : "none"} />)}
+
+        {/* Cross hairs */}
+        <line x1={CX} y1={CY - 450} x2={CX} y2={CY + 450} stroke={COLORS.ambar} strokeOpacity={0.04} strokeWidth={0.5} />
+        <line x1={CX - 450} y1={CY} x2={CX + 450} y2={CY} stroke={COLORS.ambar} strokeOpacity={0.04} strokeWidth={0.5} />
+
+        {/* Sweep */}
+        <circle cx={CX} cy={CY} r={440} fill="url(#sg2)" mask="url(#sm2)" />
+        {(() => { const a = ((sweepAngle + 40) * Math.PI) / 180; return <line x1={CX} y1={CY} x2={CX + 440 * Math.cos(a)} y2={CY + 440 * Math.sin(a)} stroke={COLORS.ambar} strokeOpacity={0.35} strokeWidth={0.8} />; })()}
+        {(() => { const a = ((sweepAngle - 40) * Math.PI) / 180; return <line x1={CX} y1={CY} x2={CX + 440 * Math.cos(a)} y2={CY + 440 * Math.sin(a)} stroke={COLORS.ambar} strokeOpacity={0.08} strokeWidth={0.4} />; })()}
+
+        {/* Expanding rings */}
+        <circle cx={CX} cy={CY} r={8 * (1 + rp1 * 8)} fill="none" stroke={COLORS.ambar} strokeOpacity={0.25 * (1 - rp1)} strokeWidth={0.6} />
+        <circle cx={CX} cy={CY} r={8 * (1 + rp2 * 8)} fill="none" stroke={COLORS.ambar} strokeOpacity={0.15 * (1 - rp2)} strokeWidth={0.5} />
+
+        {/* Mineral nodes */}
+        {MINERALS.map((m, i) => {
+          const px = CX + m.x;
+          const py = CY + m.y;
+          const floatY = Math.sin(elapsed * 0.4 + i * 0.8) * 4;
+          const floatX = Math.cos(elapsed * 0.3 + i * 0.6) * 3;
+          const fpx = px + floatX;
+          const fpy = py + floatY;
+
+          const mineralAngle = angleBetween(CX, CY, px, py);
+          const diff = Math.abs(angleDiff(sweepAngle, mineralAngle));
+          const inBeam = diff < 50;
+          const beamIntensity = inBeam ? Math.max(0, 1 - diff / 50) : 0;
+
+          const baseOpacity = 0.12;
+          const revealOpacity = baseOpacity + (0.88 * beamIntensity);
+
+          const cardSize = 48;
+          const breathe = 1 + 0.03 * Math.sin(elapsed * 1.2 + i);
+          const s = cardSize * breathe;
+
+          return (
+            <g key={i}>
+              {/* Connection line to center - always faint */}
+              <line x1={fpx} y1={fpy} x2={CX} y2={CY} stroke={m.color} strokeOpacity={0.03 + 0.05 * beamIntensity} strokeWidth={0.4} strokeDasharray="3 5" />
+
+              {/* Outer glow when revealed */}
+              {beamIntensity > 0.3 && (
+                <circle cx={fpx} cy={fpy} r={s * 0.9} fill={m.color} opacity={0.08 * beamIntensity} filter="url(#sgl2)" />
+              )}
+
+              {/* Card background */}
+              <rect
+                x={fpx - s / 2} y={fpy - s / 2}
+                width={s} height={s}
+                rx={6}
+                fill={COLORS.bgPrimary}
+                stroke={m.color}
+                strokeWidth={inBeam ? 1.2 : 0.6}
+                strokeOpacity={baseOpacity + 0.5 * beamIntensity}
+                opacity={revealOpacity}
+              />
+              <rect
+                x={fpx - s / 2} y={fpy - s / 2}
+                width={s} height={s}
+                rx={6}
+                fill={m.color}
+                opacity={0.04 + 0.08 * beamIntensity}
+              />
+
+              {/* Chemical symbol */}
+              <text
+                x={fpx}
+                y={fpy + 2}
+                fill={m.color}
+                fontSize={16}
+                fontWeight={600}
+                fontFamily="'Helvetica Neue', Arial, sans-serif"
+                textAnchor="middle"
+                dominantBaseline="middle"
+                opacity={0.08 + 0.92 * beamIntensity}
+                letterSpacing={1}
+              >
+                {m.label}
+              </text>
+
+              {/* Mineral name below card */}
+              <text
+                x={fpx}
+                y={fpy + s / 2 + 14}
+                fill={m.color}
+                fontSize={8}
+                fontFamily="'Helvetica Neue', Arial, sans-serif"
+                textAnchor="middle"
+                letterSpacing={1.2}
+                opacity={0.05 + 0.65 * beamIntensity}
+              >
+                {m.name.toUpperCase()}
+              </text>
+
+              {/* Small dot indicator */}
+              <circle
+                cx={fpx + s / 2 - 6}
+                cy={fpy - s / 2 + 6}
+                r={2.5}
+                fill={m.color}
+                opacity={0.1 + 0.7 * beamIntensity}
+              />
+            </g>
+          );
+        })}
+
+        {/* Center pulse */}
+        <circle cx={CX} cy={CY} r={5 * pulseScale} fill={COLORS.ambar} filter="url(#gl2)" opacity={0.8} />
+        <circle cx={CX} cy={CY} r={3} fill={COLORS.ambarLight} />
+        <circle cx={CX} cy={CY} r={1.5} fill="white" opacity={0.5} />
+
+        {/* Angle ticks */}
+        {Array.from({ length: 72 }, (_, i) => {
+          const a = (i * 5 * Math.PI) / 180;
+          const major = i % 18 === 0;
+          const minor = i % 9 === 0;
+          const inn = major ? 425 : minor ? 430 : 435;
+          return <line key={`t${i}`} x1={CX + inn * Math.cos(a)} y1={CY + inn * Math.sin(a)} x2={CX + 440 * Math.cos(a)} y2={CY + 440 * Math.sin(a)} stroke={COLORS.ambar} strokeOpacity={major ? 0.15 : minor ? 0.08 : 0.04} strokeWidth={major ? 0.8 : 0.4} />;
+        })}
+
+        {/* Cardinals */}
+        {[{ l: "N", a: -90 }, { l: "S", a: 90 }, { l: "E", a: 0 }, { l: "W", a: 180 }].map(({ l, a }) => {
+          const rad = (a * Math.PI) / 180;
+          return <text key={l} x={CX + 455 * Math.cos(rad)} y={CY + 455 * Math.sin(rad) + 3} fill={COLORS.ambar} fillOpacity={0.1} fontSize={8} fontFamily="monospace" textAnchor="middle" letterSpacing={2}>{l}</text>;
+        })}
+      </svg>
+    </div>
+  )
+}
+
+=== FIM: src\components\dashboard\animations\SubstanciasRadarAnimation.tsx ===
+
+=== ARQUIVO: src\components\dashboard\animations\RiskCalibrationAnimation.tsx ===
+import { useState, useEffect, useRef } from 'react'
+
+const COLORS = {
+  ambar: "#EF9F27",
+  ambarLight: "#F1B85A",
+  verde: "#1D9E75",
+  ambarRisco: "#E8A830",
+  vermelho: "#E24B4A",
+  textPrimary: "#F1EFE8",
+  textSecondary: "#888780",
+  bgPrimary: "#0D0D0C",
+  border: "#2C2C2A",
+};
+
+const DIMENSIONS = [
+  { label: "Segurança", color: COLORS.verde, baseRadius: 120, freq: 0.15 },
+  { label: "Viabilidade", color: COLORS.ambarRisco, baseRadius: 220, freq: 0.12 },
+  { label: "Atratividade", color: COLORS.ambar, baseRadius: 320, freq: 0.09 },
+];
+
+const PROFILES = [
+  { name: "Conservador", weights: [45, 30, 25], duration: 5 },
+  { name: "Moderado", weights: [30, 30, 40], duration: 5 },
+  { name: "Arrojado", weights: [20, 25, 55], duration: 5 },
+];
+
+const MINERALS = [
+  { label: "Fe", color: "#7EADD4", x: 140, y: -220 },
+  { label: "Cu", color: "#C87C5B", x: -110, y: -150 },
+  { label: "Au", color: "#D4A843", x: 230, y: 100 },
+  { label: "Nb", color: "#5CBFA0", x: -190, y: 200 },
+  { label: "TR", color: "#3D8B7A", x: 80, y: 320 },
+  { label: "Li", color: "#9BB8D0", x: -240, y: -80 },
+  { label: "Ni", color: "#8FAA8D", x: 170, y: -350 },
+  { label: "Bx", color: "#B8917A", x: -60, y: 400 },
+  { label: "Qz", color: "#C4B89A", x: 200, y: -50 },
+];
+
+const W = 600;
+const H = 1100;
+const CX = W / 2;
+const CY = H / 2;
+const RADII_BG = [80, 160, 240, 320, 400];
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+function getProfile(elapsed) {
+  const totalCycle = PROFILES.reduce((s, p) => s + p.duration, 0);
+  const t = elapsed % totalCycle;
+  let acc = 0;
+  for (let i = 0; i < PROFILES.length; i++) {
+    if (t < acc + PROFILES[i].duration) {
+      const progress = (t - acc) / PROFILES[i].duration;
+      const next = PROFILES[(i + 1) % PROFILES.length];
+      const blend = progress < 0.4 ? 0 : progress > 0.8 ? 1 : (progress - 0.4) / 0.4;
+      const eased = blend * blend * (3 - 2 * blend);
+      return {
+        name: blend < 0.5 ? PROFILES[i].name : next.name,
+        weights: PROFILES[i].weights.map((w, j) => lerp(w, next.weights[j], eased)),
+        dominantColor: blend < 0.5
+          ? (PROFILES[i].weights[0] > 35 ? COLORS.verde : PROFILES[i].weights[2] > 40 ? COLORS.ambar : COLORS.ambarRisco)
+          : (next.weights[0] > 35 ? COLORS.verde : next.weights[2] > 40 ? COLORS.ambar : COLORS.ambarRisco),
+      };
+    }
+    acc += PROFILES[i].duration;
+  }
+  return { name: PROFILES[0].name, weights: PROFILES[0].weights, dominantColor: COLORS.verde };
+}
+
+export function RiskCalibrationAnimation() {
+  const [elapsed, setElapsed] = useState(0)
+  const raf = useRef<number | null>(null)
+  const t0 = useRef<number | null>(null)
+
+  useEffect(() => {
+    const tick = (ts: number) => {
+      if (t0.current == null) t0.current = ts
+      setElapsed((ts - t0.current!) / 1000)
+      raf.current = requestAnimationFrame(tick)
+    }
+    raf.current = requestAnimationFrame(tick)
+    return () => {
+      if (raf.current != null) cancelAnimationFrame(raf.current)
+    }
+  }, [])
+
+  const profile = getProfile(elapsed);
+  const pulseScale = 1 + 0.2 * Math.abs(Math.sin(elapsed * Math.PI * 0.4));
+
+  return (
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        position: 'absolute',
+        inset: 0,
+        background: 'transparent',
+        overflow: 'hidden',
+        fontFamily: "'Helvetica Neue', Helvetica, Arial, sans-serif",
+      }}
+    >
+      <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ position: "absolute", inset: 0 }}>
+        <defs>
+          <radialGradient id="cg3v3" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor={COLORS.ambar} stopOpacity="0.05" />
+            <stop offset="100%" stopColor={COLORS.ambar} stopOpacity="0" />
+          </radialGradient>
+          <filter id="gl3v3"><feGaussianBlur stdDeviation="4" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+          <filter id="ringGlowV3"><feGaussianBlur stdDeviation="8" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+        </defs>
+
+        <circle cx={CX} cy={CY} r={350} fill="url(#cg3v3)" />
+
+        {Array.from({ length: Math.ceil(H / 45) + 1 }, (_, i) => <line key={`h${i}`} x1={0} y1={i * 45} x2={W} y2={i * 45} stroke={COLORS.ambar} strokeOpacity={0.025} strokeWidth={0.5} />)}
+        {Array.from({ length: Math.ceil(W / 45) + 1 }, (_, i) => <line key={`v${i}`} x1={i * 45} y1={0} x2={i * 45} y2={H} stroke={COLORS.ambar} strokeOpacity={0.025} strokeWidth={0.5} />)}
+
+        {RADII_BG.map(r => <circle key={r} cx={CX} cy={CY} r={r} fill="none" stroke={COLORS.ambar} strokeOpacity={0.04} strokeWidth={0.5} strokeDasharray="3 6" />)}
+
+        <line x1={CX} y1={CY - 450} x2={CX} y2={CY + 450} stroke={COLORS.ambar} strokeOpacity={0.03} strokeWidth={0.5} />
+        <line x1={CX - 450} y1={CY} x2={CX + 450} y2={CY} stroke={COLORS.ambar} strokeOpacity={0.03} strokeWidth={0.5} />
+
+        {/* Sonar rings */}
+        {DIMENSIONS.map((dim, di) => {
+          const weight = profile.weights[di] / 100;
+          const thickness = 1.5 + weight * 5;
+          const opacity = 0.05 + weight * 0.28;
+
+          return [0, 1].map(w => {
+            const phase = (elapsed * dim.freq + w * 0.5) % 1;
+            const radius = dim.baseRadius * 0.2 + phase * dim.baseRadius;
+            const waveOpacity = opacity * (1 - phase * 0.8) * (0.4 + weight * 0.6);
+            const waveThickness = thickness * (1 - phase * 0.5);
+
+            return (
+              <circle
+                key={`wave-${di}-${w}`}
+                cx={CX} cy={CY}
+                r={radius}
+                fill="none"
+                stroke={dim.color}
+                strokeOpacity={waveOpacity}
+                strokeWidth={waveThickness}
+                filter={weight > 0.35 ? "url(#ringGlowV3)" : undefined}
+              />
+            );
+          });
+        })}
+
+        {/* Static orbit markers */}
+        {DIMENSIONS.map((dim, di) => {
+          const weight = profile.weights[di] / 100;
+          return (
+            <circle
+              key={`orbit-${di}`}
+              cx={CX} cy={CY}
+              r={dim.baseRadius}
+              fill="none"
+              stroke={dim.color}
+              strokeOpacity={0.06 + weight * 0.15}
+              strokeWidth={0.8 + weight * 1.5}
+              strokeDasharray="1 4"
+              style={{ transition: "stroke-opacity 0.8s ease, stroke-width 0.8s ease" }}
+            />
+          );
+        })}
+
+        {/* Mineral cards */}
+        {MINERALS.map((m, i) => {
+          const floatY = Math.sin(elapsed * 0.25 + i * 0.9) * 4;
+          const floatX = Math.cos(elapsed * 0.2 + i * 0.7) * 3;
+          const fpx = CX + m.x + floatX;
+          const fpy = CY + m.y + floatY;
+          const sz = 40;
+          const breathe = 1 + 0.02 * Math.sin(elapsed * 0.8 + i);
+          const s = sz * breathe;
+
+          const dist = Math.sqrt(m.x * m.x + m.y * m.y);
+          let closestDim = 0;
+          let closestDist = Infinity;
+          DIMENSIONS.forEach((dim, di) => {
+            const d = Math.abs(dist - dim.baseRadius);
+            if (d < closestDist) { closestDist = d; closestDim = di; }
+          });
+          const dimWeight = profile.weights[closestDim] / 100;
+          const cardOpacity = 0.12 + dimWeight * 0.3;
+
+          return (
+            <g key={`m${i}`} opacity={cardOpacity} style={{ transition: "opacity 1s ease" }}>
+              <rect x={fpx - s / 2} y={fpy - s / 2} width={s} height={s} rx={5} fill={COLORS.bgPrimary} stroke={m.color} strokeWidth={0.6} strokeOpacity={0.25 + dimWeight * 0.35} />
+              <rect x={fpx - s / 2} y={fpy - s / 2} width={s} height={s} rx={5} fill={m.color} opacity={0.03 + dimWeight * 0.07} />
+              <text x={fpx} y={fpy + 2} fill={m.color} fontSize={14} fontWeight={500} fontFamily="'Helvetica Neue', Arial" textAnchor="middle" dominantBaseline="middle" opacity={0.4 + dimWeight * 0.5} letterSpacing={0.5}>
+                {m.label}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Center */}
+        <circle cx={CX} cy={CY} r={6 * pulseScale} fill={profile.dominantColor} filter="url(#gl3v3)" opacity={0.6} style={{ transition: "fill 1s ease" }} />
+        <circle cx={CX} cy={CY} r={3.5} fill={COLORS.ambarLight} />
+        <circle cx={CX} cy={CY} r={1.5} fill="white" opacity={0.5} />
+
+        {/* Ticks */}
+        {Array.from({ length: 72 }, (_, i) => {
+          const a = (i * 5 * Math.PI) / 180;
+          const major = i % 18 === 0;
+          const inn = major ? 415 : 425;
+          return <line key={`t${i}`} x1={CX + inn * Math.cos(a)} y1={CY + inn * Math.sin(a)} x2={CX + 430 * Math.cos(a)} y2={CY + 430 * Math.sin(a)} stroke={COLORS.ambar} strokeOpacity={major ? 0.12 : 0.04} strokeWidth={major ? 0.7 : 0.3} />;
+        })}
+      </svg>
+    </div>
+  )
+}
+
+=== FIM: src\components\dashboard\animations\RiskCalibrationAnimation.tsx ===
+
+=== ARQUIVO: src\components\dashboard\animations\RegionFocusAnimation.tsx ===
+import { useState, useEffect, useRef } from 'react'
+
+const COLORS = {
+  ambar: "#EF9F27",
+  ambarLight: "#F1B85A",
+  verde: "#1D9E75",
+  ambarRisco: "#E8A830",
+  textPrimary: "#F1EFE8",
+  textSecondary: "#888780",
+  bgPrimary: "#0D0D0C",
+  border: "#2C2C2A",
+};
+
+// Real IBGE viewBox
+const MAP_VB = { x: 181.79, y: 267.85, w: 68.46, h: 71.58 };
+const MAP_CX = MAP_VB.x + MAP_VB.w / 2; // ~216.02
+const MAP_CY = MAP_VB.y + MAP_VB.h / 2; // ~303.64
+
+// Regions with real centroids from brazilMapPaths.ts
+const REGIONS = [
+  { name: "Norte", label: "N", color: "#35B88A", cx: 207.586, cy: 286.595 },
+  { name: "Nordeste", label: "NE", color: "#D4A843", cx: 235.475, cy: 295.259 },
+  { name: "Centro-Oeste", label: "CO", color: "#9BB8D0", cx: 216.918, cy: 304.85 },
+  { name: "Sudeste", label: "SE", color: "#C87C5B", cx: 228.361, cy: 311.324 },
+  { name: "Sul", label: "S", color: "#8FAA8D", cx: 218.406, cy: 325.565 },
+];
+
+// UF paths grouped by region (real IBGE data - abbreviated here, full paths inline)
+// In production, import from brazilMapPaths.ts. For this standalone demo, we embed sample paths.
+// The component is designed to work with the real paths from the Terrae codebase.
+
+const MINERALS = [
+  { label: "Fe", color: "#7EADD4", x: 140, y: -220 },
+  { label: "Cu", color: "#C87C5B", x: -110, y: -150 },
+  { label: "Au", color: "#D4A843", x: 230, y: 100 },
+  { label: "Nb", color: "#5CBFA0", x: -190, y: 200 },
+  { label: "TR", color: "#3D8B7A", x: 80, y: 320 },
+  { label: "Li", color: "#9BB8D0", x: -240, y: -80 },
+  { label: "Ni", color: "#8FAA8D", x: 170, y: -350 },
+  { label: "Bx", color: "#B8917A", x: -60, y: 400 },
+  { label: "Qz", color: "#C4B89A", x: 200, y: -50 },
+];
+
+const W = 600;
+const H = 1100;
+const CX = W / 2;
+const CY = H / 2;
+const RADII_BG = [80, 160, 240, 320, 400];
+
+// Scale factor: map viewBox width (68.46) should render at ~280px in our 600px canvas
+const MAP_SCALE = 280 / MAP_VB.w; // ~4.09
+
+function angleBetween(cx, cy, px, py) {
+  return Math.atan2(py - cy, px - cx) * 180 / Math.PI;
+}
+function angleDiff(a, b) {
+  let d = ((b - a + 180) % 360) - 180;
+  if (d < -180) d += 360;
+  return d;
+}
+
+export function RegionFocusAnimation() {
+  const [elapsed, setElapsed] = useState(0)
+  const raf = useRef<number | null>(null)
+  const t0 = useRef<number | null>(null)
+
+  useEffect(() => {
+    const tick = (ts: number) => {
+      if (t0.current == null) t0.current = ts
+      setElapsed((ts - t0.current!) / 1000)
+      raf.current = requestAnimationFrame(tick)
+    }
+    raf.current = requestAnimationFrame(tick)
+    return () => {
+      if (raf.current != null) cancelAnimationFrame(raf.current)
+    }
+  }, [])
+
+  const sonarFade = Math.max(0, 1 - elapsed / 2);
+  const mapDrawProgress = Math.min(1, Math.max(0, (elapsed - 0.5) / 2));
+  const mapDrawEased = mapDrawProgress * mapDrawProgress * (3 - 2 * mapDrawProgress);
+  const regionsProgress = Math.min(1, Math.max(0, (elapsed - 2.5) / 1));
+  const sweepActive = elapsed > 3;
+  const sweepOpacity = sweepActive ? Math.min(1, (elapsed - 3) / 1) : 0;
+  const sweep = (elapsed * 50) % 360;
+  const pulse = 1 + 0.15 * Math.abs(Math.sin(elapsed * Math.PI * 0.4));
+
+  // Transform map coordinates to canvas coordinates
+  const mapToCanvas = (mx, my) => ({
+    x: CX + (mx - MAP_CX) * MAP_SCALE,
+    y: CY + (my - MAP_CY) * MAP_SCALE,
+  });
+
+  return (
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        position: 'absolute',
+        inset: 0,
+        background: 'transparent',
+        overflow: 'hidden',
+        fontFamily: "'Helvetica Neue', Helvetica, Arial, sans-serif",
+      }}
+    >
+      <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{ position: "absolute", inset: 0 }}>
+        <defs>
+          <radialGradient id="cg4r" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor={COLORS.ambar} stopOpacity="0.05" />
+            <stop offset="100%" stopColor={COLORS.ambar} stopOpacity="0" />
+          </radialGradient>
+          <radialGradient id="sweepG4r" cx="0" cy="0" r="1">
+            <stop offset="0%" stopColor={COLORS.ambar} stopOpacity="0.15" />
+            <stop offset="60%" stopColor={COLORS.ambar} stopOpacity="0.04" />
+            <stop offset="100%" stopColor={COLORS.ambar} stopOpacity="0" />
+          </radialGradient>
+          <mask id="sweepM4r">
+            <rect width={W} height={H} fill="black" />
+            {(() => {
+              const a1 = ((sweep - 40) * Math.PI) / 180;
+              const a2 = ((sweep + 40) * Math.PI) / 180;
+              const r = 460;
+              return <path d={`M ${CX} ${CY} L ${CX + r * Math.cos(a1)} ${CY + r * Math.sin(a1)} A ${r} ${r} 0 0 1 ${CX + r * Math.cos(a2)} ${CY + r * Math.sin(a2)} Z`} fill="white" />;
+            })()}
+          </mask>
+          <filter id="gl4r"><feGaussianBlur stdDeviation="4" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+          <filter id="rgGlow4r"><feGaussianBlur stdDeviation="3" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+        </defs>
+
+        <circle cx={CX} cy={CY} r={350} fill="url(#cg4r)" />
+
+        {/* Grid */}
+        {Array.from({ length: Math.ceil(H / 45) + 1 }, (_, i) => <line key={`h${i}`} x1={0} y1={i * 45} x2={W} y2={i * 45} stroke={COLORS.ambar} strokeOpacity={0.025} strokeWidth={0.5} />)}
+        {Array.from({ length: Math.ceil(W / 45) + 1 }, (_, i) => <line key={`v${i}`} x1={i * 45} y1={0} x2={i * 45} y2={H} stroke={COLORS.ambar} strokeOpacity={0.025} strokeWidth={0.5} />)}
+
+        {/* Background circles */}
+        {RADII_BG.map(r => <circle key={r} cx={CX} cy={CY} r={r} fill="none" stroke={COLORS.ambar} strokeOpacity={0.04} strokeWidth={0.5} strokeDasharray="3 6" />)}
+
+        {/* Cross hairs */}
+        <line x1={CX} y1={CY - 450} x2={CX} y2={CY + 450} stroke={COLORS.ambar} strokeOpacity={0.03} strokeWidth={0.5} />
+        <line x1={CX - 450} y1={CY} x2={CX + 450} y2={CY} stroke={COLORS.ambar} strokeOpacity={0.03} strokeWidth={0.5} />
+
+        {/* Fading sonar rings from Step 3 */}
+        {sonarFade > 0.01 && [
+          { color: COLORS.verde, baseR: 120, freq: 0.15 },
+          { color: COLORS.ambarRisco, baseR: 220, freq: 0.12 },
+          { color: COLORS.ambar, baseR: 320, freq: 0.09 },
+        ].map((dim, di) => [0, 1].map(wi => {
+          const phase = (elapsed * dim.freq + wi * 0.5) % 1;
+          const radius = dim.baseR * 0.2 + phase * dim.baseR;
+          return <circle key={`sw${di}${wi}`} cx={CX} cy={CY} r={radius} fill="none" stroke={dim.color} strokeOpacity={0.15 * (1 - phase * 0.8) * sonarFade} strokeWidth={1.5 * (1 - phase * 0.5)} />;
+        }))}
+
+        {/* Sweep (returns after map is drawn) */}
+        {sweepActive && (
+          <g opacity={sweepOpacity * 0.7}>
+            <circle cx={CX} cy={CY} r={440} fill="url(#sweepG4r)" mask="url(#sweepM4r)" />
+            {(() => { const a = ((sweep + 40) * Math.PI) / 180; return <line x1={CX} y1={CY} x2={CX + 440 * Math.cos(a)} y2={CY + 440 * Math.sin(a)} stroke={COLORS.ambar} strokeOpacity={0.2} strokeWidth={0.6} />; })()}
+          </g>
+        )}
+
+        {/* BRAZIL MAP — using real IBGE viewBox, scaled and centered */}
+        <g
+          transform={`translate(${CX}, ${CY}) scale(${MAP_SCALE}) translate(${-MAP_CX}, ${-MAP_CY})`}
+          opacity={mapDrawEased}
+        >
+          {/* 
+            In the real Terrae implementation, replace the placeholder rect below with:
+            
+            {BRAZIL_REGIONS.map((region, ri) => {
+              const regionDelay = ri * 0.15;
+              const regionAppear = Math.min(1, Math.max(0, (regionsProgress - regionDelay) / 0.5));
+              const canvasPos = mapToCanvas(region.cx, region.cy);
+              const regionAngle = angleBetween(CX, CY, canvasPos.x, canvasPos.y);
+              const diff = Math.abs(angleDiff(sweep, regionAngle));
+              const inBeam = sweepActive && diff < 60;
+              const beamIntensity = inBeam ? Math.max(0, 1 - diff / 60) : 0;
+              
+              return (
+                <g key={ri} opacity={regionAppear}>
+                  <path d={region.path} fill={region.color} fillOpacity={0.04 + 0.15 * beamIntensity} stroke={region.color} strokeWidth={0.15 + 0.3 * beamIntensity} strokeOpacity={0.1 + 0.3 * beamIntensity} strokeLinejoin="round" />
+                  <text x={region.cx} y={region.cy + 1} fill={region.color} fontSize={3} fontWeight={600} textAnchor="middle" dominantBaseline="middle" letterSpacing={0.5} opacity={0.08 + 0.5 * beamIntensity}>{region.label}</text>
+                </g>
+              );
+            })}
+            
+            For this standalone demo, we show the outline placeholder:
+          */}
+          
+          {/* Placeholder: outline of map area (replace with real paths in Terrae) */}
+          <rect
+            x={MAP_VB.x} y={MAP_VB.y}
+            width={MAP_VB.w} height={MAP_VB.h}
+            fill="none"
+            stroke={COLORS.ambar}
+            strokeWidth={0.3}
+            strokeOpacity={0.1}
+            strokeDasharray="1 2"
+          />
+          
+          {/* Region centroids as dots (visible even in demo) */}
+          {REGIONS.map((r, i) => {
+            const regionDelay = i * 0.2;
+            const regionAppear = Math.min(1, Math.max(0, (regionsProgress - regionDelay) / 0.5));
+            const canvasPos = mapToCanvas(r.cx, r.cy);
+            const regionAngle = angleBetween(CX, CY, canvasPos.x, canvasPos.y);
+            const diff = Math.abs(angleDiff(sweep, regionAngle));
+            const inBeam = sweepActive && diff < 60;
+            const beamIntensity = inBeam ? Math.max(0, 1 - diff / 60) : 0;
+
+            return (
+              <g key={i} opacity={regionAppear}>
+                {/* Region dot */}
+                <circle
+                  cx={r.cx} cy={r.cy} r={1.5 + beamIntensity * 1}
+                  fill={r.color}
+                  opacity={0.15 + 0.6 * beamIntensity}
+                  filter={beamIntensity > 0.3 ? "url(#rgGlow4r)" : undefined}
+                />
+                {/* Region label */}
+                <text
+                  x={r.cx} y={r.cy + 4}
+                  fill={r.color}
+                  fontSize={2.8}
+                  fontWeight={600}
+                  fontFamily="'Helvetica Neue', Arial"
+                  textAnchor="middle"
+                  letterSpacing={0.5}
+                  opacity={0.06 + 0.55 * beamIntensity}
+                >
+                  {r.label}
+                </text>
+                {/* Region name (only when illuminated) */}
+                {beamIntensity > 0.2 && (
+                  <text
+                    x={r.cx} y={r.cy - 3.5}
+                    fill={r.color}
+                    fontSize={1.8}
+                    fontFamily="'Helvetica Neue', Arial"
+                    textAnchor="middle"
+                    letterSpacing={0.3}
+                    opacity={0.4 * beamIntensity}
+                  >
+                    {r.name.toUpperCase()}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+        </g>
+
+
+
+        {/* Expanding ring */}
+        {(() => {
+          const rp = (elapsed * 0.3) % 1;
+          return <circle cx={CX} cy={CY} r={8 * (1 + rp * 6)} fill="none" stroke={COLORS.ambar} strokeOpacity={0.12 * (1 - rp)} strokeWidth={0.5} />;
+        })()}
+
+        {/* Center pulse */}
+        <circle cx={CX} cy={CY} r={5 * pulse} fill={COLORS.ambar} filter="url(#gl4r)" opacity={0.6} />
+        <circle cx={CX} cy={CY} r={3} fill={COLORS.ambarLight} />
+        <circle cx={CX} cy={CY} r={1.5} fill="white" opacity={0.5} />
+
+        {/* Angle ticks */}
+        {Array.from({ length: 72 }, (_, i) => {
+          const a = (i * 5 * Math.PI) / 180;
+          const major = i % 18 === 0;
+          const inn = major ? 415 : 425;
+          return <line key={`t${i}`} x1={CX + inn * Math.cos(a)} y1={CY + inn * Math.sin(a)} x2={CX + 430 * Math.cos(a)} y2={CY + 430 * Math.sin(a)} stroke={COLORS.ambar} strokeOpacity={major ? 0.1 : 0.03} strokeWidth={major ? 0.6 : 0.3} />;
+        })}
+      </svg>
+    </div>
+  )
+}
+
+=== FIM: src\components\dashboard\animations\RegionFocusAnimation.tsx ===
+
+=== ARQUIVO: src\components\dashboard\RadarBackgroundAnimation.tsx ===
+import { useEffect, useRef, useState } from 'react'
+
+const COLORS = {
+  ambar: '#EF9F27',
+  ambarLight: '#F1B85A',
+  bgPrimary: '#0D0D0C',
+} as const
+
+const MINERALS: {
+  label: string
+  color: string
+  x: number
+  y: number
+}[] = [
+  { label: 'Fe', color: '#7EADD4', x: -520, y: -180 },
+  { label: 'Cu', color: '#C87C5B', x: 480, y: -220 },
+  { label: 'Au', color: '#D4A843', x: -350, y: 160 },
+  { label: 'Nb', color: '#5CBFA0', x: 280, y: -320 },
+  { label: 'TR', color: '#3D8B7A', x: -180, y: 280 },
+  { label: 'Li', color: '#9BB8D0', x: 550, y: 120 },
+  { label: 'Ni', color: '#8FAA8D', x: -450, y: -300 },
+  { label: 'Bx', color: '#B8917A', x: 380, y: 260 },
+  { label: 'Qz', color: '#C4B89A', x: -80, y: -380 },
+  { label: 'Fe', color: '#7EADD4', x: 150, y: 350 },
+  { label: 'Cu', color: '#C87C5B', x: -600, y: 50 },
+  { label: 'Au', color: '#D4A843', x: 620, y: -80 },
+  { label: 'Nb', color: '#5CBFA0', x: -280, y: -150 },
+  { label: 'Li', color: '#9BB8D0', x: 420, y: 380 },
+]
+
+const MINERAL_NAMES = [
+  'FERRO',
+  'COBRE',
+  'OURO',
+  'NIÓBIO',
+  'TERRAS RARAS',
+  'LÍTIO',
+  'NÍQUEL',
+  'BAUXITA',
+  'QUARTZO',
+  'FERRO',
+  'COBRE',
+  'OURO',
+  'NIÓBIO',
+  'LÍTIO',
+]
+
+const W = 1400
+const H = 700
+const CX = W / 2
+const CY = H / 2
+const RADII = [60, 120, 180, 240, 300, 380]
+
+function angleBetween(cx: number, cy: number, px: number, py: number): number {
+  return (Math.atan2(py - cy, px - cx) * 180) / Math.PI
+}
+
+function angleDiff(a: number, b: number): number {
+  let d = ((b - a + 180) % 360) - 180
+  if (d < -180) d += 360
+  return d
+}
+
+export function RadarBackgroundAnimation() {
+  const [elapsed, setElapsed] = useState(0)
+  const raf = useRef<number | null>(null)
+  const t0 = useRef<number | null>(null)
+
+  useEffect(() => {
+    const tick = (ts: number) => {
+      if (t0.current == null) t0.current = ts
+      setElapsed((ts - t0.current) / 1000)
+      raf.current = requestAnimationFrame(tick)
+    }
+    raf.current = requestAnimationFrame(tick)
+    return () => {
+      if (raf.current != null) cancelAnimationFrame(raf.current)
+    }
+  }, [])
+
+  const sweep = (elapsed * 72) % 360
+  const pulse = 1 + 0.2 * Math.abs(Math.sin(elapsed * Math.PI * 0.5))
+  const rp1 = (elapsed * 0.4) % 1
+  const rp2 = ((elapsed + 1.2) * 0.4) % 1
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        inset: 0,
+        overflow: 'hidden',
+        background: COLORS.bgPrimary,
+        width: '100%',
+        height: '100%',
+      }}
+    >
+      <svg
+        width="100%"
+        height="100%"
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="xMidYMid meet"
+        style={{ position: 'absolute', inset: 0 }}
+      >
+        <defs>
+          <radialGradient id="sweepBg" cx="0" cy="0" r="1">
+            <stop offset="0%" stopColor={COLORS.ambar} stopOpacity="0.22" />
+            <stop offset="60%" stopColor={COLORS.ambar} stopOpacity="0.05" />
+            <stop offset="100%" stopColor={COLORS.ambar} stopOpacity="0" />
+          </radialGradient>
+          <radialGradient id="centerBg" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor={COLORS.ambar} stopOpacity="0.06" />
+            <stop offset="100%" stopColor={COLORS.ambar} stopOpacity="0" />
+          </radialGradient>
+          <mask id="sweepM">
+            <rect width={W} height={H} fill="black" />
+            {(() => {
+              const a1 = ((sweep - 35) * Math.PI) / 180
+              const a2 = ((sweep + 35) * Math.PI) / 180
+              const r = 500
+              return (
+                <path
+                  d={`M ${CX} ${CY} L ${CX + r * Math.cos(a1)} ${CY + r * Math.sin(a1)} A ${r} ${r} 0 0 1 ${CX + r * Math.cos(a2)} ${CY + r * Math.sin(a2)} Z`}
+                  fill="white"
+                />
+              )
+            })()}
+          </mask>
+          <filter id="gl">
+            <feGaussianBlur stdDeviation="4" result="b" />
+            <feMerge>
+              <feMergeNode in="b" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+          <filter id="sgl">
+            <feGaussianBlur stdDeviation="8" result="b" />
+            <feMerge>
+              <feMergeNode in="b" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+
+        <circle cx={CX} cy={CY} r={320} fill="url(#centerBg)" />
+
+        {Array.from({ length: Math.ceil(H / 50) + 1 }, (_, i) => (
+          <line
+            key={`h${i}`}
+            x1={0}
+            y1={i * 50}
+            x2={W}
+            y2={i * 50}
+            stroke={COLORS.ambar}
+            strokeOpacity={0.025}
+            strokeWidth={0.5}
+          />
+        ))}
+        {Array.from({ length: Math.ceil(W / 50) + 1 }, (_, i) => (
+          <line
+            key={`v${i}`}
+            x1={i * 50}
+            y1={0}
+            x2={i * 50}
+            y2={H}
+            stroke={COLORS.ambar}
+            strokeOpacity={0.025}
+            strokeWidth={0.5}
+          />
+        ))}
+
+        {RADII.map((r) => (
+          <circle
+            key={r}
+            cx={CX}
+            cy={CY}
+            r={r}
+            fill="none"
+            stroke={COLORS.ambar}
+            strokeOpacity={0.06}
+            strokeWidth={0.6}
+            strokeDasharray={r > 300 ? '4 6' : 'none'}
+          />
+        ))}
+
+        <line
+          x1={CX}
+          y1={0}
+          x2={CX}
+          y2={H}
+          stroke={COLORS.ambar}
+          strokeOpacity={0.04}
+          strokeWidth={0.5}
+        />
+        <line
+          x1={0}
+          y1={CY}
+          x2={W}
+          y2={CY}
+          stroke={COLORS.ambar}
+          strokeOpacity={0.04}
+          strokeWidth={0.5}
+        />
+        <line
+          x1={CX - 350}
+          y1={CY - 350}
+          x2={CX + 350}
+          y2={CY + 350}
+          stroke={COLORS.ambar}
+          strokeOpacity={0.02}
+          strokeWidth={0.5}
+        />
+        <line
+          x1={CX + 350}
+          y1={CY - 350}
+          x2={CX - 350}
+          y2={CY + 350}
+          stroke={COLORS.ambar}
+          strokeOpacity={0.02}
+          strokeWidth={0.5}
+        />
+
+        <circle cx={CX} cy={CY} r={460} fill="url(#sweepBg)" mask="url(#sweepM)" />
+        {(() => {
+          const a = ((sweep + 35) * Math.PI) / 180
+          return (
+            <line
+              x1={CX}
+              y1={CY}
+              x2={CX + 460 * Math.cos(a)}
+              y2={CY + 460 * Math.sin(a)}
+              stroke={COLORS.ambar}
+              strokeOpacity={0.3}
+              strokeWidth={0.8}
+            />
+          )
+        })()}
+        {(() => {
+          const a = ((sweep - 35) * Math.PI) / 180
+          return (
+            <line
+              x1={CX}
+              y1={CY}
+              x2={CX + 460 * Math.cos(a)}
+              y2={CY + 460 * Math.sin(a)}
+              stroke={COLORS.ambar}
+              strokeOpacity={0.08}
+              strokeWidth={0.4}
+            />
+          )
+        })()}
+
+        <circle
+          cx={CX}
+          cy={CY}
+          r={8 * (1 + rp1 * 8)}
+          fill="none"
+          stroke={COLORS.ambar}
+          strokeOpacity={0.2 * (1 - rp1)}
+          strokeWidth={0.6}
+        />
+        <circle
+          cx={CX}
+          cy={CY}
+          r={8 * (1 + rp2 * 8)}
+          fill="none"
+          stroke={COLORS.ambar}
+          strokeOpacity={0.12 * (1 - rp2)}
+          strokeWidth={0.5}
+        />
+
+        {MINERALS.map((m, i) => {
+          const px = CX + m.x
+          const py = CY + m.y
+          const floatY = Math.sin(elapsed * 0.2 + i * 1.1) * 3
+          const floatX = Math.cos(elapsed * 0.15 + i * 0.8) * 2
+          const fpx = px + floatX
+          const fpy = py + floatY
+
+          const mineralAngle = angleBetween(CX, CY, px, py)
+          const diff = Math.abs(angleDiff(sweep, mineralAngle))
+          const inBeam = diff < 55
+          const beam = inBeam ? Math.max(0, 1 - diff / 55) : 0
+
+          const baseOp = 0.05
+          const revealOp = baseOp + 0.4 * beam
+          const sz = 42
+          const s = sz * (1 + 0.02 * Math.sin(elapsed * 0.8 + i))
+
+          return (
+            <g key={i}>
+              <line
+                x1={fpx}
+                y1={fpy}
+                x2={CX}
+                y2={CY}
+                stroke={m.color}
+                strokeOpacity={0.02 + 0.04 * beam}
+                strokeWidth={0.4}
+                strokeDasharray="3 6"
+              />
+              {beam > 0.3 ? (
+                <circle
+                  cx={fpx}
+                  cy={fpy}
+                  r={s * 0.8}
+                  fill={m.color}
+                  opacity={0.06 * beam}
+                  filter="url(#sgl)"
+                />
+              ) : null}
+              <rect
+                x={fpx - s / 2}
+                y={fpy - s / 2}
+                width={s}
+                height={s}
+                rx={5}
+                fill={COLORS.bgPrimary}
+                stroke={m.color}
+                strokeWidth={inBeam ? 1 : 0.5}
+                strokeOpacity={baseOp + 0.45 * beam}
+                opacity={revealOp}
+              />
+              <rect
+                x={fpx - s / 2}
+                y={fpy - s / 2}
+                width={s}
+                height={s}
+                rx={5}
+                fill={m.color}
+                opacity={0.02 + 0.08 * beam}
+              />
+              <text
+                x={fpx}
+                y={fpy + 1}
+                fill={m.color}
+                fontSize={15}
+                fontWeight={600}
+                fontFamily="'Helvetica Neue', Arial"
+                textAnchor="middle"
+                dominantBaseline="middle"
+                opacity={0.04 + 0.8 * beam}
+                letterSpacing={0.5}
+              >
+                {m.label}
+              </text>
+              <text
+                x={fpx}
+                y={fpy + s / 2 + 13}
+                fill={m.color}
+                fontSize={7}
+                fontFamily="'Helvetica Neue', Arial"
+                textAnchor="middle"
+                letterSpacing={1.5}
+                opacity={0.03 + 0.5 * beam}
+              >
+                {MINERAL_NAMES[i]}
+              </text>
+              <circle
+                cx={fpx + s / 2 - 5}
+                cy={fpy - s / 2 + 5}
+                r={2}
+                fill={m.color}
+                opacity={0.05 + 0.6 * beam}
+              />
+            </g>
+          )
+        })}
+
+        <circle cx={CX} cy={CY} r={5 * pulse} fill={COLORS.ambar} filter="url(#gl)" opacity={0.7} />
+        <circle cx={CX} cy={CY} r={3} fill={COLORS.ambarLight} />
+        <circle cx={CX} cy={CY} r={1.5} fill="white" opacity={0.5} />
+
+        {RADII.filter((r) => r > 100).map((r) => (
+          <text
+            key={`l${r}`}
+            x={CX + r + 4}
+            y={CY - 4}
+            fill={COLORS.ambar}
+            fillOpacity={0.08}
+            fontSize={7}
+            fontFamily="monospace"
+          >
+            {r}km
+          </text>
+        ))}
+
+        {Array.from({ length: 72 }, (_, i) => {
+          const a = (i * 5 * Math.PI) / 180
+          const major = i % 18 === 0
+          const minor = i % 9 === 0
+          const inn = major ? 375 : minor ? 378 : 382
+          return (
+            <line
+              key={`t${i}`}
+              x1={CX + inn * Math.cos(a)}
+              y1={CY + inn * Math.sin(a)}
+              x2={CX + 385 * Math.cos(a)}
+              y2={CY + 385 * Math.sin(a)}
+              stroke={COLORS.ambar}
+              strokeOpacity={major ? 0.15 : minor ? 0.07 : 0.03}
+              strokeWidth={major ? 0.7 : 0.3}
+            />
+          )
+        })}
+
+        {(
+          [
+            { l: 'N', a: -90 },
+            { l: 'S', a: 90 },
+            { l: 'E', a: 0 },
+            { l: 'W', a: 180 },
+          ] as const
+        ).map(({ l, a }) => {
+          const rad = (a * Math.PI) / 180
+          return (
+            <text
+              key={l}
+              x={CX + 400 * Math.cos(rad)}
+              y={CY + 400 * Math.sin(rad) + 3}
+              fill={COLORS.ambar}
+              fillOpacity={0.08}
+              fontSize={8}
+              fontFamily="monospace"
+              textAnchor="middle"
+              letterSpacing={2}
+            >
+              {l}
+            </text>
+          )
+        })}
+      </svg>
+    </div>
+  )
+}
+
+=== FIM: src\components\dashboard\RadarBackgroundAnimation.tsx ===
+
+=== ARQUIVO: src\components\dashboard\RadarDashboard.tsx ===
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+} from 'react'
+import {
+  AlertTriangle,
+  Check,
+  Info,
+  Radar as RadarIcon,
+} from 'lucide-react'
+import { useAppStore } from '../../store/useAppStore'
+import { useMapStore } from '../../store/useMapStore'
+import type { Processo } from '../../types'
+import { RadarBackgroundAnimation } from './RadarBackgroundAnimation'
+import { RadarAlertasSubtab } from './RadarAlertasSubtab'
+import { ProspeccaoWizard } from './ProspeccaoWizard'
+import { ObjetivoCard, RiscoCard } from './ProspeccaoCards'
+import { RegimeBadge } from '../ui/RegimeBadge'
+import { BadgeSubstancia } from '../ui/BadgeSubstancia'
+import {
+  MOTION_BAR_STAGGER_MS,
+  MOTION_BAR_WIDTH_MS,
+  MOTION_GROUP_FADE_MS,
+  MOTION_GROUP_TRANSLATE_PX,
+} from '../../lib/motionDurations'
+import { useStaggeredEntrance } from '../../hooks/useStaggeredEntrance'
+import {
+  computeOpportunityForProcesso,
+  corFaixaOpportunity,
+  corMiniBarraValor,
+  labelFaixaOpportunity,
+  type ObjetivoProspeccao,
+  type OpportunityResult,
+  type PerfilRisco,
+} from '../../lib/opportunityScore'
+
+type RadarViewState =
+  | 'home'
+  | 'transitioning-to-wizard'
+  | 'wizard'
+  | 'loading'
+  | 'resultados'
+  | 'transitioning-to-home'
+
+const TODAS_SUBST = '__TODAS__'
+
+const containersLayout: CSSProperties = {
+  position: 'relative',
+  zIndex: 1,
+  flex: '0 0 auto',
+  minWidth: 0,
+  display: 'flex',
+  flexDirection: 'column',
+}
+
+function getElementStyle(
+  viewState: RadarViewState,
+  entryPhase: number,
+  element: 'radar' | 'cta' | 'containers' | 'footer',
+  reducedMotion: boolean,
+): CSSProperties {
+  if (reducedMotion) {
+    if (element === 'containers') {
+      return {
+        ...containersLayout,
+        opacity: 1,
+        transform: 'translateY(0)',
+        pointerEvents: 'auto',
+      }
+    }
+    if (element === 'footer') {
+      return { opacity: 1, transform: 'translateY(0)' }
+    }
+    return { opacity: 1, transform: 'none' }
+  }
+
+  if (viewState === 'transitioning-to-wizard') {
+    switch (element) {
+      case 'radar':
+        return { opacity: 0, transition: 'opacity 400ms ease-in' }
+      case 'cta':
+        return {
+          opacity: 0,
+          transform: 'translateY(-20px)',
+          transition: 'opacity 300ms ease-in, transform 300ms ease-in',
+        }
+      case 'containers':
+        return {
+          ...containersLayout,
+          opacity: 0,
+          transform: 'translateY(60px)',
+          transition: 'opacity 350ms ease-in, transform 350ms ease-in',
+          pointerEvents: 'none',
+        }
+      case 'footer':
+        return { opacity: 0, transition: 'opacity 300ms ease-in' }
+      default:
+        return {}
+    }
+  }
+
+  switch (element) {
+    case 'radar':
+      return {
+        opacity: entryPhase >= 1 ? 1 : 0,
+        transform: entryPhase >= 1 ? 'scale(1)' : 'scale(0.97)',
+        transition: 'opacity 400ms ease-out, transform 400ms ease-out',
+      }
+    case 'cta':
+      return {
+        opacity: entryPhase >= 2 ? 1 : 0,
+        transform: entryPhase >= 2 ? 'translateY(0)' : 'translateY(20px)',
+        transition: 'opacity 350ms ease-out, transform 350ms ease-out',
+        pointerEvents: entryPhase >= 2 ? 'auto' : 'none',
+      }
+    case 'containers':
+      return {
+        ...containersLayout,
+        opacity: entryPhase >= 3 ? 1 : 0,
+        transform: entryPhase >= 3 ? 'translateY(0)' : 'translateY(40px)',
+        transition: 'opacity 400ms ease-out, transform 400ms ease-out',
+        pointerEvents: entryPhase >= 3 ? 'auto' : 'none',
+      }
+    case 'footer':
+      return {
+        opacity: entryPhase >= 3 ? 1 : 0,
+        transform: entryPhase >= 3 ? 'translateY(0)' : 'translateY(40px)',
+        transition: 'opacity 400ms ease-out, transform 400ms ease-out',
+      }
+    default:
+      return {}
+  }
+}
+
+function motionGroupStyle(visible: boolean, reduced: boolean): CSSProperties {
+  if (reduced) return { opacity: 1, transform: 'translateY(0)' }
+  return {
+    opacity: visible ? 1 : 0,
+    transform: visible ? 'translateY(0)' : `translateY(${MOTION_GROUP_TRANSLATE_PX}px)`,
+    transition: `opacity ${MOTION_GROUP_FADE_MS}ms ease-out, transform ${MOTION_GROUP_FADE_MS}ms ease-out`,
+  }
+}
+
+function barFillStyle(
+  pct: number,
+  widthActive: boolean,
+  barIndex: number,
+  reduced: boolean,
+  backgroundColor: string,
+): CSSProperties {
+  if (reduced) {
+    return {
+      width: `${pct}%`,
+      height: '100%',
+      backgroundColor,
+      borderRadius: 3,
+    }
+  }
+  return {
+    width: widthActive ? `${pct}%` : '0%',
+    height: '100%',
+    backgroundColor,
+    borderRadius: 3,
+    transition: `width ${MOTION_BAR_WIDTH_MS}ms ease-out ${barIndex * MOTION_BAR_STAGGER_MS}ms`,
+  }
+}
+
+export function RadarDashboard({
+  reducedMotion = false,
+}: {
+  reducedMotion?: boolean
+} = {}) {
+  const setTelaAtiva = useAppStore((s) => s.setTelaAtiva)
+  const processos = useMapStore((s) => s.processos)
+  const selecionarProcesso = useMapStore((s) => s.selecionarProcesso)
+  const setRelatorioDrawerAberto = useMapStore((s) => s.setRelatorioDrawerAberto)
+  const setPendingNavigation = useMapStore((s) => s.setPendingNavigation)
+
+  const processoById = useMemo(() => {
+    const m = new Map<string, Processo>()
+    for (const p of processos) m.set(p.id, p)
+    return m
+  }, [processos])
+
+  const substanciasCatalogo = useMemo(() => {
+    const s = new Set<string>()
+    for (const p of processos) s.add(p.substancia)
+    return [...s].sort((a, b) => a.localeCompare(b, 'pt-BR'))
+  }, [processos])
+
+  const prospeccaoSubstOpcoes = useMemo(
+    () => [TODAS_SUBST, ...substanciasCatalogo],
+    [substanciasCatalogo],
+  )
+
+  const [viewState, setViewState] = useState<RadarViewState>('home')
+
+  /** 0–3: entrada escalonada na home (radar → CTA → containers); 3 = estado final */
+  const [entryPhase, setEntryPhase] = useState(() => (reducedMotion ? 3 : 0))
+
+  useEffect(() => {
+    if (viewState !== 'home') return
+    if (reducedMotion) {
+      setEntryPhase(3)
+      return
+    }
+    setEntryPhase(0)
+    const t1 = window.setTimeout(() => setEntryPhase(1), 50)
+    const t2 = window.setTimeout(() => setEntryPhase(2), 250)
+    const t3 = window.setTimeout(() => setEntryPhase(3), 500)
+    return () => {
+      clearTimeout(t1)
+      clearTimeout(t2)
+      clearTimeout(t3)
+    }
+  }, [viewState, reducedMotion])
+
+  const navigateProcessoMapa = useCallback(
+    (id: string) => {
+      setPendingNavigation({
+        type: 'processo',
+        payload: id,
+        timestamp: Date.now(),
+      })
+      setTelaAtiva('mapa')
+    },
+    [setPendingNavigation, setTelaAtiva],
+  )
+
+  const abrirRelatorioProcesso = useCallback(
+    (id: string) => {
+      const p = processoById.get(id) ?? processos.find((x) => x.id === id)
+      if (p) {
+        selecionarProcesso(p)
+        setRelatorioDrawerAberto(true)
+      }
+      setTelaAtiva('mapa')
+    },
+    [processoById, processos, selecionarProcesso, setRelatorioDrawerAberto, setTelaAtiva],
+  )
+
+  /* --- Prospecção --- */
+  const [homeLeaveSource, setHomeLeaveSource] = useState<'wizard' | 'resultados' | null>(null)
+  const [wizardEntryVisible, setWizardEntryVisible] = useState(false)
+
+  const [proObjetivo, setProObjetivo] = useState<ObjetivoProspeccao | null>(null)
+  const [proSubst, setProSubst] = useState<string[]>([])
+  const [proRisco, setProRisco] = useState<PerfilRisco | null>(null)
+  const [proUfs, setProUfs] = useState<string[]>([])
+  const [proDdSub, setProDdSub] = useState(false)
+  const [proDdUf, setProDdUf] = useState(false)
+  const [loadProgress, setLoadProgress] = useState(0)
+  const [loadMsgIdx, setLoadMsgIdx] = useState(0)
+  const [loadOverlayOut, setLoadOverlayOut] = useState(false)
+  const [resultados, setResultados] = useState<OpportunityResult[]>([])
+  const [excluidosCount, setExcluidosCount] = useState(0)
+  const [vistaResultado, setVistaResultado] = useState<'lista' | 'expandido'>('expandido')
+  const [toastMsg, setToastMsg] = useState<string | null>(null)
+
+  const loadingMsgs = [
+    'Cruzando 30 processos com 7 camadas territoriais...',
+    'Analisando alertas de 2.500 fontes regulatórias...',
+    'Calculando viabilidade econômica e logística...',
+    'Aplicando perfil de risco selecionado...',
+    'Gerando ranking de oportunidades...',
+  ]
+
+  const prospeccaoValida =
+    proObjetivo != null &&
+    proRisco != null &&
+    proSubst.length > 0 &&
+    (proSubst.includes(TODAS_SUBST) || proSubst.some((x) => x !== TODAS_SUBST))
+
+  const substanciasFiltroProspeccao = useMemo(() => {
+    if (proSubst.includes(TODAS_SUBST)) return null
+    const xs = proSubst.filter((x) => x !== TODAS_SUBST)
+    return xs.length > 0 ? xs : null
+  }, [proSubst])
+
+  const runAnalise = useCallback(() => {
+    if (!proObjetivo || !proRisco) return
+    let rows = [...processos]
+    if (substanciasFiltroProspeccao != null) {
+      const allow = new Set(substanciasFiltroProspeccao)
+      rows = rows.filter((p) => allow.has(p.substancia))
+    }
+    if (proUfs.length > 0) {
+      rows = rows.filter((p) => proUfs.includes(p.uf))
+    }
+    const scored = rows
+      .map((p) => computeOpportunityForProcesso(p, proRisco, proObjetivo))
+      .sort((a, b) => b.scoreTotal - a.scoreTotal)
+    const excl = scored.filter((r) => r.scoreTotal <= 24).length
+    setExcluidosCount(excl)
+    setResultados(scored.filter((r) => r.scoreTotal > 24))
+    setViewState('resultados')
+  }, [processos, proObjetivo, proRisco, substanciasFiltroProspeccao, proUfs])
+
+  useEffect(() => {
+    if (viewState !== 'loading') return
+    setLoadProgress(0)
+    setLoadMsgIdx(0)
+    setLoadOverlayOut(false)
+    const t0 = Date.now()
+    const id = window.setInterval(() => {
+      const elapsed = Date.now() - t0
+      const p = Math.min(100, (elapsed / 5000) * 100)
+      setLoadProgress(p)
+      if (elapsed >= 5000) {
+        clearInterval(id)
+        setLoadOverlayOut(true)
+        window.setTimeout(() => {
+          runAnalise()
+        }, reducedMotion ? 0 : 200)
+      }
+    }, 50)
+    const msgId = window.setInterval(() => {
+      setLoadMsgIdx((i) => (i + 1) % loadingMsgs.length)
+    }, 1200)
+    return () => {
+      clearInterval(id)
+      clearInterval(msgId)
+    }
+  }, [viewState, runAnalise, reducedMotion, loadingMsgs.length])
+
+  const cardStaggerCount = resultados.length > 0 ? resultados.length : 1
+  const cardVis = useStaggeredEntrance(cardStaggerCount, {
+    baseDelayMs: reducedMotion ? 0 : 0,
+    staggerMs: reducedMotion ? 0 : 60,
+    reducedMotion,
+  })
+
+  const barsReady = viewState === 'resultados' && !reducedMotion
+
+  const resetProspeccao = useCallback(() => {
+    setProObjetivo(null)
+    setProSubst([])
+    setProRisco(null)
+    setProUfs([])
+    setResultados([])
+    setExcluidosCount(0)
+  }, [])
+
+  const handleIniciarProspeccao = useCallback(() => {
+    if (reducedMotion) {
+      setViewState('wizard')
+      return
+    }
+    setViewState('transitioning-to-wizard')
+    window.setTimeout(() => setViewState('wizard'), 500)
+  }, [reducedMotion])
+
+  const handleCancelWizard = useCallback(() => {
+    if (reducedMotion) {
+      setViewState('home')
+      return
+    }
+    setHomeLeaveSource('wizard')
+    setViewState('transitioning-to-home')
+    window.setTimeout(() => {
+      setViewState('home')
+      setHomeLeaveSource(null)
+    }, 400)
+  }, [reducedMotion])
+
+  const handleAnalisar = useCallback(() => {
+    setViewState('loading')
+  }, [])
+
+  const handleVoltarAoRadar = useCallback(() => {
+    if (reducedMotion) {
+      setViewState('home')
+      resetProspeccao()
+      return
+    }
+    setHomeLeaveSource('resultados')
+    setViewState('transitioning-to-home')
+    window.setTimeout(() => {
+      setViewState('home')
+      setHomeLeaveSource(null)
+      resetProspeccao()
+    }, 400)
+  }, [reducedMotion, resetProspeccao])
+
+  const handleNovaProspeccao = useCallback(() => {
+    resetProspeccao()
+    setViewState('wizard')
+  }, [resetProspeccao])
+
+  useEffect(() => {
+    if (viewState === 'wizard') {
+      if (reducedMotion) {
+        setWizardEntryVisible(true)
+        return
+      }
+      setWizardEntryVisible(false)
+      const t = window.setTimeout(() => setWizardEntryVisible(true), 50)
+      return () => clearTimeout(t)
+    }
+    setWizardEntryVisible(false)
+  }, [viewState, reducedMotion])
+
+  const showToast = (msg: string) => {
+    setToastMsg(msg)
+    window.setTimeout(() => setToastMsg(null), 2800)
+  }
+
+  const proPrefixSub =
+    proSubst.length === 0
+      ? 'Substâncias'
+      : proSubst.includes(TODAS_SUBST)
+        ? 'Todas'
+        : proSubst.length === 1
+          ? proSubst[0]!
+          : `${proSubst.length} itens`
+
+  const showHomeBlocks =
+    viewState === 'home' || viewState === 'transitioning-to-wizard'
+
+  const radarStyle = getElementStyle(viewState, entryPhase, 'radar', reducedMotion)
+  const ctaStyle = getElementStyle(viewState, entryPhase, 'cta', reducedMotion)
+  const containersStyle = getElementStyle(viewState, entryPhase, 'containers', reducedMotion)
+  const footerStyle = getElementStyle(viewState, entryPhase, 'footer', reducedMotion)
+
+  const wizardEntryStyle: CSSProperties = reducedMotion
+    ? {}
+    : {
+        opacity: wizardEntryVisible ? 1 : 0,
+        transform: wizardEntryVisible ? 'translateY(0)' : 'translateY(30px)',
+        transition: 'opacity 400ms ease-out, transform 400ms ease-out',
+      }
+
+  const wizardExitStyle: CSSProperties =
+    viewState === 'transitioning-to-home'
+      ? {
+          opacity: 0,
+          transform: 'translateY(20px)',
+          transition: 'opacity 300ms ease-in, transform 300ms ease-in',
+        }
+      : {}
+
+  const showWizardPanel =
+    viewState === 'wizard' ||
+    (viewState === 'transitioning-to-home' && homeLeaveSource === 'wizard')
+
+  const showLoadingResults =
+    viewState === 'loading' ||
+    viewState === 'resultados' ||
+    (viewState === 'transitioning-to-home' && homeLeaveSource === 'resultados')
+
+  return (
+    <div
+      className="terrae-intel-dashboard-scroll box-border flex h-full min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden"
+      style={{
+        backgroundColor: '#0D0D0C',
+        padding: 24,
+        fontFamily: "'Helvetica Neue', Helvetica, Arial, sans-serif",
+      }}
+    >
+      {showHomeBlocks ? (
+        <div
+          style={{
+            position: 'relative',
+            zIndex: 0,
+            flex: '0 0 auto',
+            minWidth: 0,
+            width: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'stretch',
+          }}
+        >
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 0,
+              pointerEvents: 'none',
+              ...radarStyle,
+            }}
+            aria-hidden
+          >
+            <RadarBackgroundAnimation />
+          </div>
+
+          <header
+            style={{
+              position: 'relative',
+              zIndex: 2,
+              flexShrink: 0,
+              paddingBottom: 16,
+              borderBottom: '1px solid #2C2C2A',
+              backgroundColor: 'rgba(13, 13, 12, 0.5)',
+              backdropFilter: 'blur(34px)',
+              WebkitBackdropFilter: 'blur(34px)',
+            }}
+          >
+            <h1
+              style={{
+                margin: 0,
+                fontSize: 24,
+                fontWeight: 500,
+                color: '#F1EFE8',
+              }}
+            >
+              Radar
+            </h1>
+            <p
+              style={{
+                margin: '8px 0 0 0',
+                fontSize: 16,
+                color: '#888780',
+              }}
+            >
+              Monitoramento regulatório e prospecção de oportunidades do setor mineral
+            </p>
+          </header>
+
+          <div
+            style={{
+              position: 'relative',
+              zIndex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'flex-start',
+              textAlign: 'center',
+              minHeight: '50vh',
+              width: '100%',
+              padding: 40,
+              paddingTop: '15vh',
+              boxSizing: 'border-box',
+              ...ctaStyle,
+            }}
+          >
+            <h2
+              style={{
+                fontSize: 22,
+                fontWeight: 500,
+                color: '#F1EFE8',
+                margin: 0,
+              }}
+            >
+              Prospecção de Oportunidades
+            </h2>
+            <p
+              style={{
+                fontSize: 15,
+                color: '#888780',
+                maxWidth: 480,
+                marginTop: 12,
+                lineHeight: 1.6,
+              }}
+            >
+              Cruzamos dados de 20+ fontes públicas para identificar as melhores oportunidades do
+              setor mineral brasileiro.
+            </p>
+            <button
+              type="button"
+              onClick={handleIniciarProspeccao}
+              style={{
+                marginTop: 32,
+                backgroundColor: '#EF9F27',
+                color: '#0D0D0C',
+                fontSize: 15,
+                fontWeight: 600,
+                borderRadius: 8,
+                padding: '12px 32px',
+                border: 'none',
+                cursor: 'pointer',
+                transition: 'filter 0.15s ease-out, box-shadow 0.15s ease-out',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.filter = 'brightness(1.1)'
+                e.currentTarget.style.boxShadow = '0 0 24px rgba(239, 159, 39, 0.35)'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.filter = 'none'
+                e.currentTarget.style.boxShadow = 'none'
+              }}
+            >
+              Iniciar Prospecção
+            </button>
+          </div>
+
+          <div style={containersStyle}>
+            <div
+              style={{
+                position: 'relative',
+                zIndex: 1,
+                flex: '0 0 auto',
+                minHeight: '50vh',
+                minWidth: 0,
+                display: 'flex',
+                flexDirection: 'column',
+              }}
+            >
+              <RadarAlertasSubtab reducedMotion={reducedMotion} onToast={showToast} />
+            </div>
+          </div>
+
+          <footer
+            style={{
+              ...footerStyle,
+              position: 'static',
+              marginTop: 48,
+              paddingTop: 16,
+              borderTop: '1px solid #2C2C2A',
+              textAlign: 'center',
+              fontSize: 11,
+              color: '#5F5E5A',
+              flexShrink: 0,
+              width: '100%',
+              boxSizing: 'border-box',
+            }}
+          >
+            Dados: ANM/SIGMINE · FUNAI · ICMBio · STN · Adoo · Atualizado em{' '}
+            {new Date().toLocaleDateString('pt-BR')}
+          </footer>
+        </div>
+      ) : null}
+
+      {showWizardPanel ? (
+        <>
+          <header
+            style={{
+              flexShrink: 0,
+              paddingBottom: 16,
+              borderBottom: '1px solid #2C2C2A',
+              backgroundColor: '#0D0D0C',
+            }}
+          >
+            <h1
+              style={{
+                margin: 0,
+                fontSize: 24,
+                fontWeight: 500,
+                color: '#F1EFE8',
+              }}
+            >
+              Radar
+            </h1>
+            <p
+              style={{
+                margin: '8px 0 0 0',
+                fontSize: 16,
+                color: '#888780',
+              }}
+            >
+              Monitoramento regulatório e prospecção de oportunidades do setor mineral
+            </p>
+          </header>
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              ...(viewState === 'transitioning-to-home' ? wizardExitStyle : wizardEntryStyle),
+            }}
+          >
+            <ProspeccaoWizard
+              reducedMotion={reducedMotion}
+              prospeccaoSubstOpcoes={prospeccaoSubstOpcoes}
+              proPrefixSub={proPrefixSub}
+              proObjetivo={proObjetivo}
+              setProObjetivo={setProObjetivo}
+              proSubst={proSubst}
+              setProSubst={setProSubst}
+              proRisco={proRisco}
+              setProRisco={setProRisco}
+              proUfs={proUfs}
+              setProUfs={setProUfs}
+              proDdSub={proDdSub}
+              setProDdSub={setProDdSub}
+              proDdUf={proDdUf}
+              setProDdUf={setProDdUf}
+              onCancel={handleCancelWizard}
+              onAnalisar={handleAnalisar}
+            />
+          </div>
+        </>
+      ) : null}
+
+      {showLoadingResults ? (
+        <>
+          <header
+            style={{
+              flexShrink: 0,
+              paddingBottom: 16,
+              borderBottom: '1px solid #2C2C2A',
+              backgroundColor: '#0D0D0C',
+            }}
+          >
+            <h1
+              style={{
+                margin: 0,
+                fontSize: 24,
+                fontWeight: 500,
+                color: '#F1EFE8',
+              }}
+            >
+              Radar
+            </h1>
+            <p
+              style={{
+                margin: '8px 0 0 0',
+                fontSize: 16,
+                color: '#888780',
+              }}
+            >
+              Monitoramento regulatório e prospecção de oportunidades do setor mineral
+            </p>
+          </header>
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              ...(viewState === 'transitioning-to-home' && homeLeaveSource === 'resultados'
+                ? wizardExitStyle
+                : {}),
+            }}
+          >
+            <ProspeccaoBlock
+              reducedMotion={reducedMotion}
+              phase={viewState === 'loading' ? 'loading' : 'resultados'}
+              loadProgress={loadProgress}
+              loadMsgIdx={loadMsgIdx}
+              loadOverlayOut={loadOverlayOut}
+              loadingMsgs={loadingMsgs}
+              resultados={resultados}
+              excluidosCount={excluidosCount}
+              vistaResultado={vistaResultado}
+              setVistaResultado={setVistaResultado}
+              processoById={processoById}
+              navigateProcessoMapa={navigateProcessoMapa}
+              abrirRelatorioProcesso={abrirRelatorioProcesso}
+              cardVis={cardVis}
+              barsReady={barsReady}
+              showToast={showToast}
+              onVoltarAoRadar={handleVoltarAoRadar}
+              onNovaProspeccao={handleNovaProspeccao}
+            />
+          </div>
+        </>
+      ) : null}
+
+      {toastMsg ? (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 24,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 99999,
+            backgroundColor: '#2C2C2A',
+            border: '1px solid #5F5E5A',
+            borderRadius: 8,
+            padding: '10px 20px',
+            fontSize: 13,
+            color: '#F1EFE8',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+          }}
+        >
+          {toastMsg}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function ProspeccaoBlock({
+  reducedMotion,
+  phase,
+  loadProgress,
+  loadMsgIdx,
+  loadOverlayOut,
+  loadingMsgs,
+  resultados,
+  excluidosCount,
+  vistaResultado,
+  setVistaResultado,
+  processoById,
+  navigateProcessoMapa,
+  abrirRelatorioProcesso,
+  cardVis,
+  barsReady,
+  showToast,
+  onVoltarAoRadar,
+  onNovaProspeccao,
+}: {
+  reducedMotion: boolean
+  phase: 'loading' | 'resultados'
+  loadProgress: number
+  loadMsgIdx: number
+  loadOverlayOut: boolean
+  loadingMsgs: string[]
+  resultados: OpportunityResult[]
+  excluidosCount: number
+  vistaResultado: 'lista' | 'expandido'
+  setVistaResultado: (v: 'lista' | 'expandido') => void
+  processoById: Map<string, Processo>
+  navigateProcessoMapa: (id: string) => void
+  abrirRelatorioProcesso: (id: string) => void
+  cardVis: boolean[]
+  barsReady: boolean
+  showToast: (m: string) => void
+  onVoltarAoRadar: () => void
+  onNovaProspeccao: () => void
+}) {
+  return (
+    <div style={{ marginTop: 24, position: 'relative' }}>
+      {(phase === 'loading' || phase === 'resultados') && (
+        <div
+          style={{
+            position: 'relative',
+            minHeight: phase === 'loading' ? 320 : undefined,
+            marginTop: phase === 'resultados' ? 0 : 0,
+          }}
+        >
+          {phase === 'loading' ? (
+            <div
+              style={{
+                backgroundColor: '#1A1A18',
+                border: '1px solid #2C2C2A',
+                borderRadius: 12,
+                padding: 48,
+                maxWidth: 800,
+                margin: '0 auto',
+                position: 'relative',
+                overflow: 'hidden',
+                minHeight: 280,
+              }}
+            >
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  backgroundColor: '#0D0D0C',
+                  opacity: loadOverlayOut ? 0 : 0.95,
+                  borderRadius: 12,
+                  zIndex: 10,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: 24,
+                  transition: reducedMotion ? undefined : 'opacity 200ms ease-out',
+                  pointerEvents: loadOverlayOut ? 'none' : 'auto',
+                }}
+              >
+                <div
+                  className={reducedMotion ? undefined : 'terrae-radar-spin-slow'}
+                  style={{ display: 'flex', justifyContent: 'center' }}
+                >
+                  <RadarIcon size={40} color="#EF9F27" aria-hidden />
+                </div>
+                <p
+                  key={loadMsgIdx}
+                  style={{
+                    marginTop: 20,
+                    fontSize: 14,
+                    color: '#888780',
+                    textAlign: 'center',
+                    maxWidth: 360,
+                    animation: reducedMotion ? undefined : 'terraeRadarFadeMsg 200ms ease-out',
+                  }}
+                >
+                  {loadingMsgs[loadMsgIdx]}
+                </p>
+                <div
+                  style={{
+                    marginTop: 24,
+                    width: 200,
+                    height: 2,
+                    backgroundColor: '#2C2C2A',
+                    borderRadius: 1,
+                    overflow: 'hidden',
+                  }}
+                >
+                  <div
+                    style={{
+                      height: '100%',
+                      width: `${loadProgress}%`,
+                      backgroundColor: '#EF9F27',
+                      borderRadius: 1,
+                      transition: reducedMotion ? undefined : 'width 50ms linear',
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {phase === 'resultados' ? (
+            <div style={{ marginTop: 8 }}>
+              <button
+                type="button"
+                onClick={onVoltarAoRadar}
+                style={{
+                  border: 'none',
+                  background: 'none',
+                  padding: 0,
+                  fontSize: 14,
+                  color: '#888780',
+                  cursor: 'pointer',
+                  marginBottom: 16,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+              >
+                ← Voltar ao Radar
+              </button>
+              <div style={{ fontSize: 18, fontWeight: 500, color: '#F1EFE8' }}>
+                {resultados.length} oportunidades identificadas para seu perfil
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: 12,
+                  marginTop: 12,
+                  alignItems: 'center',
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={onNovaProspeccao}
+                  style={{
+                    border: '1px solid #5F5E5A',
+                    color: '#B4B2A9',
+                    fontSize: 13,
+                    borderRadius: 6,
+                    padding: '8px 16px',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Nova Prospecção
+                </button>
+                <button
+                  type="button"
+                  onClick={() => showToast('Disponível em breve')}
+                  style={{
+                    border: '1px solid #5F5E5A',
+                    color: '#B4B2A9',
+                    fontSize: 13,
+                    borderRadius: 6,
+                    padding: '8px 16px',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Exportar PDF
+                </button>
+                <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+                  <button
+                    type="button"
+                    className="terrae-intel-rank-toggle"
+                    onClick={() => setVistaResultado('lista')}
+                    style={{
+                      borderRadius: 999,
+                      padding: '4px 10px',
+                      fontSize: 11,
+                      cursor: 'pointer',
+                      backgroundColor: vistaResultado === 'lista' ? '#2C2C2A' : '#0D0D0C',
+                      color: vistaResultado === 'lista' ? '#F1EFE8' : '#888780',
+                    }}
+                  >
+                    Lista
+                  </button>
+                  <button
+                    type="button"
+                    className="terrae-intel-rank-toggle"
+                    onClick={() => setVistaResultado('expandido')}
+                    style={{
+                      borderRadius: 999,
+                      padding: '4px 10px',
+                      fontSize: 11,
+                      cursor: 'pointer',
+                      backgroundColor: vistaResultado === 'expandido' ? '#2C2C2A' : '#0D0D0C',
+                      color: vistaResultado === 'expandido' ? '#F1EFE8' : '#888780',
+                    }}
+                  >
+                    Expandido
+                  </button>
+                </div>
+              </div>
+
+              {resultados.length === 0 ? (
+                <p style={{ marginTop: 24, fontSize: 14, color: '#888780' }}>
+                  Nenhuma oportunidade atende aos critérios mínimos de score para exibição.
+                </p>
+              ) : vistaResultado === 'expandido' ? (
+                <div style={{ marginTop: 20 }}>
+                  {resultados.map((r, i) => {
+                    const p = processoById.get(r.processoId)
+                    if (!p) return null
+                    const cor = corFaixaOpportunity(r.faixa)
+                    return (
+                      <div
+                        key={r.processoId}
+                        style={{
+                          ...motionGroupStyle(cardVis[i] ?? true, reducedMotion),
+                          marginBottom: 12,
+                        }}
+                      >
+                        <OportunidadeCardExpandido
+                          pos={i + 1}
+                          resultado={r}
+                          processo={p}
+                          corFaixa={cor}
+                          barsReady={barsReady}
+                          reducedMotion={reducedMotion}
+                          onMapa={() => navigateProcessoMapa(p.id)}
+                          onRelatorio={() => abrirRelatorioProcesso(p.id)}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <OportunidadeTableLista
+                  resultados={resultados}
+                  processoById={processoById}
+                  cardVis={cardVis}
+                  reducedMotion={reducedMotion}
+                  navigateProcessoMapa={navigateProcessoMapa}
+                />
+              )}
+
+              {excluidosCount > 0 ? (
+                <p style={{ marginTop: 16, fontSize: 13, color: '#5F5E5A' }}>
+                  {excluidosCount} processos foram excluídos por não atenderem aos critérios mínimos.
+                </p>
+              ) : null}
+
+              <div
+                style={{
+                  marginTop: 24,
+                  border: '1px solid #2C2C2A',
+                  borderRadius: 8,
+                  padding: 16,
+                  display: 'flex',
+                  gap: 12,
+                  alignItems: 'flex-start',
+                }}
+              >
+                <Info size={16} color="#5F5E5A" style={{ flexShrink: 0, marginTop: 2 }} aria-hidden />
+                <p style={{ margin: 0, fontSize: 12, color: '#5F5E5A', lineHeight: 1.5 }}>
+                  O Opportunity Score Terrae é uma análise quantitativa baseada em dados públicos e
+                  estimativas de mercado. Não constitui recomendação de investimento. Consulte
+                  especialistas do setor mineral e jurídico antes de tomar decisões.
+                </p>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function OportunidadeCardExpandido({
+  pos,
+  resultado: r,
+  processo: p,
+  corFaixa,
+  barsReady,
+  reducedMotion,
+  onMapa,
+  onRelatorio,
+}: {
+  pos: number
+  resultado: OpportunityResult
+  processo: Processo
+  corFaixa: string
+  barsReady: boolean
+  reducedMotion: boolean
+  onMapa: () => void
+  onRelatorio: () => void
+}) {
+  const bars: { label: string; v: number }[] = [
+    { label: 'Atratividade', v: r.scoreAtratividade },
+    { label: 'Viabilidade', v: r.scoreViabilidade },
+    { label: 'Segurança', v: r.scoreSeguranca },
+  ]
+
+  return (
+    <div
+      style={{
+        backgroundColor: '#1A1A18',
+        borderTop: '1px solid #2C2C2A',
+        borderRight: '1px solid #2C2C2A',
+        borderBottom: '1px solid #2C2C2A',
+        borderLeft: `3px solid ${corFaixa}`,
+        borderRadius: 8,
+        padding: 20,
+        transition: 'border-color 0.2s ease',
+      }}
+      onMouseEnter={(e) => {
+        const el = e.currentTarget
+        el.style.borderTopColor = '#888780'
+        el.style.borderRightColor = '#888780'
+        el.style.borderBottomColor = '#888780'
+        el.style.borderLeftColor = '#888780'
+      }}
+      onMouseLeave={(e) => {
+        const el = e.currentTarget
+        el.style.borderTopColor = '#2C2C2A'
+        el.style.borderRightColor = '#2C2C2A'
+        el.style.borderBottomColor = '#2C2C2A'
+        el.style.borderLeftColor = corFaixa
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: 12,
+        }}
+      >
+        <span style={{ fontSize: 16, fontWeight: 600, color: '#5F5E5A' }}>#{pos}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <span
+            style={{
+              fontSize: 18,
+              fontWeight: 600,
+              color: corFaixa,
+              backgroundColor: `${corFaixa}26`,
+              border: `1px solid ${corFaixa}`,
+              borderRadius: 6,
+              padding: '4px 12px',
+            }}
+          >
+            {r.scoreTotal}
+          </span>
+          <span
+            style={{
+              fontSize: 10,
+              letterSpacing: 1,
+              color: corFaixa,
+              fontWeight: 600,
+              textTransform: 'uppercase',
+            }}
+          >
+            {labelFaixaOpportunity(r.faixa)}
+          </span>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+        <span style={{ fontSize: 14, color: '#F1EFE8' }}>{p.numero}</span>
+        <RegimeBadge regime={p.regime} variant="table" />
+        <BadgeSubstancia substancia={p.substancia} variant="intelTable" />
+      </div>
+      <div style={{ marginTop: 6, fontSize: 13, color: '#888780' }}>
+        {p.municipio}, {p.uf}
+      </div>
+      <div style={{ marginTop: 4, fontSize: 13, color: '#D3D1C7' }}>{p.titular}</div>
+
+      <div style={{ marginTop: 16 }}>
+        {bars.map((b, bi) => {
+          const c = corMiniBarraValor(b.v)
+          return (
+            <div
+              key={b.label}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                marginTop: bi > 0 ? 8 : 0,
+              }}
+            >
+              <span style={{ fontSize: 12, color: '#888780', width: 100, flexShrink: 0 }}>
+                {b.label}
+              </span>
+              <div
+                style={{
+                  flex: 1,
+                  height: 4,
+                  backgroundColor: '#2C2C2A',
+                  borderRadius: 2,
+                  overflow: 'hidden',
+                  minWidth: 40,
+                }}
+              >
+                <div
+                  style={barFillStyle(b.v, barsReady, bi, reducedMotion, c)}
+                />
+              </div>
+              <span
+                style={{
+                  fontSize: 12,
+                  fontWeight: 500,
+                  color: c,
+                  marginLeft: 8,
+                  width: 28,
+                  flexShrink: 0,
+                }}
+              >
+                {b.v}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        {r.fatoresPositivos.map((t, i) => (
+          <div
+            key={`p-${i}`}
+            style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: i > 0 ? 8 : 0 }}
+          >
+            <Check size={14} color="#1D9E75" style={{ flexShrink: 0, marginTop: 2 }} aria-hidden />
+            <span style={{ fontSize: 13, color: '#D3D1C7' }}>{t}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop: 12 }}>
+        {r.fatoresAtencao.map((t, i) => {
+          const grave = t.toLowerCase().includes('bloqueio') || t.includes('CAPAG C')
+          return (
+            <div
+              key={`a-${i}`}
+              style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: i > 0 ? 8 : 0 }}
+            >
+              <AlertTriangle
+                size={14}
+                color={grave ? '#E24B4A' : '#E8A830'}
+                style={{ flexShrink: 0, marginTop: 2 }}
+                aria-hidden
+              />
+              <span style={{ fontSize: 13, color: '#D3D1C7' }}>{t}</span>
+            </div>
+          )
+        })}
+      </div>
+
+      <div style={{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+        <button
+          type="button"
+          onClick={onMapa}
+          style={{
+            border: '1px solid #5F5E5A',
+            color: '#B4B2A9',
+            fontSize: 13,
+            borderRadius: 6,
+            padding: '8px 16px',
+            background: 'transparent',
+            cursor: 'pointer',
+          }}
+        >
+          Ver no Mapa
+        </button>
+        <button
+          type="button"
+          onClick={onRelatorio}
+          style={{
+            backgroundColor: '#EF9F27',
+            color: '#0D0D0C',
+            fontSize: 13,
+            fontWeight: 600,
+            borderRadius: 6,
+            padding: '8px 16px',
+            border: 'none',
+            cursor: 'pointer',
+          }}
+        >
+          Ver Relatório Completo
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function OportunidadeTableLista({
+  resultados,
+  processoById,
+  cardVis,
+  reducedMotion,
+  navigateProcessoMapa,
+}: {
+  resultados: OpportunityResult[]
+  processoById: Map<string, Processo>
+  cardVis: boolean[]
+  reducedMotion: boolean
+  navigateProcessoMapa: (id: string) => void
+}) {
+  return (
+    <div style={{ marginTop: 20, overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+        <thead>
+          <tr style={{ backgroundColor: '#0D0D0C' }}>
+            <th
+              style={{
+                textAlign: 'left',
+                padding: '12px 10px',
+                fontSize: 13,
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+                color: '#888780',
+                fontWeight: 500,
+              }}
+            >
+              #
+            </th>
+            <th
+              style={{
+                textAlign: 'left',
+                padding: '12px 10px',
+                fontSize: 13,
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+                color: '#888780',
+                fontWeight: 500,
+              }}
+            >
+              Score
+            </th>
+            <th
+              style={{
+                textAlign: 'left',
+                padding: '12px 10px',
+                fontSize: 13,
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+                color: '#888780',
+                fontWeight: 500,
+              }}
+            >
+              Processo
+            </th>
+            <th
+              style={{
+                textAlign: 'left',
+                padding: '12px 10px',
+                fontSize: 13,
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+                color: '#888780',
+                fontWeight: 500,
+              }}
+            >
+              Substância
+            </th>
+            <th
+              style={{
+                textAlign: 'left',
+                padding: '12px 10px',
+                fontSize: 13,
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+                color: '#888780',
+                fontWeight: 500,
+              }}
+            >
+              UF
+            </th>
+            <th
+              style={{
+                textAlign: 'left',
+                padding: '12px 10px',
+                fontSize: 13,
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+                color: '#888780',
+                fontWeight: 500,
+              }}
+            >
+              Titular
+            </th>
+            <th
+              style={{
+                textAlign: 'right',
+                padding: '12px 10px',
+                fontSize: 13,
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+                color: '#888780',
+                fontWeight: 500,
+              }}
+            >
+              Ações
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {resultados.map((r, idx) => {
+            const p = processoById.get(r.processoId)
+            if (!p) return null
+            const cor = corFaixaOpportunity(r.faixa)
+            return (
+              <tr
+                key={r.processoId}
+                style={{
+                  ...motionGroupStyle(cardVis[idx] ?? true, reducedMotion),
+                  backgroundColor: idx % 2 === 0 ? '#1A1A18' : '#111110',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#2C2C2A'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = idx % 2 === 0 ? '#1A1A18' : '#111110'
+                }}
+              >
+                <td style={{ padding: '12px 10px', color: '#5F5E5A', fontWeight: 600 }}>{idx + 1}</td>
+                <td style={{ padding: '12px 10px' }}>
+                  <span
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: 4,
+                      fontSize: 13,
+                      fontWeight: 500,
+                      backgroundColor: `${cor}26`,
+                      color: cor,
+                    }}
+                  >
+                    {r.scoreTotal}
+                  </span>
+                </td>
+                <td style={{ padding: '12px 10px', color: '#F1EFE8' }}>{p.numero}</td>
+                <td style={{ padding: '12px 10px' }}>
+                  <BadgeSubstancia substancia={p.substancia} variant="intelTable" />
+                </td>
+                <td style={{ padding: '12px 10px', color: '#D3D1C7' }}>{p.uf}</td>
+                <td
+                  style={{
+                    padding: '12px 10px',
+                    color: '#D3D1C7',
+                    maxWidth: 200,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                  title={p.titular}
+                >
+                  {p.titular}
+                </td>
+                <td style={{ padding: '12px 10px', textAlign: 'right' }}>
+                  <button
+                    type="button"
+                    onClick={() => navigateProcessoMapa(p.id)}
+                    style={{
+                      border: 'none',
+                      background: 'none',
+                      color: '#EF9F27',
+                      fontSize: 13,
+                      cursor: 'pointer',
+                      fontWeight: 500,
+                    }}
+                  >
+                    Ver →
+                  </button>
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+=== FIM: src\components\dashboard\RadarDashboard.tsx ===
+
