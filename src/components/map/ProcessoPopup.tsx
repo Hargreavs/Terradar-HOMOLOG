@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
   Building2,
   ChevronRight,
@@ -7,12 +7,6 @@ import {
   Scan,
   type LucideIcon,
 } from 'lucide-react'
-import { alertaMaisGraveParaTituloPopover } from '../../lib/alertaNivelImpactoBadge'
-import {
-  calcularRelevancia,
-  RELEVANCIA_MAP,
-  type Relevancia,
-} from '../../lib/relevanciaAlerta'
 import { normalizeSubstanciaKey, SUBSTANCIA_DEFS } from '../../lib/substancias'
 import { useMapStore } from '../../store/useMapStore'
 import type { AlertaLegislativo, Processo } from '../../types'
@@ -113,7 +107,7 @@ function RiskScoreBarraTotalComTooltip({
   return (
     <TerraTooltipWrap
       texto={mensagemTooltipRiskScoreTotal(valor)}
-      className="w-full cursor-default"
+      className="min-w-0 flex-1 cursor-default"
     >
       {children}
     </TerraTooltipWrap>
@@ -138,7 +132,6 @@ export function ProcessoPopupContent({
   onClose,
   onToggleRelatorioCompleto,
   onAbrirRelatorioAbaRisco,
-  onIrParaRadarAlerta,
   onVerTodosAlertasRadar,
 }: ProcessoPopupContentProps) {
   const relatorioDrawerAberto = useMapStore((s) => s.relatorioDrawerAberto)
@@ -151,32 +144,12 @@ export function ProcessoPopupContent({
     processo.substancia,
   )
 
-  const alertaTituloDestaque =
-    processo.alertas.length > 0
-      ? alertaMaisGraveParaTituloPopover(processo.alertas)
-      : null
-
-  const badgeRelevancia =
-    alertaTituloDestaque !== null
-      ? RELEVANCIA_MAP[
-          calcularRelevancia(
-            alertaTituloDestaque.nivel_impacto,
-            alertaTituloDestaque.tipo_impacto,
-          )
-        ]
-      : null
-
-  const alertasOrdenadosPorCriticidade = useMemo(() => {
-    const ordem = (a: AlertaLegislativo): number => {
-      const rel: Relevancia = calcularRelevancia(a.nivel_impacto, a.tipo_impacto)
-      return RELEVANCIA_MAP[rel].ordem
-    }
-    return [...processo.alertas].sort((a, b) => ordem(a) - ordem(b))
-  }, [processo.alertas])
-
-  const alertasPopoverVisiveis = alertasOrdenadosPorCriticidade.slice(0, 2)
   const totalAlertas = processo.alertas.length
-  const mostrarLinkVerTodos = onVerTodosAlertasRadar != null && totalAlertas > 2
+
+  const [riskScoreDetalheAberto, setRiskScoreDetalheAberto] = useState(false)
+  useEffect(() => {
+    setRiskScoreDetalheAberto(false)
+  }, [processo.id])
 
   return (
     <div className="pointer-events-auto relative" style={{ width: POPUP_W }}>
@@ -267,36 +240,72 @@ export function ProcessoPopupContent({
         <div className="my-3 h-px w-full shrink-0 bg-[#2C2C2A]" aria-hidden />
 
         <div className="px-4 pb-4">
-          <p className="mt-4 mb-2.5 text-[13px] font-medium uppercase tracking-[1px] text-[#888780]">
-            Risk Score
-          </p>
           {r === null ? (
-            <p className="text-[15px] font-medium text-[#E8E6DF]">N/A</p>
+            <>
+              <p className="mt-4 mb-2.5 text-[13px] font-medium uppercase tracking-[1px] text-[#F1EFE8]">
+                Risk Score
+              </p>
+              <p className="text-[15px] font-medium text-[#E8E6DF]">N/A</p>
+            </>
           ) : (
             <>
-              <RiskScoreBarraTotalComTooltip valor={r}>
-                <div className="flex w-full min-w-0 items-center gap-2">
-                  <div
-                    className="min-w-0 flex-1 overflow-hidden rounded-sm"
-                    style={{ height: 5, backgroundColor: '#2C2C2A' }}
-                  >
+              <p className="mt-4 mb-2.5 text-[13px] font-medium uppercase tracking-[1px] text-[#F1EFE8]">
+                Risk Score
+              </p>
+              <div className="flex w-full min-w-0 items-center gap-2">
+                <RiskScoreBarraTotalComTooltip valor={r}>
+                  <div className="flex w-full min-w-0 items-center gap-2">
                     <div
-                      className="h-full rounded-sm"
+                      className="min-w-0 flex-1 overflow-hidden rounded-sm"
+                      style={{ height: 5, backgroundColor: '#2C2C2A' }}
+                    >
+                      <div
+                        className="h-full rounded-sm"
+                        style={{
+                          width: `${Math.min(100, Math.max(0, r))}%`,
+                          backgroundColor: riskTierColor(r),
+                        }}
+                      />
+                    </div>
+                    <span
+                      className="w-[40px] shrink-0 text-right tabular-nums text-[15px] font-bold leading-none"
+                      style={{ color: riskTierColor(r) }}
+                    >
+                      {r}
+                    </span>
+                  </div>
+                </RiskScoreBarraTotalComTooltip>
+                {processo.risk_breakdown ? (
+                  <button
+                    type="button"
+                    className="flex shrink-0 cursor-pointer items-center justify-center border-0 bg-transparent py-0 pr-1.5 pl-0 text-[#F1EFE8] transition-opacity hover:opacity-80"
+                    aria-expanded={riskScoreDetalheAberto}
+                    aria-label={
+                      riskScoreDetalheAberto
+                        ? 'Ocultar dimensões do Risk Score'
+                        : 'Mostrar dimensões do Risk Score'
+                    }
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setRiskScoreDetalheAberto((v) => !v)
+                    }}
+                  >
+                    <ChevronRight
+                      size={14}
+                      strokeWidth={2}
+                      aria-hidden
+                      className="transition-transform duration-150 ease-out"
                       style={{
-                        width: `${Math.min(100, Math.max(0, r))}%`,
-                        backgroundColor: riskTierColor(r),
+                        transform: riskScoreDetalheAberto
+                          ? 'rotate(90deg)'
+                          : 'rotate(0deg)',
                       }}
                     />
-                  </div>
-                  <span
-                    className="w-[40px] shrink-0 text-right tabular-nums text-[15px] font-bold"
-                    style={{ color: riskTierColor(r) }}
-                  >
-                    {r}
-                  </span>
-                </div>
-              </RiskScoreBarraTotalComTooltip>
-              {processo.risk_breakdown ? (
+                  </button>
+                ) : null}
+              </div>
+              {processo.risk_breakdown && riskScoreDetalheAberto ? (
                 <div
                   className={`mt-5 space-y-1.5 ${processo.alertas.length > 0 ? 'mb-5' : ''}`}
                 >
@@ -336,159 +345,60 @@ export function ProcessoPopupContent({
                       </RiskBreakdownRowComTooltip>
                     )
                   })}
+                  {onAbrirRelatorioAbaRisco ? (
+                    <button
+                      type="button"
+                      className="mt-3 box-border w-full cursor-pointer border-0 bg-transparent p-0 text-center text-[15px] transition-opacity hover:opacity-80"
+                      style={{ color: '#F1B85A' }}
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        onAbrirRelatorioAbaRisco()
+                      }}
+                    >
+                      Ver decomposição completa
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
             </>
           )}
 
-          <>
-            <div
-              className="-mx-4 my-3 h-px shrink-0 bg-[#2C2C2A]"
-              aria-hidden
-            />
-            {processo.alertas.length > 0 && onIrParaRadarAlerta ? (
+          {totalAlertas > 0 && onVerTodosAlertasRadar ? (
+            <>
+              <div
+                className="-mx-4 my-3 h-px shrink-0 bg-[#2C2C2A]"
+                aria-hidden
+              />
               <div className="flex min-w-0 flex-col">
-                <div className="flex min-w-0 flex-nowrap items-center gap-1.5">
-                  <span className="whitespace-nowrap text-[13px] font-medium uppercase tracking-[1px] text-[#888780]">
-                    Alertas regulatórios
-                  </span>
-                  <span
-                    className="inline-flex shrink-0 items-center justify-center rounded-[10px] text-[13px] font-medium tabular-nums leading-none text-[#F1EFE8]"
-                    style={{ backgroundColor: '#2C2C2A', padding: '2px 9px' }}
-                  >
-                    {processo.alertas.length}
-                  </span>
-                </div>
-                <ul className="mt-2 list-none space-y-1 p-0">
-                  {alertasPopoverVisiveis.map((al, idx) => {
-                    const badge = RELEVANCIA_MAP[
-                      calcularRelevancia(al.nivel_impacto, al.tipo_impacto)
-                    ]
-                    return (
-                      <li key={`${idx}-${al.titulo}`}>
-                        <button
-                          type="button"
-                          className="group box-border w-full cursor-pointer appearance-none rounded-[6px] border-0 bg-transparent py-[10px] pl-1.5 pr-1.5 text-left transition-[background-color] duration-150 ease hover:bg-[#2C2C2A]"
-                          onClick={() => onIrParaRadarAlerta(al)}
-                          aria-label={`Abrir alerta no Radar: ${al.titulo}`}
-                        >
-                          <div className="flex w-full min-w-0 flex-nowrap items-center justify-between gap-2">
-                            <span
-                              className="inline-flex w-fit shrink-0 items-center justify-center rounded-[4px] font-semibold uppercase"
-                              style={{
-                                padding: '2px 6px',
-                                fontSize: 9,
-                                letterSpacing: '0.5px',
-                                color: badge.cor,
-                                border: `1px solid ${badge.cor}`,
-                                backgroundColor: 'transparent',
-                              }}
-                            >
-                              {badge.label}
-                            </span>
-                            <ChevronRight
-                              className="shrink-0 text-[#5F5E5A] transition-colors group-hover:text-[#888780]"
-                              size={14}
-                              strokeWidth={2}
-                              aria-hidden
-                            />
-                          </div>
-                          <p className="mt-1.5 line-clamp-2 min-w-0 text-left text-[15px] leading-snug text-[#D3D1C7]">
-                            {al.titulo}
-                          </p>
-                        </button>
-                      </li>
-                    )
-                  })}
-                </ul>
-                {mostrarLinkVerTodos ? (
-                  <button
-                    type="button"
-                    className="box-border w-full border-0 bg-transparent py-0 pl-1.5 pr-1.5 text-left"
-                    style={{
-                      marginTop: 8,
-                      fontSize: 15,
-                      color: '#F1B85A',
-                      cursor: 'pointer',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.textDecoration = 'underline'
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.textDecoration = 'none'
-                    }}
-                    onClick={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      onVerTodosAlertasRadar?.()
-                    }}
-                    aria-label={`Ver todos os ${totalAlertas} alertas no Radar`}
-                  >
+                <span className="whitespace-nowrap text-[13px] font-medium uppercase tracking-[1px] text-[#F1EFE8]">
+                  Alertas regulatórios
+                </span>
+                <button
+                  type="button"
+                  className="mt-2 flex w-full cursor-pointer items-center justify-between border-0 bg-transparent py-0 pl-0 pr-1.5 text-left text-[15px] transition-opacity hover:opacity-80"
+                  style={{ color: '#F1B85A' }}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    onVerTodosAlertasRadar()
+                  }}
+                  aria-label={`Ver todos os ${totalAlertas} alertas no Radar`}
+                >
+                  <span className="min-w-0" style={{ color: '#F1B85A' }}>
                     {`Ver todos os ${totalAlertas} alertas`}
-                  </button>
-                ) : null}
-              </div>
-            ) : processo.alertas.length > 0 && badgeRelevancia ? (
-              <button
-                type="button"
-                className="group box-border w-full cursor-pointer appearance-none rounded-[6px] border-0 bg-transparent py-[10px] pl-1.5 pr-1.5 text-left transition-[background-color] duration-150 ease hover:bg-[#2C2C2A]"
-                onClick={() => onAbrirRelatorioAbaRisco?.()}
-                aria-label="Abrir alertas regulatórios no relatório"
-              >
-                <div className="flex w-full min-w-0 flex-nowrap items-center justify-between gap-2">
-                  <div className="flex min-w-0 flex-nowrap items-center gap-1.5">
-                    <span className="whitespace-nowrap text-[13px] font-medium uppercase tracking-[1px] text-[#888780]">
-                      Alertas regulatórios
-                    </span>
-                    <span
-                      className="inline-flex shrink-0 items-center justify-center rounded-[10px] text-[13px] font-medium tabular-nums leading-none text-[#F1EFE8]"
-                      style={{ backgroundColor: '#2C2C2A', padding: '2px 9px' }}
-                    >
-                      {processo.alertas.length}
-                    </span>
-                  </div>
+                  </span>
                   <ChevronRight
-                    className="shrink-0 text-[#5F5E5A] transition-colors group-hover:text-[#888780]"
                     size={14}
                     strokeWidth={2}
+                    className="shrink-0"
+                    style={{ color: '#F1B85A' }}
                     aria-hidden
                   />
-                </div>
-                <span
-                  className="mt-2 inline-flex w-fit shrink-0 items-center justify-center rounded-[4px] font-semibold uppercase"
-                  style={{
-                    padding: '2px 6px',
-                    fontSize: 9,
-                    letterSpacing: '0.5px',
-                    color: badgeRelevancia.cor,
-                    border: `1px solid ${badgeRelevancia.cor}`,
-                    backgroundColor: 'transparent',
-                  }}
-                >
-                  {badgeRelevancia.label}
-                </span>
-                {alertaTituloDestaque ? (
-                  <p className="mt-1.5 line-clamp-2 min-w-0 text-[15px] leading-snug text-[#D3D1C7]">
-                    {alertaTituloDestaque.titulo}
-                  </p>
-                ) : null}
-              </button>
-            ) : (
-              <div className="flex min-w-0 flex-col">
-                <div className="flex min-w-0 flex-nowrap items-center gap-1.5">
-                  <span className="whitespace-nowrap text-[13px] font-medium uppercase tracking-[1px] text-[#888780]">
-                    Alertas regulatórios
-                  </span>
-                  <span
-                    className="inline-flex shrink-0 items-center justify-center rounded-[10px] text-[13px] font-medium tabular-nums leading-none text-[#F1EFE8]"
-                    style={{ backgroundColor: '#2C2C2A', padding: '2px 9px' }}
-                  >
-                    {processo.alertas.length}
-                  </span>
-                </div>
+                </button>
               </div>
-            )}
-          </>
+            </>
+          ) : null}
 
           <button
             type="button"

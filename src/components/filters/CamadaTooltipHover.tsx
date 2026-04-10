@@ -29,6 +29,7 @@ function isUsableTriggerRect(r: DOMRectReadOnly): boolean {
  */
 export function CamadaTooltipHover({
   texto,
+  conteudo,
   children,
   className = '',
   maxWidthPx = 240,
@@ -43,7 +44,9 @@ export function CamadaTooltipHover({
   /** `span` inline dentro de parágrafos (evita quebra de linha antes do gatilho). */
   inlineWrap = false,
 }: {
-  texto: string
+  texto?: string
+  /** Conteúdo rico do bubble (substitui `texto` quando definido). */
+  conteudo?: ReactNode
   children: ReactNode
   className?: string
   /** Largura máxima do bubble (ex.: 300 no relatório do mapa). */
@@ -210,7 +213,7 @@ export function CamadaTooltipHover({
                 : {}),
             }}
           >
-            {texto}
+            {conteudo ?? texto ?? ''}
           </div>,
           document.body,
         )

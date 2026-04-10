@@ -3,9 +3,12 @@ export type Regime =
   | 'autorizacao_pesquisa'
   | 'req_lavra'
   | 'licenciamento'
+  | 'lavra_garimpeira'
+  | 'registro_extracao'
+  | 'disponibilidade'
   | 'mineral_estrategico'
-  | 'bloqueio_permanente'
   | 'bloqueio_provisorio'
+  | 'bloqueio_permanente'
 
 export type Fase =
   | 'requerimento'
@@ -19,6 +22,28 @@ export interface RiskBreakdown {
   ambiental: number
   social: number
   regulatorio: number
+}
+
+/** Variável que compõe uma dimensão do Risk Score (popover + relatório). */
+export interface RiskDimensaoVariavel {
+  nome: string
+  valor: number
+  texto: string
+  fonte: string
+}
+
+/** Uma dimensão do Risk Score com decomposição para UI. */
+export interface RiskDimensaoDetalhe {
+  score: number
+  variaveis: RiskDimensaoVariavel[]
+}
+
+export interface RiskScoreDecomposicao {
+  total: number
+  geologico: RiskDimensaoDetalhe
+  ambiental: RiskDimensaoDetalhe
+  social: RiskDimensaoDetalhe
+  regulatorio: RiskDimensaoDetalhe
 }
 
 export type NivelImpacto = 1 | 2 | 3 | 4
@@ -63,6 +88,8 @@ export interface Processo {
   situacao: 'ativo' | 'inativo' | 'bloqueado'
   risk_score: number | null
   risk_breakdown: RiskBreakdown | null
+  /** Decomposição por variável (mock/UI). Null quando `risk_score` é null. */
+  risk_decomposicao: RiskScoreDecomposicao | null
   /** Valor estimado das reservas (milhões USD). */
   valor_estimado_usd_mi: number
   /** Data do último despacho ANM (YYYY-MM-DD). */

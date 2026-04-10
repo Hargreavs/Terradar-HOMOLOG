@@ -1,8 +1,34 @@
 import { Search, SlidersHorizontal } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
+import { REGIME_COLORS, REGIME_LABELS } from '../../lib/regimes'
 import { useMapStore } from '../../store/useMapStore'
+import type { Processo } from '../../types'
 
 const NUMERO_RX = /\d{3}\.\d{3}\/\d{4}/
+const MAX_SUGESTOES = 20
+
+function digitos(s: string): string {
+  return s.replace(/\D/g, '')
+}
+
+function filtrarSugestoesPorNumero(
+  processos: Processo[],
+  local: string,
+): Processo[] {
+  const q = digitos(local)
+  if (q.length < 1) return []
+  const out = processos.filter((p) => digitos(p.numero).includes(q))
+  out.sort((a, b) =>
+    a.numero.localeCompare(b.numero, 'pt-BR', { numeric: true }),
+  )
+  return out.slice(0, MAX_SUGESTOES)
+}
 
 type MapSearchBarProps = {
   painelFiltrosAberto: boolean
@@ -23,14 +49,35 @@ export function MapSearchBar({
   const [local, setLocal] = useState(searchQuery)
   const [inputFocado, setInputFocado] = useState(false)
   const [badgePulse, setBadgePulse] = useState(false)
+  const [highlightIdx, setHighlightIdx] = useState(-1)
   const prevFiltrosCountRef = useRef<number | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const listId = useRef(
+    `map-search-sugestoes-${Math.random().toString(36).slice(2, 9)}`,
+  ).current
+
   const setFiltro = useMapStore((s) => s.setFiltro)
   const processos = useMapStore((s) => s.processos)
   const requestFlyTo = useMapStore((s) => s.requestFlyTo)
+  const selecionarProcesso = useMapStore((s) => s.selecionarProcesso)
+
+  const sugestoes = useMemo(
+    () => filtrarSugestoesPorNumero(processos, local),
+    [processos, local],
+  )
+
+  const listaVisivel =
+    inputFocado && sugestoes.length > 0 && digitos(local).length >= 1
 
   useEffect(() => {
     setLocal(searchQuery)
   }, [searchQuery])
+
+  useEffect(() => {
+    if (highlightIdx >= sugestoes.length) {
+      setHighlightIdx(sugestoes.length > 0 ? sugestoes.length - 1 : -1)
+    }
+  }, [highlightIdx, sugestoes.length])
 
   useEffect(() => {
     if (prevFiltrosCountRef.current === null) {
@@ -48,14 +95,65 @@ export function MapSearchBar({
   const onChange = (v: string) => {
     setLocal(v)
     setFiltro('searchQuery', v)
+    setHighlightIdx(-1)
   }
 
   const tryFlyToNumero = useCallback(() => {
     const m = local.match(NUMERO_RX)
     if (!m) return
-    const alvo = processos.find((p) => p.numero.replace(/\s/g, '') === m[0].replace(/\s/g, ''))
-    if (alvo) requestFlyTo(alvo.lat, alvo.lng, 10)
-  }, [local, processos, requestFlyTo])
+    const alvo = processos.find(
+      (p) => p.numero.replace(/\s/g, '') === m[0].replace(/\s/g, ''),
+    )
+    if (alvo) {
+      selecionarProcesso(alvo)
+      requestFlyTo(alvo.lat, alvo.lng, 10, alvo.id)
+    }
+  }, [local, processos, requestFlyTo, selecionarProcesso])
+
+  const escolherProcesso = useCallback(
+    (p: Processo) => {
+      const texto = p.numero
+      setLocal(texto)
+      setFiltro('searchQuery', texto)
+      selecionarProcesso(p)
+      requestFlyTo(p.lat, p.lng, 10, p.id)
+      setHighlightIdx(-1)
+      inputRef.current?.blur()
+    },
+    [setFiltro, requestFlyTo, selecionarProcesso],
+  )
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!listaVisivel || sugestoes.length === 0) {
+      if (e.key === 'Enter') tryFlyToNumero()
+      return
+    }
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setHighlightIdx((i) => (i < sugestoes.length - 1 ? i + 1 : 0))
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setHighlightIdx((i) => (i <= 0 ? sugestoes.length - 1 : i - 1))
+      return
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      const pick =
+        highlightIdx >= 0 && highlightIdx < sugestoes.length
+          ? sugestoes[highlightIdx]
+          : sugestoes[0]
+      if (pick) escolherProcesso(pick)
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      setHighlightIdx(-1)
+      inputRef.current?.blur()
+    }
+  }
 
   return (
     <div
@@ -93,22 +191,79 @@ export function MapSearchBar({
           ) : null}
         </span>
       </button>
-      <Search
-        size={18}
-        strokeWidth={2}
-        className="ml-3 shrink-0 text-[#888780]"
-        aria-hidden
-      />
-      <input
-        type="search"
-        value={local}
-        onChange={(e) => onChange(e.target.value)}
-        onFocus={() => setInputFocado(true)}
-        onBlur={() => setInputFocado(false)}
-        onKeyDown={(e) => e.key === 'Enter' && tryFlyToNumero()}
-        placeholder="Buscar endereço, cidade, estado ou número do processo..."
-        className="min-w-0 flex-1 border-0 bg-transparent pl-3 text-[15px] text-[#F1EFE8] outline-none placeholder:text-[15px] placeholder:text-[#5F5E5A]"
-      />
+      <div className="flex min-w-0 flex-1 items-center">
+        <Search
+          size={18}
+          strokeWidth={2}
+          className="ml-3 shrink-0 text-[#888780]"
+          aria-hidden
+        />
+        <input
+          ref={inputRef}
+          type="text"
+          role="combobox"
+          aria-expanded={listaVisivel}
+          aria-controls={listaVisivel ? listId : undefined}
+          aria-autocomplete="list"
+          value={local}
+          onChange={(e) => onChange(e.target.value)}
+          onFocus={() => setInputFocado(true)}
+          onBlur={() => {
+            window.setTimeout(() => setInputFocado(false), 180)
+          }}
+          onKeyDown={onKeyDown}
+          placeholder="Buscar endereço, cidade, estado ou número do processo..."
+          autoComplete="off"
+          spellCheck={false}
+          className="min-w-0 flex-1 border-0 bg-transparent pl-3 text-[15px] text-[#F1EFE8] outline-none placeholder:text-[15px] placeholder:text-[#5F5E5A]"
+        />
+      </div>
+      {listaVisivel ? (
+        <ul
+          id={listId}
+          role="listbox"
+          className="absolute left-0 right-0 top-full z-[200] mt-1 max-h-[min(280px,40vh)] overflow-y-auto rounded-lg border border-solid py-1 shadow-lg"
+          style={{
+            backgroundColor: 'rgba(22, 22, 20, 0.98)',
+            borderColor: 'rgba(95, 94, 90, 0.45)',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
+          }}
+        >
+          {sugestoes.map((p, i) => (
+            <li key={p.id} role="presentation">
+              <button
+                type="button"
+                role="option"
+                aria-selected={i === highlightIdx}
+                className={`flex w-full cursor-pointer items-center gap-2 border-0 px-3 py-2.5 text-left text-[14px] leading-normal transition-colors ${
+                  i === highlightIdx
+                    ? 'bg-[#2C2C2A] text-[#F1EFE8]'
+                    : 'bg-transparent text-[#D3D1C7] hover:bg-[#252523]'
+                }`}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  escolherProcesso(p)
+                }}
+                onMouseEnter={() => setHighlightIdx(i)}
+              >
+                <span className="shrink-0 font-semibold tabular-nums text-[#F1EFE8]">
+                  {p.numero}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[13px] text-[#888780]">
+                  {p.municipio} · {p.uf}
+                </span>
+                <span
+                  className="max-w-[42%] shrink-0 truncate text-right text-[12px] font-medium"
+                  style={{ color: REGIME_COLORS[p.regime] ?? '#888780' }}
+                  title={REGIME_LABELS[p.regime]}
+                >
+                  {REGIME_LABELS[p.regime]}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <div
         className="flex h-full shrink-0 items-center justify-center self-stretch"
         style={{ borderLeft: '1px solid #3a3a38', paddingLeft: 16, paddingRight: 20 }}

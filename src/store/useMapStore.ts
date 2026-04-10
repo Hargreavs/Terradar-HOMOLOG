@@ -28,9 +28,12 @@ const REGIMES: Regime[] = [
   'autorizacao_pesquisa',
   'req_lavra',
   'licenciamento',
+  'lavra_garimpeira',
+  'registro_extracao',
+  'disponibilidade',
   'mineral_estrategico',
-  'bloqueio_permanente',
   'bloqueio_provisorio',
+  'bloqueio_permanente',
 ]
 
 function defaultCamadas(): Record<Regime, boolean> {
@@ -106,7 +109,13 @@ export interface MapStore {
   processos: Processo[]
   filtros: FiltrosState
   processoSelecionado: Processo | null
-  flyTo: { lat: number; lng: number; zoom: number } | null
+  /** Pedido de câmara; `processoId` permite fitBounds mesmo se outro efeito limpar a seleção. */
+  flyTo: {
+    lat: number
+    lng: number
+    zoom: number
+    processoId?: string
+  } | null
   hoveredProcessoId: string | null
   /** Drawer "Relatório completo" visível (UI transitória, não persistida). */
   relatorioDrawerAberto: boolean
@@ -131,7 +140,12 @@ export interface MapStore {
   selecionarProcesso: (processo: Processo | null) => void
   setHoveredProcessoId: (id: string | null) => void
   getProcessosFiltrados: () => Processo[]
-  requestFlyTo: (lat: number, lng: number, zoom?: number) => void
+  requestFlyTo: (
+    lat: number,
+    lng: number,
+    zoom?: number,
+    processoId?: string,
+  ) => void
   clearFlyTo: () => void
   setRelatorioDrawerAberto: (aberto: boolean) => void
   /** Volta todos os filtros ao padrão (camadas, período, substâncias, UF, município, risk range, busca). */
@@ -266,7 +280,8 @@ export const useMapStore = create<MapStore>()(
           get().intelTitularFilter,
         ),
 
-      requestFlyTo: (lat, lng, zoom = 9) => set({ flyTo: { lat, lng, zoom } }),
+      requestFlyTo: (lat, lng, zoom = 9, processoId?: string) =>
+        set({ flyTo: { lat, lng, zoom, processoId } }),
 
       clearFlyTo: () => set({ flyTo: null }),
 

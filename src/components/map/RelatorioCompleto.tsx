@@ -26,7 +26,10 @@ import { RegimeBadge } from '../ui/RegimeBadge'
 import { AlertaItemImpactoBar } from '../legislativo/AlertaItemImpactoBar'
 import { CamadaTooltipHover } from '../filters/CamadaTooltipHover'
 import { TextoTruncadoComTooltip } from '../ui/TextoTruncadoComTooltip'
+import { gerarRiskDecomposicaoParaProcesso } from '../../lib/riskScoreDecomposicao'
 import type { Fase, Processo, Regime } from '../../types'
+import { RiskDecomposicaoRelatorioPanel } from './RiskDecomposicaoRelatorioPanel'
+import { RiskTotalCalcTooltipContent } from './RiskScoreCalcTooltipContent'
 
 type AbaId = 'processo' | 'territorio' | 'inteligencia' | 'risco' | 'fiscal'
 
@@ -154,72 +157,6 @@ function classificacaoRiscoTotal(r: number): string {
   if (r < 40) return 'Baixo risco'
   if (r <= 69) return 'Risco médio'
   return 'Alto risco'
-}
-
-/** Explicação do score agregado (pesos 25% / 30% / 25% / 20%). */
-function textoFormulaMediaPonderadaRisk(
-  rb: {
-    geologico: number
-    ambiental: number
-    social: number
-    regulatorio: number
-  },
-  scoreAgregado: number,
-): string {
-  const g = rb.geologico
-  const a = rb.ambiental
-  const s = rb.social
-  const r = rb.regulatorio
-  const scoreTxt =
-    Number.isInteger(scoreAgregado)
-      ? String(scoreAgregado)
-      : scoreAgregado.toLocaleString('pt-BR', { maximumFractionDigits: 1 })
-  return `Média ponderada: (${g}×0,25) + (${a}×0,30) + (${s}×0,25) + (${r}×0,20) = ${scoreTxt}`
-}
-
-function textoFormulaMediaPonderadaRiskTooltip(
-  rb: {
-    geologico: number
-    ambiental: number
-    social: number
-    regulatorio: number
-  },
-  scoreAgregado: number,
-): string {
-  return `${textoFormulaMediaPonderadaRisk(rb, scoreAgregado)}. Pesos definidos pelo modelo de risco Terrae com base em análise de viabilidade de empreendimentos minerários. Ambiental (30%) tem maior peso por ser o principal fator de impedimento regulatório no Brasil.`
-}
-
-function textoDimensaoRisco(
-  dim: 'geologico' | 'ambiental' | 'social' | 'regulatorio',
-  valor: number,
-): string {
-  const v = valor
-  if (dim === 'geologico') {
-    if (v < 40)
-      return 'Região com perfil geológico favorável e histórico de pesquisa ativo.'
-    if (v <= 69)
-      return 'Potencial geológico moderado com dados de pesquisa mineral incompletos.'
-    return 'Risco geológico elevado por ausência de relatórios de pesquisa recentes.'
-  }
-  if (dim === 'ambiental') {
-    if (v < 40)
-      return 'Sem sobreposição com áreas protegidas. Licenciamento simplificado.'
-    if (v <= 69)
-      return 'Área próxima a unidades de conservação. EIA/RIMA pode ser exigido.'
-    return 'Sobreposição com Terra Indígena ou UC de proteção integral identificada.'
-  }
-  if (dim === 'social') {
-    if (v < 40)
-      return 'Município com baixo índice de conflitos fundiários registrados.'
-    if (v <= 69)
-      return 'Histórico de conflitos rurais na região. Monitoramento recomendado.'
-    return 'Alto índice de conflitos rurais (CPT) e criminalidade na região.'
-  }
-  if (v < 40)
-    return 'Processo sem pendências na ANM. Legislação favorável para o regime.'
-  if (v <= 69)
-    return 'Alertas regulatórios ativos podem impactar o cronograma do processo.'
-  return 'Múltiplas restrições regulatórias ativas com alto risco de bloqueio do processo.'
 }
 
 /** Ícones de tendência de preço (subaba Inteligência). */
@@ -1439,6 +1376,8 @@ export interface RelatorioCompletoProps {
   aberto: boolean
   onFechar: () => void
   abaInicial?: AbaId
+  /** Quando incrementa (ex.: «Ver decomposição completa» no mapa), força a aba ativa = `abaInicial`. */
+  abaRiscoRequestId?: number
 }
 
 export function RelatorioCompleto({
@@ -1446,6 +1385,7 @@ export function RelatorioCompleto({
   aberto,
   onFechar,
   abaInicial = 'processo',
+  abaRiscoRequestId = 0,
 }: RelatorioCompletoProps) {
   const dados: RelatorioData | undefined = processo
     ? relatoriosMock[processo.id]
@@ -1457,7 +1397,7 @@ export function RelatorioCompleto({
 
   useEffect(() => {
     if (aberto) setAba(abaInicial)
-  }, [aberto, abaInicial])
+  }, [aberto, abaInicial, abaRiscoRequestId])
 
   const regimeColor = processo
     ? (REGIME_COLORS[processo.regime] ?? '#888780')
@@ -1467,6 +1407,13 @@ export function RelatorioCompleto({
     if (!processo) return []
     return [...processo.alertas].sort(
       (a, b) => a.nivel_impacto - b.nivel_impacto,
+    )
+  }, [processo])
+
+  const riskDecomposicaoMemo = useMemo(() => {
+    if (!processo) return null
+    return (
+      processo.risk_decomposicao ?? gerarRiskDecomposicaoParaProcesso(processo)
     )
   }, [processo])
 
@@ -3023,11 +2970,38 @@ export function RelatorioCompleto({
                       fontSize: FS.jumbo,
                       fontWeight: 500,
                       textAlign: 'center',
-                      color: corFaixaRisco(processo.risk_score),
                       margin: '0 0 8px 0',
                     }}
                   >
-                    {processo.risk_score}
+                    {riskDecomposicaoMemo ? (
+                      <CamadaTooltipHover
+                        conteudo={
+                          <RiskTotalCalcTooltipContent
+                            decomposicao={riskDecomposicaoMemo}
+                          />
+                        }
+                        maxWidthPx={280}
+                        preferAbove
+                        inlineWrap
+                      >
+                        <span
+                          style={{
+                            color: corFaixaRisco(processo.risk_score),
+                            borderBottom: `1px dotted ${corFaixaRisco(processo.risk_score)}`,
+                            cursor: 'help',
+                            fontVariantNumeric: 'tabular-nums',
+                          }}
+                        >
+                          {processo.risk_score}
+                        </span>
+                      </CamadaTooltipHover>
+                    ) : (
+                      <span
+                        style={{ color: corFaixaRisco(processo.risk_score) }}
+                      >
+                        {processo.risk_score}
+                      </span>
+                    )}
                   </p>
                   <p
                     style={{
@@ -3041,29 +3015,82 @@ export function RelatorioCompleto({
                     {classificacaoRiscoTotal(processo.risk_score)}
                   </p>
                   {processo.risk_breakdown ? (
-                    <CamadaTooltipHover
-                      texto={textoFormulaMediaPonderadaRiskTooltip(
-                        processo.risk_breakdown,
-                        processo.risk_score,
-                      )}
-                      maxWidthPx={300}
-                      preferAbove
-                      className="mx-auto block w-fit max-w-full"
+                    <div
+                      style={{
+                        marginTop: 18,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 10,
+                        width: '100%',
+                        maxWidth: '100%',
+                        minWidth: 0,
+                      }}
                     >
-                      <span
-                        style={{
-                          display: 'block',
-                          fontSize: FS.md,
-                          color: '#888780',
-                          textAlign: 'center',
-                          margin: '14px 0 0 0',
-                          lineHeight: 1.5,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        Ver cálculo
-                      </span>
-                    </CamadaTooltipHover>
+                      {(
+                        [
+                          ['Geológico', processo.risk_breakdown.geologico],
+                          ['Ambiental', processo.risk_breakdown.ambiental],
+                          ['Social', processo.risk_breakdown.social],
+                          ['Regulatório', processo.risk_breakdown.regulatorio],
+                        ] as const
+                      ).map(([label, val]) => {
+                        const cor = corFaixaRisco(val)
+                        return (
+                          <div
+                            key={label}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 10,
+                              minWidth: 0,
+                              maxWidth: '100%',
+                            }}
+                          >
+                            <span
+                              style={{
+                                fontSize: FS.base,
+                                color: '#888780',
+                                width: 100,
+                                flexShrink: 0,
+                              }}
+                            >
+                              {label}
+                            </span>
+                            <div
+                              style={{
+                                flex: 1,
+                                minWidth: 0,
+                                height: 5,
+                                borderRadius: 3,
+                                backgroundColor: '#2C2C2A',
+                                overflow: 'hidden',
+                              }}
+                            >
+                              <div
+                                style={{
+                                  width: `${Math.min(100, Math.max(0, val))}%`,
+                                  height: '100%',
+                                  backgroundColor: cor,
+                                }}
+                              />
+                            </div>
+                            <span
+                              style={{
+                                fontSize: FS.base,
+                                fontWeight: 700,
+                                color: cor,
+                                width: 36,
+                                textAlign: 'right',
+                                flexShrink: 0,
+                                fontVariantNumeric: 'tabular-nums',
+                              }}
+                            >
+                              {val}
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
                   ) : null}
                 </>
               )}
@@ -3074,89 +3101,13 @@ export function RelatorioCompleto({
               />
             </Card>
 
-            {processo.risk_breakdown
-              ? (
-                  [
-                    ['geologico', 'Geológico', processo.risk_breakdown.geologico],
-                    ['ambiental', 'Ambiental', processo.risk_breakdown.ambiental],
-                    ['social', 'Social', processo.risk_breakdown.social],
-                    [
-                      'regulatorio',
-                      'Regulatório',
-                      processo.risk_breakdown.regulatorio,
-                    ],
-                  ] as const
-                ).map(([dim, label, val]) => {
-                  const cor = corFaixaRisco(val)
-                  const pesoPct =
-                    dim === 'geologico'
-                      ? '25%'
-                      : dim === 'ambiental'
-                        ? '30%'
-                        : dim === 'social'
-                          ? '25%'
-                          : '20%'
-                  return (
-                    <Card key={dim}>
-                      <div
-                        style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          marginBottom: 8,
-                        }}
-                      >
-                        <span
-                          style={{
-                            fontSize: FS.base,
-                            fontWeight: 500,
-                            color: '#F1EFE8',
-                          }}
-                        >
-                          {label}
-                          <span style={{ color: cor }}>{` (${pesoPct})`}</span>
-                        </span>
-                        <span
-                          style={{
-                            fontSize: FS.base,
-                            fontWeight: 700,
-                            color: cor,
-                          }}
-                        >
-                          {val}
-                        </span>
-                      </div>
-                      <div
-                        style={{
-                          height: 6,
-                          borderRadius: 3,
-                          backgroundColor: '#2C2C2A',
-                          overflow: 'hidden',
-                          marginBottom: 8,
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: `${Math.min(100, Math.max(0, val))}%`,
-                            height: '100%',
-                            backgroundColor: cor,
-                          }}
-                        />
-                      </div>
-                      <p
-                        style={{
-                          fontSize: FS.md,
-                          color: '#888780',
-                          margin: 0,
-                          lineHeight: 1.45,
-                        }}
-                      >
-                        {textoDimensaoRisco(dim, val)}
-                      </p>
-                    </Card>
-                  )
-                })
-              : null}
+            {processo.risk_score !== null && riskDecomposicaoMemo ? (
+              <Card>
+                <RiskDecomposicaoRelatorioPanel
+                  decomposicao={riskDecomposicaoMemo}
+                />
+              </Card>
+            ) : null}
 
             <Card>
               <SecLabel branco>Alertas regulatórios</SecLabel>

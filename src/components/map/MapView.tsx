@@ -31,7 +31,6 @@ import {
   REGIME_COLORS,
   REGIME_COLORS_MAP,
   REGIME_LABELS,
-  REGIME_LAYER_ORDER,
 } from '../../lib/regimes'
 import { CamadaTooltipHover } from '../filters/CamadaTooltipHover'
 import {
@@ -41,6 +40,7 @@ import {
   cloneFiltrosState,
   fingerprintDrillFiltros,
 } from '../../lib/intelMapDrill'
+import { FAMILIA_MINERAL_DEFS, corPorFamilia } from '../../lib/substanciaFamilias'
 import { normalizeSubstanciaKey } from '../../lib/substancias'
 import { ufBoundsLngLat, ufNomeOuSigla } from '../../lib/ufBounds'
 import { useAppStore } from '../../store/useAppStore'
@@ -70,7 +70,7 @@ import { MapSidebar } from './MapSidebar'
 import { ProcessoPopupContent } from './ProcessoPopup'
 import { RelatorioCompleto } from './RelatorioCompleto'
 
-type ModoVisualizacao = 'regime' | 'risco'
+type ModoVisualizacao = 'regime' | 'risco' | 'substancia'
 
 /** Largura fixa da sidebar de filtros + margem para o mapa alinhar fitBounds/flyTo. */
 const INTEL_SIDEBAR_FALLBACK_WIDTH_PX = 288
@@ -129,7 +129,9 @@ function buildGeoJSON(processos: Processo[], modoVisualizacao: ModoVisualizacao)
           color:
             modoVisualizacao === 'risco'
               ? corPorRisco(p)
-              : (REGIME_COLORS_MAP[p.regime] ?? '#888780'),
+              : modoVisualizacao === 'substancia'
+                ? corPorFamilia(p.substancia)
+                : (REGIME_COLORS_MAP[p.regime] ?? '#888780'),
         },
       })),
   }
@@ -803,10 +805,40 @@ export function MapView() {
   const [introLegend, setIntroLegend] = useState(false)
   const [introTheme, setIntroTheme] = useState(false)
   const [estiloAtivo, setEstiloAtivo] = useState(MAPBOX_STYLE_SATELLITE)
+  const [modoLegenda, setModoLegenda] = useState<'regime' | 'substancia'>('regime')
   const [modoVisualizacao, setModoVisualizacao] = useState<ModoVisualizacao>('regime')
   const modoVisualizacaoRef = useRef<ModoVisualizacao>('regime')
   modoVisualizacaoRef.current = modoVisualizacao
+
+  const onMudarModoLegenda = useCallback((modo: 'regime' | 'substancia') => {
+    setModoLegenda(modo)
+    setModoVisualizacao((m) => (m === 'risco' ? m : modo))
+  }, [])
+
+  const onSubstanciaExplorada = useCallback(() => {
+    if (modoVisualizacaoRef.current !== 'risco') {
+      setModoVisualizacao('substancia')
+      setModoLegenda('substancia')
+    } else {
+      setModoLegenda('substancia')
+    }
+  }, [])
+
   const filtros = useMapStore((s) => s.filtros)
+  const substanciasFiltro = filtros.substancias
+
+  const familiasAtivasNaLegenda = useMemo(() => {
+    if (substanciasFiltro.length === 0) return null
+    const normAtivas = new Set(substanciasFiltro.map(normalizeSubstanciaKey))
+    const resultado = new Set<string>()
+    for (const fam of FAMILIA_MINERAL_DEFS) {
+      if (fam.substancias.some((s) => normAtivas.has(s))) {
+        resultado.add(fam.id)
+      }
+    }
+    return resultado
+  }, [substanciasFiltro])
+
   const camadasGeo = useMapStore((s) => s.camadasGeo)
   const filtrosAlteradosCount = useMemo(
     () => countFiltrosAlterados(filtros),
@@ -945,6 +977,9 @@ export function MapView() {
   const [relatorioAbaInicial, setRelatorioAbaInicial] = useState<
     'processo' | 'territorio' | 'inteligencia' | 'risco' | 'fiscal'
   >('processo')
+  /** Incrementa ao pedir a aba Risco no drawer (força sync mesmo se `abaInicial` já era `risco`). */
+  const [relatorioAbaRiscoRequestId, setRelatorioAbaRiscoRequestId] =
+    useState(0)
 
   const verRelatorioRef = useRef<() => void>(() => {})
   verRelatorioRef.current = () => {
@@ -970,6 +1005,7 @@ export function MapView() {
     }
     tearDownProcessoPopupRef.current?.()
     setRelatorioAbaInicial('risco')
+    setRelatorioAbaRiscoRequestId((n) => n + 1)
     useMapStore.getState().setRelatorioDrawerAberto(true)
   }
 
@@ -1403,6 +1439,63 @@ export function MapView() {
     }
   }, [mapLoaded, filtros, modoVisualizacao, intelTitularFilter])
 
+  /**
+   * `requestFlyTo` atualiza o store; o `useEffect` nem sempre disparava a tempo (Strict Mode / ordem).
+   * Subscrição Zustand corre síncrono quando `flyTo` muda — garante `fitBounds` / `flyTo` no Mapbox.
+   */
+  const prevFlyToRef = useRef<MapStore['flyTo']>(null)
+
+  useEffect(() => {
+    if (!mapLoaded) return
+    const map = mapRef.current
+    if (!map) return
+
+    const applyCamera = (ft: NonNullable<MapStore['flyTo']>) => {
+      const st = useMapStore.getState()
+      const proc =
+        (ft.processoId && st.processos.find((x) => x.id === ft.processoId)) ||
+        st.processoSelecionado
+
+      const bounds = proc ? boundsFromSingleProcesso(proc) : null
+      const duration = reducedMotion ? 0 : 1200
+
+      try {
+        if (bounds && !bounds.isEmpty()) {
+          map.fitBounds(bounds, {
+            padding: {
+              top: 72,
+              bottom: 72,
+              left: getIntelLeftReservePx() + 40,
+              right: 40,
+            },
+            duration,
+            maxZoom: 16,
+            essential: true,
+          })
+        } else {
+          map.flyTo({
+            center: [ft.lng, ft.lat],
+            zoom: Math.max(ft.zoom, 12),
+            duration,
+            essential: true,
+          })
+        }
+      } finally {
+        useMapStore.getState().clearFlyTo()
+      }
+    }
+
+    const unsub = useMapStore.subscribe((state) => {
+      const ft = state.flyTo
+      if (ft === prevFlyToRef.current) return
+      prevFlyToRef.current = ft
+      if (!ft) return
+      applyCamera(ft)
+    })
+
+    return unsub
+  }, [mapLoaded, reducedMotion])
+
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapLoaded || !map.isStyleLoaded()) return
@@ -1671,7 +1764,9 @@ export function MapView() {
             filtrosAlteradosCount={filtrosAlteradosCount}
             modoRisco={modoVisualizacao === 'risco'}
             onToggleModoRisco={() =>
-              setModoVisualizacao((m) => (m === 'risco' ? 'regime' : 'risco'))
+              setModoVisualizacao((m) =>
+                m === 'risco' ? modoLegenda : 'risco',
+              )
             }
           />
         </div>
@@ -1683,6 +1778,7 @@ export function MapView() {
           onIntelAutoCloseMouseEnter={onIntelSidebarMouseEnter}
           onIntelAutoCloseMouseLeave={onIntelSidebarMouseLeave}
           onIntelAutoClosePointerDownCapture={onIntelSidebarPointerDownCapture}
+          onSubstanciaExplorada={onSubstanciaExplorada}
         />
       ) : null}
       {modoVisualizacao === 'risco' ? (
@@ -1781,68 +1877,222 @@ export function MapView() {
               transition: 'opacity 300ms ease',
             }}
           >
-          <p className="mb-2.5 text-[12px] font-medium uppercase tracking-[2px] text-[var(--text-section-title)]">
-            Legenda
-          </p>
-          <ul className="flex flex-col gap-2">
-            {REGIME_LAYER_ORDER.map((r) => (
-              <li key={r} className="flex items-center gap-2.5">
-                <span
-                  className="h-2.5 w-2.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: REGIME_COLORS_MAP[r] }}
-                />
-                <CamadaTooltipHover
-                  texto={REGIME_BADGE_TOOLTIP[r]}
-                  maxWidthPx={340}
-                  bubblePadding="10px 12px"
-                  preferBelow
-                  className="min-w-0"
-                >
-                  <span
-                    className="cursor-help text-[13px] leading-snug text-[#F1EFE8]"
+          <div
+            className="mb-2.5 flex overflow-hidden rounded-md"
+            style={{
+              background: '#1A1A18',
+              border: '1px solid #2C2C2A',
+              height: 28,
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => onMudarModoLegenda('regime')}
+              className="flex-1 cursor-pointer border-0 px-3 text-[11px] font-medium uppercase tracking-[1.5px] transition-colors"
+              style={{
+                background: modoLegenda === 'regime' ? '#2C2C2A' : 'transparent',
+                color: modoLegenda === 'regime' ? '#F1EFE8' : '#5F5E5A',
+              }}
+            >
+              Regimes
+            </button>
+            <button
+              type="button"
+              onClick={() => onMudarModoLegenda('substancia')}
+              className="flex-1 cursor-pointer border-0 px-3 text-[11px] font-medium uppercase tracking-[1.5px] transition-colors"
+              style={{
+                background: modoLegenda === 'substancia' ? '#2C2C2A' : 'transparent',
+                color: modoLegenda === 'substancia' ? '#F1EFE8' : '#5F5E5A',
+                borderLeft: '1px solid #2C2C2A',
+              }}
+            >
+              Substâncias
+            </button>
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr',
+              gridTemplateRows: '1fr',
+            }}
+          >
+            <div
+              aria-hidden={modoLegenda !== 'regime'}
+              style={{
+                gridColumn: 1,
+                gridRow: 1,
+                minWidth: 0,
+                opacity: modoLegenda === 'regime' ? 1 : 0,
+                pointerEvents: modoLegenda === 'regime' ? 'auto' : 'none',
+                zIndex: modoLegenda === 'regime' ? 1 : 0,
+                transition: reducedMotion
+                  ? 'opacity 1ms linear'
+                  : 'opacity 200ms ease',
+              }}
+            >
+              <ul className="flex flex-col gap-2">
+                {(
+                  [
+                    'concessao_lavra',
+                    'autorizacao_pesquisa',
+                    'req_lavra',
+                    'licenciamento',
+                    'lavra_garimpeira',
+                    'registro_extracao',
+                  ] as Regime[]
+                ).map((r) => (
+                  <li
+                    key={r}
+                    className="flex items-center gap-2.5"
                     style={{
-                      borderBottom: `1px dotted ${REGIME_COLORS[r]}`,
+                      opacity: filtros.camadas[r] !== false ? 1 : 0.4,
+                      transition: 'opacity 200ms ease',
                     }}
                   >
-                    {REGIME_LABELS[r]}
-                  </span>
-                </CamadaTooltipHover>
-              </li>
-            ))}
-          </ul>
-          {camadasGeoLegendItems.length > 0 ? (
-            <>
-              <div
-                className="my-2.5 shrink-0"
-                style={{
-                  height: 1,
-                  backgroundColor: '#2C2C2A',
-                }}
-              />
-              <ul className="flex flex-col gap-2">
-                {camadasGeoLegendItems.map((id) => (
-                  <li key={id} className="flex items-center gap-2.5">
-                    {id === 'ferrovias' ? (
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: REGIME_COLORS_MAP[r] }}
+                    />
+                    <CamadaTooltipHover
+                      texto={REGIME_BADGE_TOOLTIP[r]}
+                      maxWidthPx={340}
+                      bubblePadding="10px 12px"
+                      preferBelow
+                      className="min-w-0"
+                    >
                       <span
-                        className="h-0.5 w-6 shrink-0 rounded-sm"
+                        className="cursor-help text-[13px] leading-snug text-[#F1EFE8]"
                         style={{
-                          backgroundColor: CAMADAS_GEO_COLOR[id],
+                          borderBottom: `1px dotted ${REGIME_COLORS[r]}`,
                         }}
-                      />
-                    ) : (
-                      <span
-                        className="h-2.5 w-2.5 shrink-0 rounded-full"
-                        style={{ backgroundColor: CAMADAS_GEO_COLOR[id] }}
-                      />
-                    )}
-                    <span className="text-[13px] leading-snug text-[#F1EFE8]">
-                      {CAMADAS_GEO_LABEL[id]}
-                    </span>
+                      >
+                        {REGIME_LABELS[r]}
+                      </span>
+                    </CamadaTooltipHover>
                   </li>
                 ))}
               </ul>
-            </>
-          ) : null}
+              <div
+                className="my-2 shrink-0"
+                style={{ height: 1, backgroundColor: '#2C2C2A' }}
+              />
+              <ul className="flex flex-col gap-2">
+                {(
+                  [
+                    'disponibilidade',
+                    'mineral_estrategico',
+                    'bloqueio_provisorio',
+                    'bloqueio_permanente',
+                  ] as Regime[]
+                ).map((r) => (
+                  <li
+                    key={r}
+                    className="flex items-center gap-2.5"
+                    style={{
+                      opacity: filtros.camadas[r] !== false ? 1 : 0.4,
+                      transition: 'opacity 200ms ease',
+                    }}
+                  >
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: REGIME_COLORS_MAP[r] }}
+                    />
+                    <CamadaTooltipHover
+                      texto={REGIME_BADGE_TOOLTIP[r]}
+                      maxWidthPx={340}
+                      bubblePadding="10px 12px"
+                      preferBelow
+                      className="min-w-0"
+                    >
+                      <span
+                        className="cursor-help text-[13px] leading-snug text-[#F1EFE8]"
+                        style={{
+                          borderBottom: `1px dotted ${REGIME_COLORS[r]}`,
+                        }}
+                      >
+                        {REGIME_LABELS[r]}
+                      </span>
+                    </CamadaTooltipHover>
+                  </li>
+                ))}
+              </ul>
+              {camadasGeoLegendItems.length > 0 ? (
+                <>
+                  <div
+                    className="my-2.5 shrink-0"
+                    style={{
+                      height: 1,
+                      backgroundColor: '#2C2C2A',
+                    }}
+                  />
+                  <ul className="flex flex-col gap-2">
+                    {camadasGeoLegendItems.map((id) => (
+                      <li key={id} className="flex items-center gap-2.5">
+                        {id === 'ferrovias' ? (
+                          <span
+                            className="h-0.5 w-6 shrink-0 rounded-sm"
+                            style={{
+                              backgroundColor: CAMADAS_GEO_COLOR[id],
+                            }}
+                          />
+                        ) : (
+                          <span
+                            className="h-2.5 w-2.5 shrink-0 rounded-full"
+                            style={{ backgroundColor: CAMADAS_GEO_COLOR[id] }}
+                          />
+                        )}
+                        <span className="text-[13px] leading-snug text-[#F1EFE8]">
+                          {CAMADAS_GEO_LABEL[id]}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : null}
+            </div>
+            <div
+              aria-hidden={modoLegenda !== 'substancia'}
+              style={{
+                gridColumn: 1,
+                gridRow: 1,
+                minWidth: 0,
+                opacity: modoLegenda === 'substancia' ? 1 : 0,
+                pointerEvents: modoLegenda === 'substancia' ? 'auto' : 'none',
+                zIndex: modoLegenda === 'substancia' ? 1 : 0,
+                transition: reducedMotion
+                  ? 'opacity 1ms linear'
+                  : 'opacity 200ms ease',
+              }}
+            >
+              <ul className="flex flex-col gap-2">
+                {FAMILIA_MINERAL_DEFS.filter((f) => f.id !== 'outros').map(
+                  (fam) => (
+                    <li
+                      key={fam.id}
+                      className="flex items-center gap-2.5"
+                      style={{
+                        opacity:
+                          familiasAtivasNaLegenda === null ||
+                          familiasAtivasNaLegenda.has(fam.id)
+                            ? 1
+                            : 0.4,
+                        transition: 'opacity 200ms ease',
+                      }}
+                    >
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: fam.color }}
+                      />
+                      <span className="text-[13px] leading-snug text-[#F1EFE8]">
+                        {fam.label}
+                      </span>
+                    </li>
+                  ),
+                )}
+              </ul>
+            </div>
+          </div>
         </div>
         </div>
       </div>
@@ -1851,6 +2101,7 @@ export function MapView() {
         aberto={relatorioDrawerAberto}
         onFechar={() => setRelatorioDrawerAberto(false)}
         abaInicial={relatorioAbaInicial}
+        abaRiscoRequestId={relatorioAbaRiscoRequestId}
       />
       {camadaGeoTip
         ? createPortal(

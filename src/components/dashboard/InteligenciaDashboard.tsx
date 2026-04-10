@@ -229,13 +229,16 @@ const SUB_KEYS = [
 export const UFS_INTEL_DASHBOARD = ['MG', 'PA', 'GO', 'BA', 'AM', 'MT'] as const
 
 const REGIMES_ORDEM: Regime[] = [
-  'autorizacao_pesquisa',
   'concessao_lavra',
+  'autorizacao_pesquisa',
   'req_lavra',
   'licenciamento',
+  'lavra_garimpeira',
+  'registro_extracao',
+  'disponibilidade',
   'mineral_estrategico',
-  'bloqueio_permanente',
   'bloqueio_provisorio',
+  'bloqueio_permanente',
 ]
 
 /** Mapeia substância do processo para série do gráfico (quando filtro de substâncias ativo). */

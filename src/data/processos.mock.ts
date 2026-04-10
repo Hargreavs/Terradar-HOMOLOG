@@ -1,3 +1,7 @@
+import {
+  ambientalDetalheMockFromId,
+  gerarRiskDecomposicaoParaProcesso,
+} from '../lib/riskScoreDecomposicao'
 import type {
   AlertaLegislativo,
   DadosFiscais,
@@ -6,7 +10,7 @@ import type {
   RiskBreakdown,
 } from '../types'
 
-type RawProcesso = Omit<Processo, 'geojson'>
+type RawProcesso = Omit<Processo, 'geojson' | 'risk_decomposicao'>
 type ProcessoSeed = Omit<
   RawProcesso,
   | 'risk_breakdown'
@@ -398,7 +402,10 @@ const CATALOGO_ALERTAS: Record<string, AlertaLegislativo> = {
   },
 }
 
-/** Sub-scores alinhados ao risk_score (média ponderada) e às regras regionais. */
+/**
+ * Sub-scores para o mock. O campo `ambiental` desta tabela é ignorado:
+ * o valor usado é sempre `ambientalDetalheMockFromId(p.id).score` (soma binária com teto 100).
+ */
 const RISK_BY_ID: Record<string, RiskBreakdown> = {
   p1: { geologico: 35, ambiental: 45, social: 40, regulatorio: 48 },
   p2: { geologico: 44, ambiental: 80, social: 74, regulatorio: 68 },
@@ -450,8 +457,9 @@ function processoBloqueadoParaRisco(p: ProcessoSeed): boolean {
 
 function riskBreakdownPara(p: ProcessoSeed): RiskBreakdown {
   const b = RISK_BY_ID[p.id]
-  if (b) return b
-  return { geologico: 50, ambiental: 50, social: 50, regulatorio: 50 }
+  const ambScore = ambientalDetalheMockFromId(p.id).score
+  if (b) return { ...b, ambiental: ambScore }
+  return { geologico: 50, ambiental: ambScore, social: 50, regulatorio: 50 }
 }
 
 function pickAlertas(p: ProcessoSeed): AlertaLegislativo[] {
@@ -1183,6 +1191,60 @@ const processosSeed: ProcessoSeed[] = [
     situacao: 'bloqueado',
     risk_score: 72,
   },
+  {
+    id: 'p-garimpo-1',
+    numero: '935.210/2021',
+    regime: 'lavra_garimpeira',
+    fase: 'lavra',
+    substancia: 'OURO',
+    is_mineral_estrategico: false,
+    titular: 'Cooperativa Garimpeira do Tapajós',
+    area_ha: 48.2,
+    uf: 'PA',
+    municipio: 'Itaituba',
+    lat: -4.28,
+    lng: -55.98,
+    data_protocolo: '2021-06-14',
+    ano_protocolo: 2021,
+    situacao: 'ativo',
+    risk_score: 78,
+  },
+  {
+    id: 'p-disponibilidade-1',
+    numero: '800.015/2005',
+    regime: 'disponibilidade',
+    fase: 'encerrado',
+    substancia: 'COBRE',
+    is_mineral_estrategico: false,
+    titular: 'Área disponível (sem titular)',
+    area_ha: 520,
+    uf: 'PA',
+    municipio: 'Canaã dos Carajás',
+    lat: -6.5,
+    lng: -49.87,
+    data_protocolo: '2005-02-10',
+    ano_protocolo: 2005,
+    situacao: 'inativo',
+    risk_score: null,
+  },
+  {
+    id: 'p-registro-ext-1',
+    numero: '960.880/2023',
+    regime: 'registro_extracao',
+    fase: 'lavra',
+    substancia: 'AREIA',
+    is_mineral_estrategico: false,
+    titular: 'Prefeitura Municipal de Uberlândia',
+    area_ha: 15.8,
+    uf: 'MG',
+    municipio: 'Uberlândia',
+    lat: -18.92,
+    lng: -48.28,
+    data_protocolo: '2023-09-01',
+    ano_protocolo: 2023,
+    situacao: 'ativo',
+    risk_score: 15,
+  },
 ]
 
 function valorEstimadoUsdMiPara(p: ProcessoSeed): number {
@@ -1196,6 +1258,12 @@ function valorEstimadoUsdMiPara(p: ProcessoSeed): number {
       return Math.round(80 + u * 320)
     case 'licenciamento':
       return Math.round(10 + u * 40)
+    case 'lavra_garimpeira':
+      return Math.round(15 + u * 90)
+    case 'registro_extracao':
+      return Math.round(2 + u * 15)
+    case 'disponibilidade':
+      return Math.round(40 + u * 120)
     case 'mineral_estrategico':
       return Math.round(200 + u * 1000)
     case 'bloqueio_permanente':
@@ -1250,7 +1318,10 @@ const rawProcessos: RawProcesso[] = processosSeed.map((p) => {
   return {
     ...p,
     risk_breakdown,
-    risk_score: p.risk_score ?? pontuacaoRiscoMedia(risk_breakdown),
+    risk_score:
+      p.risk_score === null
+        ? null
+        : pontuacaoRiscoMedia(risk_breakdown),
     valor_estimado_usd_mi: valorEstimadoUsdMiPara(p),
     ultimo_despacho_data: ultimoDespachoDataPara(p),
     alertas: pickAlertas(p),
@@ -1258,9 +1329,16 @@ const rawProcessos: RawProcesso[] = processosSeed.map((p) => {
   }
 })
 
-export const processosMock: Processo[] = rawProcessos.map((p) => ({
-  ...p,
-  geojson: makePolygon(p.lat, p.lng, p.id),
-}))
+export const processosMock: Processo[] = rawProcessos.map((p) => {
+  const base: Processo = {
+    ...p,
+    geojson: makePolygon(p.lat, p.lng, p.id),
+    risk_decomposicao: null,
+  }
+  return {
+    ...base,
+    risk_decomposicao: gerarRiskDecomposicaoParaProcesso(base),
+  }
+})
 
 export const PROCESSOS_MOCK = processosMock
