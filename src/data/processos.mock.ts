@@ -1,5 +1,5 @@
 import {
-  ambientalDetalheMockFromId,
+  ambientalDetalheMockFromProcesso,
   gerarRiskDecomposicaoParaProcesso,
 } from '../lib/riskScoreDecomposicao'
 import type {
@@ -404,7 +404,7 @@ const CATALOGO_ALERTAS: Record<string, AlertaLegislativo> = {
 
 /**
  * Sub-scores para o mock. O campo `ambiental` desta tabela é ignorado:
- * o valor usado é sempre `ambientalDetalheMockFromId(p.id).score` (soma binária com teto 100).
+ * o valor usado é sempre `ambientalDetalheMockFromProcesso(p).score` (soma binária com teto 100).
  */
 const RISK_BY_ID: Record<string, RiskBreakdown> = {
   p1: { geologico: 35, ambiental: 45, social: 40, regulatorio: 48 },
@@ -457,7 +457,7 @@ function processoBloqueadoParaRisco(p: ProcessoSeed): boolean {
 
 function riskBreakdownPara(p: ProcessoSeed): RiskBreakdown {
   const b = RISK_BY_ID[p.id]
-  const ambScore = ambientalDetalheMockFromId(p.id).score
+  const ambScore = ambientalDetalheMockFromProcesso(p).score
   if (b) return { ...b, ambiental: ambScore }
   return { geologico: 50, ambiental: ambScore, social: 50, regulatorio: 50 }
 }
@@ -511,6 +511,8 @@ function lerpMi(lo: number, hi: number, t: number): number {
 function fiscalPara(p: ProcessoSeed): DadosFiscais {
   const u = (s: number) => hashUnit(p.id, s)
   const m = p.municipio
+  const mineralEstrategico =
+    p.regime === 'mineral_estrategico' || p.is_mineral_estrategico
 
   const base = (
     capag: DadosFiscais['capag'],
@@ -595,6 +597,19 @@ function fiscalPara(p: ProcessoSeed): DadosFiscais {
   }
 
   if (['Irecê', 'Jacobina', 'Brumado', 'Caetité'].includes(m)) {
+    if (mineralEstrategico) {
+      return base(
+        'A',
+        95,
+        220,
+        [
+          'DESENVOLVE BA: subvenção a investimentos em mineração e logística',
+          'Redução de ICMS na exportação de minérios e concentrados',
+        ],
+        ['Finem Mineração', 'Nova Indústria Brasil'],
+        'Minerais estratégicos (Lei 13.975/2019): CAPAG consolidada no mock, alinhada ao painel fiscal do relatório.',
+      )
+    }
     return base(
       u(42) < 0.5 ? 'B' : 'C',
       65,

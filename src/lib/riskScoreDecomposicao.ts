@@ -1,3 +1,4 @@
+import { CAMADAS_GEO_JSON } from '../data/camadas/geoImport'
 import { normalizeSubstanciaKey } from './substancias'
 import type {
   Fase,
@@ -71,32 +72,6 @@ const FASE_LABEL_POPOVER: Record<Fase, string> = {
   encerrado: 'processo encerrado',
 }
 
-const TI_NOMES = [
-  'Xingu',
-  'Yanomami',
-  'Kayapó',
-  'Munduruku',
-  'Apyterewa',
-  'Cachoeira Seca',
-]
-
-const UC_PI_NOMES = [
-  'Serra da Capivara',
-  'Chapada dos Veadeiros',
-  'Jaú',
-  'Amazonas',
-]
-
-const UC_US_NOMES = [
-  'Triunfo do Xingu',
-  'Tapajós',
-  'Gurupi',
-]
-
-const QUILOMBOS = ['Quilombo Rio dos Macacos', 'Quilombo Kalunga', 'Quilombo Ivaporunduva']
-
-const AQUIFEROS = ['Alter do Chão', 'Bambuí', 'Urucuia', 'Guarani']
-
 function hashUnit(id: string, salt: number): number {
   let h = 0
   const payload = `${id}\0${salt}`
@@ -144,10 +119,6 @@ function diasDesdeIso(iso: string): number {
   if (!Number.isFinite(t)) return 120
   const now = Date.now()
   return Math.max(0, Math.round((now - t) / 86400000))
-}
-
-function pick<T>(arr: T[], id: string, salt: number): T {
-  return arr[Math.floor(hashUnit(id, salt) * arr.length) % arr.length]!
 }
 
 export function gerarDescricaoRiskDimensao(
@@ -252,7 +223,7 @@ export function gerarDescricaoRiskDimensao(
   return `${a}, ${b}`
 }
 
-function variaveisGeologicas(p: Processo, gScore: number): RiskDimensaoVariavel[] {
+function variaveisGeologicas(p: Processo, _gScore: number): RiskDimensaoVariavel[] {
   const key = normalizeSubstanciaKey(p.substancia)
   const subScore =
     SUBSTANCIA_RISK_LOOKUP[key] ??
@@ -299,124 +270,283 @@ function variaveisGeologicas(p: Processo, gScore: number): RiskDimensaoVariavel[
   ]
 }
 
-/** Semente determinística inteira a partir do id (para presença binária dos fatores). */
-function seedIntFromId(id: string): number {
-  let h = 0
-  for (let i = 0; i < id.length; i++) {
-    h = (Math.imul(31, h) + id.charCodeAt(i)) | 0
-  }
-  return Math.abs(h)
+type LngLatBBox = {
+  minLng: number
+  maxLng: number
+  minLat: number
+  maxLat: number
 }
 
+function bboxFromRing(ring: [number, number][]): LngLatBBox {
+  let minLng = Infinity
+  let maxLng = -Infinity
+  let minLat = Infinity
+  let maxLat = -Infinity
+  for (const [lng, lat] of ring) {
+    if (lng < minLng) minLng = lng
+    if (lng > maxLng) maxLng = lng
+    if (lat < minLat) minLat = lat
+    if (lat > maxLat) maxLat = lat
+  }
+  return { minLng, maxLng, minLat, maxLat }
+}
+
+function bboxOverlap(a: LngLatBBox, b: LngLatBBox): boolean {
+  return (
+    a.minLng < b.maxLng &&
+    a.maxLng > b.minLng &&
+    a.minLat < b.maxLat &&
+    a.maxLat > b.minLat
+  )
+}
+
+/** Área da interseção de duas caixas em graus² (mock cartográfico). */
+function bboxIntersectionArea(a: LngLatBBox, b: LngLatBBox): number {
+  const x0 = Math.max(a.minLng, b.minLng)
+  const x1 = Math.min(a.maxLng, b.maxLng)
+  const y0 = Math.max(a.minLat, b.minLat)
+  const y1 = Math.min(a.maxLat, b.maxLat)
+  if (x0 >= x1 || y0 >= y1) return 0
+  return (x1 - x0) * (y1 - y0)
+}
+
+type CamadaGeoFeat = {
+  properties?: Record<string, unknown>
+  geometry: { type: string; coordinates: unknown }
+}
+
+/** Quando várias feições interceptam o processo, usa a de maior área (desempate estável por nome). */
+function pickFeatureWithMaxOverlap(
+  features: CamadaGeoFeat[],
+  proc: LngLatBBox,
+  include: (f: CamadaGeoFeat) => boolean,
+  tieKey: (f: CamadaGeoFeat) => string,
+): CamadaGeoFeat | null {
+  let best: { f: CamadaGeoFeat; area: number } | null = null
+  for (const f of features) {
+    if (!include(f)) continue
+    const gb = geometryBBox(f.geometry)
+    if (!gb || !bboxOverlap(proc, gb)) continue
+    const area = bboxIntersectionArea(proc, gb)
+    const key = tieKey(f)
+    if (
+      !best ||
+      area > best.area ||
+      (area === best.area && key.localeCompare(tieKey(best.f)) < 0)
+    ) {
+      best = { f, area }
+    }
+  }
+  return best?.f ?? null
+}
+
+/** Para aquíferos sobrepostos: prefere o polígono mais “local” (menor área de interseção). */
+function pickFeatureWithMinOverlap(
+  features: CamadaGeoFeat[],
+  proc: LngLatBBox,
+  include: (f: CamadaGeoFeat) => boolean,
+  tieKey: (f: CamadaGeoFeat) => string,
+): CamadaGeoFeat | null {
+  let best: { f: CamadaGeoFeat; area: number } | null = null
+  for (const f of features) {
+    if (!include(f)) continue
+    const gb = geometryBBox(f.geometry)
+    if (!gb || !bboxOverlap(proc, gb)) continue
+    const area = bboxIntersectionArea(proc, gb)
+    const key = tieKey(f)
+    if (
+      !best ||
+      area < best.area ||
+      (area === best.area && key.localeCompare(tieKey(best.f)) < 0)
+    ) {
+      best = { f, area }
+    }
+  }
+  return best?.f ?? null
+}
+
+/** Mesma escala que `makePolygon` em `processos.mock.ts` (footprint ~0,15–0,35°). */
+function processFootprintBBox(id: string, lat: number, lng: number): LngLatBBox {
+  const u = (salt: number) => hashUnit(id, salt)
+  const aspW = 0.58 + (1.42 - 0.58) * u(10)
+  const aspH = 0.58 + (1.42 - 0.58) * u(11)
+  const we = 0.25 * aspW
+  const he = 0.2 * aspH
+  return {
+    minLng: lng - we,
+    maxLng: lng + we,
+    minLat: lat - he,
+    maxLat: lat + he,
+  }
+}
+
+function geometryBBox(
+  geom: { type: string; coordinates: unknown },
+): LngLatBBox | null {
+  if (geom.type === 'Polygon') {
+    const rings = geom.coordinates as [number, number][][]
+    const outer = rings[0]
+    if (!outer?.length) return null
+    return bboxFromRing(outer)
+  }
+  if (geom.type === 'Point') {
+    const [lng, lat] = geom.coordinates as [number, number]
+    const e = 0.04
+    return {
+      minLng: lng - e,
+      maxLng: lng + e,
+      minLat: lat - e,
+      maxLat: lat + e,
+    }
+  }
+  return null
+}
+
+function tiNomeCurto(nomeCompleto: string): string {
+  return nomeCompleto.replace(/^Terra Indígena\s+/i, '').trim() || nomeCompleto
+}
+
+function ucPiTexto(nome: string): string {
+  const n = nome.trim()
+  if (/^parque nacional/i.test(n)) return `${n}`
+  return `Parque Nacional ${n}`
+}
+
+const UF_AMAZONIA_LEGAL = new Set(['AM', 'PA', 'RR', 'AP', 'AC', 'RO'])
+
 /**
- * Mock ambiental: fatores binários com pesos fixos; score = min(100, soma).
- * Deve ser a única fonte de `risk_breakdown.ambiental` e da decomposição ambiental.
+ * Mock ambiental: só entra fator se a área do processo (bbox) intercepta a feição
+ * das camadas GeoJSON usadas no mapa — alinha texto de risco ao desenho das camadas.
+ * Score = min(100, soma dos pesos dos fatores presentes).
  */
-export function ambientalDetalheMockFromId(id: string): RiskDimensaoDetalhe {
-  const seed = seedIntFromId(id)
+export function ambientalDetalheMockFromProcesso(p: {
+  id: string
+  lat: number
+  lng: number
+  uf: string
+}): RiskDimensaoDetalhe {
+  const proc = processFootprintBBox(p.id, p.lat, p.lng)
+  const id = p.id
 
-  const temTI = seed % 3 === 0
-  const temUCPI = seed % 5 === 0
-  const temAPP = seed % 4 === 0
-  const temQuilombola = seed % 7 === 0
-  const temUCUS = seed % 6 === 0
-  const temAquifero = seed % 2 === 0
-  const biomas = [
-    'cerrado',
-    'amazonia',
-    'mata_atlantica',
-    'pantanal',
-    'caatinga',
-  ] as const
-  const bioma = biomas[seed % biomas.length]
-
-  const tiNome = pick(TI_NOMES, id, 208)
-  const ucPiNome = pick(UC_PI_NOMES, id, 209)
-  const ucUsNome = pick(UC_US_NOMES, id, 210)
-  const quil = pick(QUILOMBOS, id, 211)
-  const aqu = pick(AQUIFEROS, id, 212)
-
-  const tiPct = (seed % 30) + 5
-  const ucPiPct = (seed % 20) + 5
-  const ucUsPct = (seed % 12) + 3
-  const appPct = (seed % 15) + 3
-  const quarKm = (seed % 15) + 2
-  const aquKm = (seed % 4) + 1
+  const tiPct = 5 + Math.floor(hashUnit(id, 208) * 26)
+  const ucPiPct = 5 + Math.floor(hashUnit(id, 209) * 21)
+  const ucUsPct = 3 + Math.floor(hashUnit(id, 210) * 13)
+  const appPct = 3 + Math.floor(hashUnit(id, 211) * 14)
+  const quarKm = 2 + Math.floor(hashUnit(id, 212) * 14)
 
   const variaveis: RiskDimensaoVariavel[] = []
 
-  if (temTI) {
+  const tiFeat = pickFeatureWithMaxOverlap(
+    CAMADAS_GEO_JSON.terras_indigenas.features as CamadaGeoFeat[],
+    proc,
+    () => true,
+    (f) => String(f.properties?.nome ?? 'TI'),
+  )
+  if (tiFeat) {
+    const nome = String(tiFeat.properties?.nome ?? 'TI')
     variaveis.push({
       nome: 'Sobreposição com TI',
       valor: 40,
-      texto: `TI ${tiNome} (${tiPct}% da área do processo)`,
+      texto: `TI ${tiNomeCurto(nome)} (${tiPct}% da área do processo)`,
       fonte: 'FUNAI',
     })
   }
-  if (temUCPI) {
+
+  const ucPiFeat = pickFeatureWithMaxOverlap(
+    CAMADAS_GEO_JSON.unidades_conservacao.features as CamadaGeoFeat[],
+    proc,
+    (f) => /integral|proteção integral/i.test(String(f.properties?.categoria ?? '')),
+    (f) => String(f.properties?.nome ?? 'UC'),
+  )
+  if (ucPiFeat) {
+    const nome = String(ucPiFeat.properties?.nome ?? 'UC')
     variaveis.push({
       nome: 'Sobreposição com UC PI',
       valor: 35,
-      texto: `Parque Nacional ${ucPiNome} (${ucPiPct}% da área)`,
+      texto: `${ucPiTexto(nome)} (${ucPiPct}% da área)`,
       fonte: 'ICMBio/MMA (CNUC)',
-    })
-  }
-  if (temAPP) {
-    variaveis.push({
-      nome: 'Sobreposição com APP',
-      valor: 25,
-      texto: `APP margem de rio (${appPct}% da área)`,
-      fonte: 'CAR/SICAR',
-    })
-  }
-  if (temQuilombola) {
-    variaveis.push({
-      nome: 'Proximidade a quilombola',
-      valor: 20,
-      texto: `${quil} a ${quarKm}km`,
-      fonte: 'INCRA',
-    })
-  }
-  if (temUCUS) {
-    variaveis.push({
-      nome: 'Proximidade a UC US',
-      valor: 15,
-      texto: `APA ${ucUsNome} (${ucUsPct}% da área)`,
-      fonte: 'ICMBio/MMA (CNUC)',
-    })
-  }
-  if (temAquifero) {
-    variaveis.push({
-      nome: 'Proximidade a aquífero',
-      valor: 10,
-      texto: `Aquífero ${aqu} a ${aquKm}km`,
-      fonte: 'ANA/CPRM',
-    })
-  }
-  if (bioma === 'amazonia') {
-    variaveis.push({
-      nome: 'Bioma Amazônia',
-      valor: 10,
-      texto: 'Amazônia',
-      fonte: 'IBGE',
-    })
-  } else if (bioma === 'mata_atlantica') {
-    variaveis.push({
-      nome: 'Bioma Mata Atlântica',
-      valor: 8,
-      texto: 'Mata Atlântica',
-      fonte: 'IBGE',
-    })
-  } else if (bioma === 'pantanal') {
-    variaveis.push({
-      nome: 'Bioma Pantanal',
-      valor: 8,
-      texto: 'Pantanal',
-      fonte: 'IBGE',
     })
   }
 
-  const soma = variaveis.reduce((acc, v) => acc + v.valor, 0)
+  const appFeat = pickFeatureWithMaxOverlap(
+    CAMADAS_GEO_JSON.app_car.features as CamadaGeoFeat[],
+    proc,
+    () => true,
+    (f) =>
+      `${f.properties?.municipio ?? ''}|${f.properties?.tipo ?? ''}|${f.properties?.uf ?? ''}`,
+  )
+  if (appFeat) {
+    const tipo = String(appFeat.properties?.tipo ?? 'APP')
+    variaveis.push({
+      nome: 'Sobreposição com APP',
+      valor: 25,
+      texto: `${tipo} (${appPct}% da área; ${String(appFeat.properties?.municipio ?? '—')}/${String(appFeat.properties?.uf ?? '—')})`,
+      fonte: 'CAR/SICAR',
+    })
+  }
+
+  const quilFeat = pickFeatureWithMaxOverlap(
+    CAMADAS_GEO_JSON.quilombolas.features as CamadaGeoFeat[],
+    proc,
+    () => true,
+    (f) => String(f.properties?.nome ?? 'Quilombo'),
+  )
+  if (quilFeat) {
+    const nome = String(quilFeat.properties?.nome ?? 'Quilombo')
+    variaveis.push({
+      nome: 'Proximidade a quilombola',
+      valor: 20,
+      texto: `${nome} — intersecta ou margeia a área (referência cartográfica ~${quarKm}km)`,
+      fonte: 'INCRA',
+    })
+  }
+
+  const ucUsFeat = pickFeatureWithMaxOverlap(
+    CAMADAS_GEO_JSON.unidades_conservacao.features as CamadaGeoFeat[],
+    proc,
+    (f) =>
+      /sustentável|sustentavel|uso sustent/i.test(
+        String(f.properties?.categoria ?? ''),
+      ),
+    (f) => String(f.properties?.nome ?? 'UC'),
+  )
+  if (ucUsFeat) {
+    const nome = String(ucUsFeat.properties?.nome ?? 'UC')
+    variaveis.push({
+      nome: 'Proximidade a UC US',
+      valor: 15,
+      texto: `${nome} (${ucUsPct}% da área em zona de amortecimento)`,
+      fonte: 'ICMBio/MMA (CNUC)',
+    })
+  }
+
+  const aqFeat = pickFeatureWithMinOverlap(
+    CAMADAS_GEO_JSON.aquiferos.features as CamadaGeoFeat[],
+    proc,
+    () => true,
+    (f) => String(f.properties?.nome ?? 'Aquífero'),
+  )
+  if (aqFeat) {
+    const nome = String(aqFeat.properties?.nome ?? 'Aquífero')
+    variaveis.push({
+      nome: 'Proximidade a aquífero',
+      valor: 10,
+      texto: `${nome} — manancial subjacente ou adjacente à área`,
+      fonte: 'ANA/CPRM',
+    })
+  }
+
+  let soma = variaveis.reduce((acc, v) => acc + v.valor, 0)
+  if (soma < 100 && UF_AMAZONIA_LEGAL.has(p.uf) && soma < 92) {
+    variaveis.push({
+      nome: 'Bioma Amazônia',
+      valor: 10,
+      texto: 'Amazônia Legal — contexto regional de sensibilidade ambiental',
+      fonte: 'IBGE',
+    })
+    soma += 10
+  }
+
   const score = Math.min(100, soma)
 
   if (variaveis.length === 0) {
@@ -426,7 +556,7 @@ export function ambientalDetalheMockFromId(id: string): RiskDimensaoDetalhe {
         {
           nome: 'Resumo',
           valor: 0,
-          texto: 'Nenhuma restrição ambiental identificada',
+          texto: 'Nenhuma restrição ambiental identificada nas camadas ativas do mock',
           fonte: 'Terrae',
         },
       ],
@@ -436,54 +566,117 @@ export function ambientalDetalheMockFromId(id: string): RiskDimensaoDetalhe {
   return { score, variaveis }
 }
 
+const W_SOC_IDH = 0.35
+const W_SOC_DENS = 0.2
+const W_SOC_COM = 0.25
+const W_SOC_CAP = 0.2
+
+function clampInt(n: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, Math.round(n)))
+}
+
+function socialWeighted(i: number, d: number, c: number, cap: number): number {
+  return Math.round(
+    W_SOC_IDH * i +
+      W_SOC_DENS * d +
+      W_SOC_COM * c +
+      W_SOC_CAP * cap,
+  )
+}
+
 function variaveisSociais(p: Processo, alvo: number): RiskDimensaoVariavel[] {
   const idh = idhProxyUf(p.uf)
-  const u = hashUnit(p.id, 301)
-  const idhRisk = Math.round((1 - idh) * 100)
-  const dens = Math.round(15 + u * 50)
-  const com = Math.round(10 + hashUnit(p.id, 302) * 45)
-  const capMap: Record<string, number> = { A: 12, B: 28, C: 55, D: 85 }
-  const capScore = capMap[p.fiscal.capag] ?? 40
-
   const idhStr = idh.toFixed(2)
-  const densN = Math.round(8 + hashUnit(p.id, 303) * 45)
-  const comKm = Math.round(4 + hashUnit(p.id, 304) * 15)
+  const capMap: Record<string, number> = { A: 12, B: 28, C: 55, D: 85 }
+  const capVal = clampInt(capMap[p.fiscal.capag] ?? 40, 0, 100)
 
-  const vars: RiskDimensaoVariavel[] = [
+  const u = hashUnit(p.id, 301)
+  let idhRisk = Math.round((1 - idh) * 100)
+  let dens = Math.round(15 + u * 50)
+  let com = Math.round(10 + hashUnit(p.id, 302) * 45)
+  const comKm = Math.round(5 + hashUnit(p.id, 304) * 22)
+
+  const restAlvo = alvo - W_SOC_CAP * capVal
+  const wr =
+    W_SOC_IDH * idhRisk + W_SOC_DENS * dens + W_SOC_COM * com
+
+  if (restAlvo <= 0) {
+    idhRisk = dens = com = 0
+  } else if (wr < 1e-6) {
+    idhRisk = clampInt(restAlvo / W_SOC_IDH, 0, 100)
+    dens = com = 0
+  } else {
+    const f = restAlvo / wr
+    idhRisk = clampInt(idhRisk * f, 0, 100)
+    dens = clampInt(dens * f, 0, 100)
+    com = clampInt(com * f, 0, 100)
+  }
+
+  let guard = 0
+  let s = socialWeighted(idhRisk, dens, com, capVal)
+  while (s !== alvo && guard < 500) {
+    guard++
+    if (s < alvo) {
+      if (idhRisk < 100) idhRisk++
+      else if (com < 100) com++
+      else if (dens < 100) dens++
+      else break
+    } else {
+      if (idhRisk > 0) idhRisk--
+      else if (com > 0) com--
+      else if (dens > 0) dens--
+      else break
+    }
+    s = socialWeighted(idhRisk, dens, com, capVal)
+  }
+
+  const idhQual =
+    idh < 0.65
+      ? 'abaixo da média nacional'
+      : idh < 0.75
+        ? 'desenvolvimento moderado'
+        : 'relativamente elevado para o contexto regional'
+
+  const densN = clampInt(10 + (dens / 100) * 58, 8, 95)
+  const densLabel =
+    dens < 34 ? 'baixa densidade' : dens < 58 ? 'densidade moderada' : 'média-alta'
+
+  const comTxt =
+    com < 22
+      ? 'Sem sobreposição com terras de comunidades tradicionais mapeadas'
+      : `Comunidades tradicionais a ~${comKm}km (eixo de sensibilidade social)`
+
+  const capTxtStable =
+    p.fiscal.capag === 'A' || p.fiscal.capag === 'B'
+      ? 'situação fiscal estável'
+      : 'situação fiscal frágil'
+
+  return [
     {
       nome: 'IDH-M',
       valor: idhRisk,
-      texto: `IDH ${idhStr} (${idhRisk >= 50 ? 'baixo desenvolvimento' : 'desenvolvimento moderado'})`,
+      texto: `IDH ${idhStr} (${idhQual})`,
       fonte: 'PNUD/Atlas Brasil',
     },
     {
       nome: 'Densidade populacional',
       valor: dens,
-      texto: `${densN} hab/km² (${dens >= 45 ? 'média-alta' : 'baixa densidade'})`,
+      texto: `${densN} hab/km² (${densLabel})`,
       fonte: 'IBGE/Censo',
     },
     {
       nome: 'Comunidades tradicionais',
       valor: com,
-      texto:
-        com > 25
-          ? `Comunidade a ${comKm}km`
-          : 'Nenhuma próxima',
+      texto: comTxt,
       fonte: 'FUNAI, INCRA',
     },
     {
       nome: 'CAPAG município',
-      valor: capScore,
-      texto: `CAPAG ${p.fiscal.capag} (${p.fiscal.capag === 'A' || p.fiscal.capag === 'B' ? 'situação fiscal estável' : 'situação fiscal frágil'})`,
+      valor: capVal,
+      texto: `CAPAG ${p.fiscal.capag} (${capTxtStable})`,
       fonte: 'STN/SICONFI',
     },
   ]
-  const cur = vars.reduce((a, v) => a + v.valor, 0) / vars.length
-  const factor = cur > 0 ? alvo / cur : 1
-  return vars.map((v) => ({
-    ...v,
-    valor: Math.min(100, Math.max(0, Math.round(v.valor * factor))),
-  }))
 }
 
 function variaveisRegulatorias(p: Processo, alvo: number): RiskDimensaoVariavel[] {
@@ -554,7 +747,7 @@ export function gerarRiskDecomposicaoParaProcesso(
 
   const rb = p.risk_breakdown
   const geo = variaveisGeologicas(p, rb.geologico)
-  const ambFinal = ambientalDetalheMockFromId(p.id)
+  const ambFinal = ambientalDetalheMockFromProcesso(p)
 
   const soc = variaveisSociais(p, rb.social)
   const reg = variaveisRegulatorias(p, rb.regulatorio)

@@ -24,7 +24,33 @@
       },
       "geometry": {
         "type": "Polygon",
-        "coordinates": [[[-47.8, -15.0], [-47.0, -15.0], [-47.0, -14.0], [-47.8, -14.0], [-47.8, -15.0]]]
+        "coordinates": [[[-50.7, -16.25], [-46.95, -16.25], [-46.95, -13.75], [-50.7, -13.75], [-50.7, -16.25]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Parque Nacional da Chapada Diamantina",
+        "categoria": "Proteção Integral",
+        "esfera": "Federal",
+        "area_ha": 152000
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-42.35, -15.6], [-40.85, -15.6], [-40.85, -10.95], [-42.35, -10.95], [-42.35, -15.6]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "APA Cristalino I (demo)",
+        "categoria": "Uso Sustentável",
+        "esfera": "Estadual",
+        "area_ha": 184000
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-55.6, -11.35], [-53.75, -11.35], [-53.75, -10.45], [-55.6, -10.45], [-55.6, -11.35]]]
       }
     },
     {
