@@ -3,16 +3,39 @@
  * Alinhado a `processos.mock.ts`: não importa esse ficheiro para manter o módulo isolado.
  */
 
+/** Chave-valor para card Observações técnicas (SIGMINE / SEI-ANM; Config-Scores v5). */
+export interface ObservacoesTecnicasItem {
+  label: string
+  valor: string | null
+}
+
+export interface ObservacoesTecnicas {
+  ciclo_regulatorio: ObservacoesTecnicasItem[]
+  identificacao: ObservacoesTecnicasItem[]
+}
+
 export interface DadosANM {
   fase_atual: string
   data_protocolo: string
-  prazo_vencimento: string | null
+  /** Ano do protocolo (SIGMINE pode expor só o ano); prioridade no card. */
+  ano_protocolo?: number
   tempo_tramitacao_anos: number
   pendencias: string[]
   ultimo_despacho: string
   data_ultimo_despacho: string
   numero_sei: string
-  observacoes_tecnicas: string
+  /** Campos SEI-ANM (processo 864.231/2017 e similares). */
+  alvara_vencimento?: string
+  alvara_prorrogado_em?: string
+  alvara_duracao_anos?: number
+  gu_vencida?: boolean
+  gu_vencimento?: string
+  gu_renovacao_pedido?: string
+  gu_renovacao_status?: string
+  ral_ultimo_apresentado?: string
+  ral_pendente?: string
+  taxa_anual_paga?: string
+  licenca_ambiental?: string
 }
 
 export type BiomaRelatorio =
@@ -23,33 +46,108 @@ export type BiomaRelatorio =
   | 'Pampa'
   | 'Pantanal'
 
+/** Territorial v6 (PostGIS + shapefiles oficiais; Config-Scores). */
 export interface DadosTerritoriais {
   distancia_ti_km: number | null
   nome_ti_proxima: string | null
-  distancia_uc_km: number | null
-  nome_uc_proxima: string | null
-  tipo_uc: string | null
-  distancia_aquifero_km: number | null
-  nome_aquifero: string | null
+  /** Fase FUNAI (ex.: Regularizada); habilita rótulo TI Nome (Fase). */
+  fase_ti?: string | null
+  modalidade_ti?: string | null
+  etnia_ti?: string | null
+  uf_ti?: string | null
+  municipios_ti?: string | null
+  superficie_ti_ha?: number | null
+  distancia_uc_km?: number | null
+  nome_uc_proxima?: string | null
+  tipo_uc?: string | null
+  /** UC uso sustentável (explícito; fallback: `nome_uc_proxima` / `tipo_uc` / `distancia_uc_km`). */
+  nome_uc_us_proxima?: string | null
+  tipo_uc_us?: string | null
+  categoria_uc_us?: string | null
+  esfera_uc_us?: string | null
+  uf_uc_us?: string | null
+  municipios_uc_us?: string | null
+  area_uc_us_ha?: number | null
+  ano_criacao_uc_us?: number | null
+  distancia_uc_us_km?: number | null
+  /** UC proteção integral mais próxima (linha extra no card Áreas sensíveis). */
+  nome_uc_pi_proxima?: string | null
+  tipo_uc_pi?: string | null
+  categoria_uc_pi?: string | null
+  esfera_uc_pi?: string | null
+  uf_uc_pi?: string | null
+  municipios_uc_pi?: string | null
+  area_uc_pi_ha?: number | null
+  ano_criacao_uc_pi?: number | null
+  distancia_uc_pi_km?: number | null
+  distancia_aquifero_km?: number | null
+  nome_aquifero?: string | null
+  unidade_hidrogeologica?: string | null
+  /** @deprecated v6: não exibir no relatório */
+  litologia_aquifero?: string | null
+  espessura_aquifero?: string | null
+  vazao_aquifero?: string | null
+  produtividade_aquifero?: string | null
+  /** Quando true, polígono sobrepõe o aquífero (card enriquecido). */
+  sobreposicao_aquifero?: boolean
   bioma: BiomaRelatorio | string
-  distancia_sede_municipal_km: number
-  distancia_ferrovia_km: number | null
-  nome_ferrovia: string | null
-  distancia_porto_km: number | null
-  nome_porto: string | null
+  /** @deprecated Preferir `distancia_sede_km` + `nome_sede`. */
+  distancia_sede_municipal_km?: number
+  distancia_sede_km?: number
+  nome_sede?: string
+  uf_sede?: string
+  distancia_ferrovia_km?: number | null
+  nome_ferrovia?: string | null
+  situacao_ferrovia?: string
+  bitola_ferrovia?: string
+  uf_ferrovia?: string
+  nome_rodovia?: string
+  tipo_rodovia?: string
+  uf_rodovia?: string
+  distancia_rodovia_km?: number
+  distancia_porto_km?: number | null
+  nome_porto?: string | null
+  tipo_porto?: string
+  uf_porto?: string
+  rio_porto?: string
   sobreposicao_app: boolean
+  /** Ex.: contexto quando APP não foi identificada no polígono. */
+  observacao_app?: string | null
   sobreposicao_quilombola: boolean
-  nome_quilombola: string | null
+  nome_quilombola?: string | null
+  /** Nome do quilombo sem distância embutida (card padronizado). */
+  nome_quilombola_proximo?: string | null
+  uf_quilombola?: string | null
+  municipios_quilombola?: string | null
+  area_ha_quilombola?: number | null
+  familias_quilombola?: number | null
+  fase_quilombola?: string | null
+  responsavel_quilombola?: string | null
+  esfera_quilombola?: string | null
+  distancia_quilombola_km?: number | null
 }
+
+/** Alias documental (Config-Scores / prompts territoriais). */
+export type Territorial = DadosTerritoriais
 
 export interface ProcessoVizinho {
   numero: string
   titular: string
   substancia: string
   fase: string
-  distancia_km: number
+  distancia_km: number | null
   area_ha: number
-  risk_score: number
+  /** Opcional (tabela 864.231/2017 não exibe RISK). */
+  risk_score?: number | null
+}
+
+/** Unidade de cotação da substância (Master-Substâncias). */
+export type UnidadePrecoIntel = 'oz' | 'lb' | 'ct' | 'L' | 't'
+
+/** Demanda 2030 com título e itens; rodapé de fonte no `FonteLabel` do card. */
+export interface DemandaProjetadaEstruturada {
+  titulo: string
+  itens: string[]
 }
 
 export interface IntelMineral {
@@ -57,19 +155,46 @@ export interface IntelMineral {
   reservas_brasil_mundial_pct: number
   producao_brasil_mundial_pct: number
   demanda_projetada_2030: string
+  /**
+   * Quando presente, a UI exibe lista estruturada em vez do parágrafo único
+   * em `demanda_projetada_2030` (mantido para compatibilidade / busca).
+   */
+  demanda_projetada_estruturada?: DemandaProjetadaEstruturada
   preco_medio_usd_t: number
-  /** `'oz'`: exibir cotação primária em onça troy (ex.: ouro). Default `'t'`. */
-  unidade_preco?: 't' | 'oz'
+  /**
+   * Unidade de cotação exibida no card de preço (`oz` ouro/prata; `ct` diamantes; `L` águas; `t` padrão).
+   * Se omitido, a UI assume `t`.
+   */
+  unidade_preco?: UnidadePrecoIntel
   /** USD/oz quando `unidade_preco === 'oz'`. */
   preco_referencia_usd_oz?: number
   tendencia_preco: 'alta' | 'estavel' | 'queda'
   aplicacoes_principais: string[]
-  paises_concorrentes: string[]
+  paises_concorrentes: string[] | null
   estrategia_nacional: string
-  potencial_reserva_estimado_t: number
+  /** Parágrafos separados (opcional); se ausente, usa `estrategia_nacional` ou quebras `\n\n`. */
+  estrategia_nacional_itens?: string[]
+  potencial_reserva_estimado_t: number | null
+  /** Total in-situ legado (Mi USD); ainda usado em scores / agregados. O card Inteligência usa `valor_estimado_usd_ha` por hectare. */
   valor_estimado_usd_mi: number
+  /** USD/ha — valor in-situ teórico por hectare (exibição principal do card; não multiplicar pela área). */
+  valor_estimado_usd_ha?: number
+  /** BRL/ha (valor absoluto por hectare; ex.: geo.fiscal.val_reserva_brl_ha). Quando presente, o card BRL usa direto (÷ 1e9 → bi/ha). */
+  valor_estimado_brl_ha?: number
+  /** Trilhões BRL (estimativa in-situ total); legado / compatível; BRL/ha no UI deriva de USD/ha × câmbio ou deste total ÷ área. */
+  valor_estimado_brl_tri?: number
   metodologia_estimativa: string
   processos_vizinhos: ProcessoVizinho[]
+  /** Complemento local (ouro): ≈ R$ / g a partir de USD/oz e câmbio. */
+  preco_referencia_brl_g?: number
+  /** Câmbio BRL/USD para legenda (ex. PTAX futuro). */
+  cambio_brl_usd?: number
+  cambio_data?: string
+  cambio_nota?: string
+  /** Variação 1 ano (%). Fonte: IMF PCPS ou USGS MCS. */
+  var_1a_pct?: number
+  /** CAGR 5 anos (%). Fonte: IMF PCPS ou USGS MCS. */
+  cagr_5a_pct?: number
 }
 
 export interface CfemHistorico {
@@ -81,15 +206,40 @@ export interface CfemHistorico {
 export interface CfemMunicipalHistorico {
   ano: number
   valor_total_municipio_brl: number
+  /** Referência ANM (substâncias no total municipal). */
+  substancias?: string
+}
+
+/** Indicador CAPAG (STN) para exibição em linhas no card fiscal. */
+export interface CapagIndicadorFiscal {
+  label: string
+  valor: string
+  nota: string
+}
+
+/** Layout estruturado do card CAPAG (opcional; senão usa só `capag_descricao`). */
+export interface CapagEstruturado {
+  resumo: string
+  indicadores: CapagIndicadorFiscal[]
+  rodape?: string
 }
 
 export interface DadosFiscaisRicos {
-  capag: 'A' | 'B' | 'C' | 'D'
+  /** Nota global CAPAG (A–D) ou textos STN como «n.d.» / «n.e.». */
+  capag: string
   capag_descricao: string
+  capag_estruturado?: CapagEstruturado
   receita_propria_mi: number
   divida_consolidada_mi: number
   pib_municipal_mi: number
   dependencia_transferencias_pct: number
+  /** IDH municipal (IBGE), texto pt-BR ex.: «0,620»; opcional quando só há mock. */
+  idh_municipal?: string
+  /** CFEM recolhida pelo processo (ANM), por ano. */
+  cfem_processo: CfemHistorico[]
+  /** CFEM total do município (todas as substâncias), por ano. */
+  cfem_municipio: CfemHistorico[]
+  /** Legado: espelho de `cfem_processo` (compat). */
   cfem_historico: CfemHistorico[]
   cfem_total_5anos_mi: number
   cfem_municipal_historico: CfemMunicipalHistorico[]
@@ -98,6 +248,8 @@ export interface DadosFiscaisRicos {
   aliquota_cfem_pct: number
   estimativa_cfem_anual_operacao_mi: number
   observacao: string
+  /** Linha opcional: ano-base CAPAG / exercício SICONFI (TERRADAR 12.05). */
+  contexto_referencia_fiscal?: string
 }
 
 export interface Timestamps {
@@ -113,13 +265,85 @@ export interface Timestamps {
   alertas_legislativos: string
 }
 
+/** Metadados de auditoria (processo 864.231/2017 e similares). */
+export interface RelatorioMetadata {
+  fonte_sigmine?: string
+  fonte_precos?: string
+  fonte_reservas?: string
+  fonte_territorial?: string
+  fonte_fiscal?: string
+  fonte_car?: string
+  fonte_demanda?: string
+  cambio?: number
+  cambio_data?: string
+  cambio_nota?: string
+  calculado_em?: string
+  versao_config?: string
+  nota_alertas?: string
+  nota_postgis?: string
+}
+
+export type PerfilOportunidadeId = 'conservador' | 'moderado' | 'arrojado'
+
+export interface PerfilOportunidadeMock {
+  valor: number
+  label: string
+  cor: string
+  pesos: { atratividade: number; viabilidade: number; seguranca: number }
+}
+
+export interface DimensaoOSMock {
+  valor: number
+  cor: string
+}
+
+export interface VariavelOportunidadeMock {
+  nome: string
+  valor: number
+  peso: number
+  dado?: string
+  texto: string
+  /** Valor baixo com leitura neutra (ex.: ausência de alertas favoráveis com peso pequeno). */
+  impacto_neutro?: boolean
+}
+
+export interface RelatorioOportunidadeData {
+  perfis: Record<PerfilOportunidadeId, PerfilOportunidadeMock>
+  dimensoes: {
+    atratividade: DimensaoOSMock
+    viabilidade: DimensaoOSMock
+    seguranca: DimensaoOSMock
+  }
+  decomposicao: {
+    atratividade: VariavelOportunidadeMock[]
+    viabilidade: VariavelOportunidadeMock[]
+    seguranca: VariavelOportunidadeMock[]
+  }
+  cruzamento: {
+    tipo: 'analise'
+    /** Parágrafo de abertura. */
+    abertura: string
+    /** Parágrafo com Risk Score e Opportunity Score; números destacados via `rs` e `os`. */
+    explicacao: string
+    /** Contexto regional e técnico. */
+    contexto: string
+    /** Data da assinatura (ex.: DD/MM/AAAA). */
+    data: string
+    rs: number
+    os: number
+  }
+}
+
 export interface RelatorioData {
   processo_id: string
   dados_anm: DadosANM
+  observacoes_tecnicas: ObservacoesTecnicas
   territorial: DadosTerritoriais
   intel_mineral: IntelMineral
   fiscal: DadosFiscaisRicos
   timestamps: Timestamps
+  metadata?: RelatorioMetadata
+  oportunidade?: RelatorioOportunidadeData
 }
 
 const PROF_M = 30
@@ -140,12 +364,12 @@ function substChaveNormalizada(subst: string): string {
  */
 function teorDecimal(subst: string): number {
   const u = substChaveNormalizada(subst)
+  if (u.includes('OURO')) return 0.000015
   if (['NEODIMIO', 'PRASEODIMIO', 'TERBIO', 'DISPROSIO'].includes(u)) return 0.0008
   if (u === 'LITIO') return 0.00008
   if (u === 'NIOBIO') return 0.003
   if (u === 'FERRO') return 0.12
   if (u === 'COBRE') return 0.008
-  if (u === 'OURO') return 0.000015
   if (u === 'QUARTZO') return 0.08
   if (u === 'BAUXITA') return 0.15
   if (u === 'NIQUEL') return 0.01
@@ -174,32 +398,6 @@ function valorEstimadoUsdMi(pot: number, precoUsdT: number, subst: string): numb
   return v
 }
 
-/** Prazo de pesquisa renovado quando o término original seria anterior a 2025. */
-function prazoVencimentoPara(s: Seed): string | null {
-  if (s.regime === 'bloqueio_permanente' || s.regime === 'bloqueio_provisorio') {
-    return null
-  }
-  if (s.situacao === 'bloqueado') return null
-  if (s.fase === 'requerimento') return null
-  if (s.fase === 'lavra' || s.fase === 'concessao') return null
-  if (s.fase !== 'pesquisa' || s.situacao !== 'ativo') return null
-
-  const candidate = `${s.ano_protocolo + 3}-12-31`
-  if (candidate >= '2025-01-01') return candidate
-
-  const h = s.id.split('').reduce((a, c) => a + c.charCodeAt(0), 0)
-  const t0 = Date.UTC(2026, 5, 30)
-  const t1 = Date.UTC(2028, 11, 31)
-  const spanDays = Math.floor((t1 - t0) / 86_400_000)
-  const off = h % (spanDays + 1)
-  const ms = t0 + off * 86_400_000
-  const d = new Date(ms)
-  const y = d.getUTCFullYear()
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
-  const day = String(d.getUTCDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
-
 /** Valores em milhões de R$ por ano; convertidos para BRL absoluto no mock. */
 const CFEM_MUNICIPAL_MI_POR_UF: Record<string, number[]> = {
   MG: [28.5, 32.1, 38.7, 41.2, 36.8],
@@ -208,6 +406,7 @@ const CFEM_MUNICIPAL_MI_POR_UF: Record<string, number[]> = {
   BA: [5.1, 6.3, 8.7, 9.4, 10.2],
   AM: [22.0, 25.3, 30.1, 38.5, 42.0],
   MT: [3.2, 4.1, 5.8, 7.2, 8.5],
+  TO: [0.6, 0.72, 0.85, 0.91, 1.05],
 }
 
 function cfemMunicipalHistoricoPara(uf: string): CfemMunicipalHistorico[] {
@@ -353,6 +552,25 @@ function territorialPorUf(uf: string, seed: number): DadosTerritoriais {
         sobreposicao_quilombola: seed % 5 === 0,
         nome_quilombola: seed % 5 === 0 ? 'Quilombo Rio Arinos' : null,
       }
+    case 'TO':
+      return {
+        distancia_ti_km: null,
+        nome_ti_proxima: null,
+        distancia_uc_km: 12.5,
+        nome_uc_proxima: 'UC de uso sustentável (referência regional)',
+        tipo_uc: 'Uso sustentável',
+        distancia_aquifero_km: 3.2,
+        nome_aquifero: 'Bacia do Parnaíba / Grupo Bambuí',
+        bioma: 'Cerrado',
+        distancia_sede_municipal_km: 15,
+        distancia_ferrovia_km: 150,
+        nome_ferrovia: 'Ferrovia Norte-Sul (FNS)',
+        distancia_porto_km: 1200,
+        nome_porto: 'Porto de Itaqui (MA)',
+        sobreposicao_app: false,
+        sobreposicao_quilombola: false,
+        nome_quilombola: null,
+      }
     default:
       return {
         distancia_ti_km: null,
@@ -426,7 +644,7 @@ function aliquotaCfemPct(subst: string): number {
   if (['NEODIMIO', 'PRASEODIMIO', 'TERBIO', 'DISPROSIO', 'LITIO'].includes(u))
     return 3
   if (u === 'FERRO') return 3.5
-  if (u === 'OURO') return 1.5
+  if (u === 'OURO' || u.includes('OURO')) return 1.5
   return 2
 }
 
@@ -530,6 +748,7 @@ function intelPorSubstancia(
       demanda_projetada_2030:
         'Demanda global projetada +12–18% a.a. até 2030, puxada por VE, eólica e defesa.',
       preco_medio_usd_t: preco,
+      unidade_preco: 't',
       tendencia_preco: 'alta',
       aplicacoes_principais: aplicacoes,
       paises_concorrentes: [
@@ -561,6 +780,7 @@ function intelPorSubstancia(
         demanda_projetada_2030:
           'Demanda estável a moderadamente crescente em infraestrutura e baterias avançadas.',
         preco_medio_usd_t: preco,
+        unidade_preco: 't',
         tendencia_preco: 'estavel',
         aplicacoes_principais: [
           'Aço de alta resistência',
@@ -585,6 +805,7 @@ function intelPorSubstancia(
         demanda_projetada_2030:
           'Crescimento moderado ligado a China e infraestrutura emergente; volatilidade cíclica.',
         preco_medio_usd_t: preco,
+        unidade_preco: 't',
         tendencia_preco: 'queda',
         aplicacoes_principais: [
           'Siderurgia',
@@ -610,6 +831,7 @@ function intelPorSubstancia(
         demanda_projetada_2030:
           'Projeção IEA: déficit estrutural possível após 2028 sem novos projetos greenfield.',
         preco_medio_usd_t: preco,
+        unidade_preco: 't',
         tendencia_preco: 'alta',
         aplicacoes_principais: [
           'Energia elétrica',
@@ -626,18 +848,23 @@ function intelPorSubstancia(
           'Teor 0,8% Cu; profundidade 30 m; valor = potencial×preço/10⁶.',
       }
     }
+    case 'MINERIO DE OURO':
     case 'OURO': {
       const preco = 62_000
+      const isMinerioOuro = substChaveNormalizada(subst) === 'MINERIO DE OURO'
       return {
-        substancia_contexto: 'Ouro: reserva de valor e insumo eletrônico de alta pureza.',
-        reservas_brasil_mundial_pct: 3,
-        producao_brasil_mundial_pct: 3,
-        demanda_projetada_2030:
-          'Demanda firme de joias e ETFs; componente industrial estável.',
+        substancia_contexto: isMinerioOuro
+          ? 'Minério de ouro: reserva de valor e insumo eletrônico (referência SIGMINE / TERRADAR 864.231/2017).'
+          : 'Ouro: reserva de valor e insumo eletrônico de alta pureza.',
+        reservas_brasil_mundial_pct: isMinerioOuro ? 3.8 : 3,
+        producao_brasil_mundial_pct: isMinerioOuro ? 2.4 : 3,
+        demanda_projetada_2030: isMinerioOuro
+          ? 'Brasil detém 3,8% das reservas mundiais de ouro mas produz apenas 2,4%. Gap positivo de +1,4 p.p. indica potencial de expansão (USGS MCS 2026, referência auditada).'
+          : 'Demanda firme de joias e ETFs; componente industrial estável.',
         preco_medio_usd_t: preco,
         unidade_preco: 'oz',
-        preco_referencia_usd_oz: 2050,
-        tendencia_preco: 'alta',
+        preco_referencia_usd_oz: isMinerioOuro ? 4862.76 : 2050,
+        tendencia_preco: isMinerioOuro ? 'estavel' : 'alta',
         aplicacoes_principais: [
           'Reserva de valor',
           'Eletrônicos',
@@ -646,11 +873,14 @@ function intelPorSubstancia(
         ],
         paises_concorrentes: ['China', 'Austrália', 'Rússia', 'Canadá'],
         estrategia_nacional:
-          'Rastreabilidade da cadeia (LGPD e compliance LBMA) e combate ao garimpo ilegal.',
+          'Rastreabilidade da cadeia produtiva (LGPD e compliance LBMA) e combate ao garimpo ilegal. Formalização de pequenos produtores via cooperativas (PNM 2030 / Decreto 10.966/2022).',
         potencial_reserva_estimado_t: Math.round(pot),
-        valor_estimado_usd_mi: valorEstimadoUsdMi(pot, preco, subst),
-        metodologia_estimativa:
-          'Teor 0,0015% Au; volume 30 m; valor = potencial×preço/10⁶.',
+        valor_estimado_usd_mi: isMinerioOuro
+          ? 938_047
+          : valorEstimadoUsdMi(pot, preco, subst),
+        metodologia_estimativa: isMinerioOuro
+          ? 'Estimativa in-situ conservadora: 5 g/t Au; 1 ha × 30 m × 2,5 t/m³ × teor × preço (IMF PCPS 2026-M03). Valor econômico real depende de cubagem, recuperação e custos.'
+          : 'Teor 0,0015% Au; volume 30 m; valor = potencial×preço/10⁶.',
       }
     }
     case 'QUARTZO': {
@@ -663,6 +893,7 @@ function intelPorSubstancia(
         demanda_projetada_2030:
           'Crescimento com painéis solares e fundições; pressão de custo em logística.',
         preco_medio_usd_t: preco,
+        unidade_preco: 't',
         tendencia_preco: 'estavel',
         aplicacoes_principais: ['Semicondutores', 'Vidro', 'Cerâmica industrial'],
         paises_concorrentes: ['China', 'Estados Unidos', 'Turquia'],
@@ -683,6 +914,7 @@ function intelPorSubstancia(
         demanda_projetada_2030:
           'Demanda acompanha construção civil e embalagens; ciclo ligado ao PIB chinês.',
         preco_medio_usd_t: preco,
+        unidade_preco: 't',
         tendencia_preco: 'estavel',
         aplicacoes_principais: ['Alumínio', 'Refratários', 'Abrasivos'],
         paises_concorrentes: ['Guiné', 'Austrália', 'Brasil', 'Jamaica'],
@@ -704,6 +936,7 @@ function intelPorSubstancia(
         demanda_projetada_2030:
           'Crescimento acelerado 15–25% a.a. até 2030 em baterias e estacionárias.',
         preco_medio_usd_t: preco,
+        unidade_preco: 't',
         tendencia_preco: 'alta',
         aplicacoes_principais: [
           'Baterias para VE',
@@ -729,6 +962,7 @@ function intelPorSubstancia(
         demanda_projetada_2030:
           'Forte tração de baterias NMC/NCA; oferta Indonesia domina short run.',
         preco_medio_usd_t: preco,
+        unidade_preco: 't',
         tendencia_preco: 'alta',
         aplicacoes_principais: [
           'Baterias de veículos elétricos',
@@ -751,6 +985,7 @@ function intelPorSubstancia(
         producao_brasil_mundial_pct: 2,
         demanda_projetada_2030: 'Demanda moderada vinculada ao ciclo industrial.',
         preco_medio_usd_t: 500,
+        unidade_preco: 't',
         tendencia_preco: 'estavel',
         aplicacoes_principais: ['Indústria geral'],
         paises_concorrentes: ['Brasil', 'Global'],
@@ -1057,6 +1292,7 @@ const SEEDS: Seed[] = [
     situacao: 'ativo',
     risk_score: 81,
   },
+  /* TEMP: alinhado a processos.mock — oculto para screenshot território simulado.
   {
     id: 'p16',
     numero: '867.201/2013',
@@ -1117,6 +1353,7 @@ const SEEDS: Seed[] = [
     situacao: 'ativo',
     risk_score: 29,
   },
+  */
   {
     id: 'p20',
     numero: '802.445/2002',
@@ -1282,6 +1519,21 @@ const SEEDS: Seed[] = [
     situacao: 'bloqueado',
     risk_score: 72,
   },
+  {
+    id: 'p_864231',
+    numero: '864.231/2017',
+    regime: 'autorizacao_pesquisa',
+    fase: 'pesquisa',
+    substancia: 'MINÉRIO DE OURO',
+    titular: 'M P LANCA MINERADORA',
+    area_ha: 1600,
+    uf: 'TO',
+    municipio: 'Jaú do Tocantins',
+    data_protocolo: '2017',
+    ano_protocolo: 2017,
+    situacao: 'ativo',
+    risk_score: 25,
+  },
 ]
 
 function pibMunicipioMi(municipio: string): number {
@@ -1291,6 +1543,7 @@ function pibMunicipioMi(municipio: string): number {
     Parauapebas: 28000,
     Catalão: 12400,
     Marabá: 9800,
+    'Jaú do Tocantins': 110.8,
   }
   if (fix[municipio] != null) return fix[municipio]!
   let h = 0
@@ -1305,6 +1558,7 @@ function dependenciaTransferenciasPct(uf: string, seed: number): number {
   if (uf === 'GO') return Math.round(40 + (r * 20) / 100)
   if (uf === 'BA') return Math.round(65 + (r * 15) / 100)
   if (uf === 'MT') return Math.round(45 + (r * 20) / 100)
+  if (uf === 'TO') return Math.round(68 + (r * 10) / 100)
   return Math.round(50 + (r * 15) / 100)
 }
 
@@ -1432,6 +1686,20 @@ function fiscalRicoPara(
       observacao:
         'Fronteira agrícola-mineral; FCO relevante para PME da cadeia.',
     },
+    TO: {
+      capag: 'C',
+      receita_propria_mi: 5,
+      divida_consolidada_mi: 2,
+      pib_municipal_mi: 0,
+      dependencia_transferencias_pct: 0,
+      incentivos_estaduais: [
+        'Prospera Tocantins: polo mineral norte',
+        'Redução de ICMS na exportação de minérios (consulta SEFAZ-TO)',
+      ],
+      linhas_bndes: ['Finem Mineração', 'Finame', 'Nova Indústria Brasil'],
+      observacao:
+        'Município de porte reduzido; CAPAG C no mock (SICONFI). Incentivos estaduais indicativos para ouro e polimetálicos.',
+    },
   }
 
   const base = matriz[s.uf] ?? matriz.MG!
@@ -1442,15 +1710,23 @@ function fiscalRicoPara(
         ? ('A' as const)
         : base.capag
 
+  const cfemMunicipalHistorico = cfemMunicipalHistoricoPara(s.uf)
+  const cfem_municipio: CfemHistorico[] = cfemMunicipalHistorico.map((h) => ({
+    ano: h.ano,
+    valor_recolhido_brl: h.valor_total_municipio_brl,
+  }))
+
   return {
     ...base,
     capag,
     capag_descricao: capagDescricao(capag),
     pib_municipal_mi: pibMi,
     dependencia_transferencias_pct: depPct,
+    cfem_processo: historico,
+    cfem_municipio,
     cfem_historico: historico,
     cfem_total_5anos_mi: totalMi,
-    cfem_municipal_historico: cfemMunicipalHistoricoPara(s.uf),
+    cfem_municipal_historico: cfemMunicipalHistorico,
     aliquota_cfem_pct: aliquota,
     estimativa_cfem_anual_operacao_mi:
       s.regime === 'bloqueio_permanente' ? 0 : estimativaCfem,
@@ -1505,9 +1781,60 @@ function timestampsPara(s: Seed): Timestamps {
   }
 }
 
+function isoParaBrObs(iso: string): string {
+  const [y, m, d] = iso.split('-')
+  if (!y || !m || !d) return iso
+  return `${d}/${m}/${y}`
+}
+
+function faseLabelObs(fase: string): string {
+  const m: Record<string, string> = {
+    pesquisa: 'Autorização de Pesquisa',
+    lavra: 'Lavra',
+    concessao: 'Concessão de Lavra',
+    requerimento: 'Requerimento',
+    encerrado: 'Encerrado',
+  }
+  return m[fase] ?? fase
+}
+
+function formatAnosTramObs(anosTram: number): string {
+  const t = Math.round(anosTram * 10) / 10
+  const s = t % 1 === 0 ? String(t) : String(t).replace('.', ',')
+  return `${s} anos`
+}
+
+function observacoesTecnicasParaSeed(
+  s: Seed,
+  dataUltimoDespachoIso: string,
+  anosTram: number,
+  textoUltimoDespacho: string,
+  numeroSei: string,
+): ObservacoesTecnicas {
+  const ciclo_regulatorio: ObservacoesTecnicasItem[] = [
+    { label: 'Ano de protocolo', valor: String(s.ano_protocolo) },
+    {
+      label: 'Tempo de tramitação',
+      valor: `~${formatAnosTramObs(anosTram)}`,
+    },
+    { label: 'Fase atual', valor: faseLabelObs(s.fase) },
+    { label: 'Último evento', valor: isoParaBrObs(dataUltimoDespachoIso) },
+    { label: 'Código do evento', valor: textoUltimoDespacho },
+  ]
+
+  const identificacao: ObservacoesTecnicasItem[] = [
+    { label: 'Titular', valor: s.titular },
+    { label: 'CNPJ', valor: null },
+    { label: 'Processo SEI', valor: numeroSei },
+  ]
+
+  return { ciclo_regulatorio, identificacao }
+}
+
 function buildRelatorio(s: Seed): RelatorioData {
   const anoAtual = new Date().getFullYear()
   const anosTram = Math.max(0, anoAtual - s.ano_protocolo)
+  const anosTramR = Math.round(anosTram * 10) / 10
   const hash = s.id.split('').reduce((a, c) => a + c.charCodeAt(0), 0)
 
   const pend = pendenciasPorRegime(s.regime, s.situacao)
@@ -1522,6 +1849,20 @@ function buildRelatorio(s: Seed): RelatorioData {
       s.id,
     ),
   }
+  const fiscal = fiscalRicoPara(s, intelBase.valor_estimado_usd_mi)
+  const dataUltimoDespacho = `${anoAtual - (hash % 2)}-${String((hash % 11) + 1).padStart(2, '0')}-${String((hash % 27) + 1).padStart(2, '0')}`
+  const textoUltimoDespacho =
+    s.situacao === 'bloqueado'
+      ? 'Despacho de suspensão e arquivamento provisório'
+      : 'Despacho de ofício complementar à documentação técnica'
+  const numeroSei = `${(hash % 9000000) + 1000000}.${hash % 99}/${anoAtual}`
+  const observacoes_tecnicas = observacoesTecnicasParaSeed(
+    s,
+    dataUltimoDespacho,
+    anosTramR,
+    textoUltimoDespacho,
+    numeroSei,
+  )
 
   return {
     processo_id: s.id,
@@ -1529,25 +1870,490 @@ function buildRelatorio(s: Seed): RelatorioData {
     dados_anm: {
       fase_atual: `${s.fase}: regime ${s.regime.replace(/_/g, ' ')}`,
       data_protocolo: s.data_protocolo,
-      prazo_vencimento: prazoVencimentoPara(s),
-      tempo_tramitacao_anos: Math.round(anosTram * 10) / 10,
+      ano_protocolo: s.ano_protocolo,
+      tempo_tramitacao_anos: anosTramR,
       pendencias: pend,
-      ultimo_despacho:
-        s.situacao === 'bloqueado'
-          ? 'Despacho de suspensão e arquivamento provisório'
-          : 'Despacho de ofício complementar à documentação técnica',
-      data_ultimo_despacho: `${anoAtual - (hash % 2)}-${String((hash % 11) + 1).padStart(2, '0')}-${String((hash % 27) + 1).padStart(2, '0')}`,
-      numero_sei: `${(hash % 9000000) + 1000000}.${hash % 99}/${anoAtual}`,
-      observacoes_tecnicas: `Área de ${s.area_ha.toLocaleString('pt-BR')} ha em ${s.municipio}/${s.uf}. Modelo geológico revisado em ${anoAtual - 1}; coordenadas oficiais conferidas ao SIGMINE.`,
+      ultimo_despacho: textoUltimoDespacho,
+      data_ultimo_despacho: dataUltimoDespacho,
+      numero_sei: numeroSei,
     },
+    observacoes_tecnicas,
     territorial: territorialPorUf(s.uf, hash),
     intel_mineral,
-    fiscal: fiscalRicoPara(s, intelBase.valor_estimado_usd_mi),
+    fiscal,
   }
 }
 
-const relatoriosMock: Record<string, RelatorioData> = Object.fromEntries(
+/** Cinco vizinhos estratégicos 864.231/2017, ordenados por `distancia_km` crescente. */
+const PROCESSOS_VIZINHOS_864231: ProcessoVizinho[] = [
+  {
+    numero: '861.532/2024',
+    titular: 'DJ Participações Ltda',
+    fase: 'Autorização de Pesquisa',
+    substancia: 'MINÉRIO DE OURO',
+    area_ha: 1796.41,
+    distancia_km: 5.5,
+  },
+  {
+    numero: '864.100/2023',
+    titular: 'Mineradora Serra Geral Ltda',
+    fase: 'Autorização de Pesquisa',
+    substancia: 'MINÉRIO DE LÍTIO',
+    area_ha: 8978.37,
+    distancia_km: 6.0,
+  },
+  {
+    numero: '864.429/2022',
+    titular: 'Engegold Mineração Ltda',
+    fase: 'Autorização de Pesquisa',
+    substancia: 'MINÉRIO DE OURO',
+    area_ha: 9035.72,
+    distancia_km: 10.7,
+  },
+  {
+    numero: '864.007/2025',
+    titular: 'ETRA Pesquisa Mineral Ltda',
+    fase: 'Autorização de Pesquisa',
+    substancia: 'TERRAS RARAS',
+    area_ha: 5986.73,
+    distancia_km: 14.5,
+  },
+  {
+    numero: '861.022/2013',
+    titular: 'CEFAS Mineração Ltda',
+    fase: 'Concessão de Lavra',
+    substancia: 'GRANITO',
+    area_ha: 155.29,
+    distancia_km: 24.0,
+  },
+]
+
+/** Relatório 864.231/2017: dados verificados 12/04/2026 (substitui mock genérico). */
+function relatorio864231V2(): RelatorioData {
+  return {
+    processo_id: 'p_864231',
+    dados_anm: {
+      fase_atual: 'AUTORIZACAO DE PESQUISA',
+      data_protocolo: '2017',
+      ano_protocolo: 2017,
+      tempo_tramitacao_anos: 9,
+      data_ultimo_despacho: '2026-03-13',
+      ultimo_despacho:
+        '541 - AUT PESQ/RAL ANO BASE APRESENTADO EM 13/03/2026',
+      numero_sei: '48417.864231/2017-35',
+      pendencias: [
+        'Guia de Utilização vencida em 12/07/2025. Pedido de renovação em 10/05/2025 aguardando análise da ANM.',
+      ],
+      alvara_vencimento: '2028-11-24',
+      alvara_prorrogado_em: '2025-11-24',
+      alvara_duracao_anos: 3,
+      gu_vencida: true,
+      gu_vencimento: '2025-07-12',
+      gu_renovacao_pedido: '2025-05-10',
+      gu_renovacao_status: 'Aguardando análise da ANM',
+      ral_ultimo_apresentado: '2024 (ano base), em 10/03/2025',
+      ral_pendente: '2025 (ano base), ainda não apresentado',
+      taxa_anual_paga: '2026-01-30',
+      licenca_ambiental: '2023-12-04',
+    },
+    observacoes_tecnicas: {
+      ciclo_regulatorio: [
+        { label: 'Ano de protocolo', valor: '2017' },
+        { label: 'Tempo de tramitação', valor: '~9 anos' },
+        { label: 'Fase atual', valor: 'Autorização de Pesquisa' },
+        { label: 'Último evento', valor: '13/03/2026' },
+        {
+          label: 'Código do evento',
+          valor:
+            '541 - AUT PESQ/RAL ANO BASE APRESENTADO EM 13/03/2026',
+        },
+      ],
+      identificacao: [
+        { label: 'Titular', valor: 'M P Lanca Mineradora' },
+        { label: 'CNPJ', valor: '21.515.445/0001-84' },
+        { label: 'Processo SEI', valor: '48417.864231/2017-35' },
+      ],
+    },
+    territorial: {
+      nome_ti_proxima: 'Avá-Canoeiro',
+      fase_ti: 'Regularizada',
+      uf_ti: 'GO',
+      municipios_ti: 'Minaçu, Colinas do Sul',
+      distancia_ti_km: 109.7,
+
+      nome_uc_pi_proxima: 'Parque Nacional da Chapada dos Veadeiros',
+      tipo_uc_pi: 'Proteção Integral (Federal/GO)',
+      distancia_uc_pi_km: 167.6,
+
+      nome_uc_us_proxima: 'APA dos Meandros do Rio Araguaia',
+      tipo_uc_us: 'Uso Sustentável (Federal)',
+      distancia_uc_us_km: 146.5,
+
+      nome_quilombola_proximo: 'Kalunga do Mimoso',
+      uf_quilombola: 'TO',
+      municipios_quilombola: 'Arraias, Paranã',
+      distancia_quilombola_km: 125.8,
+      nome_quilombola: 'Kalunga do Mimoso',
+
+      sobreposicao_app: false,
+      observacao_app:
+        'Não verificada.\n\nVerificação completa requer cruzamento com hidrografia ANA e altimetria SRTM.',
+
+      nome_aquifero: 'Depósito Aluvionar (Qa)',
+      unidade_hidrogeologica: 'Granular (Gr)',
+      distancia_aquifero_km: 0,
+      sobreposicao_aquifero: true,
+
+      bioma: 'Cerrado',
+
+      nome_ferrovia: 'EF-151 Rumo Malha Central (RMC)',
+      situacao_ferrovia: 'Em Operação',
+      bitola_ferrovia: 'Larga',
+      uf_ferrovia: 'TO',
+      distancia_ferrovia_km: 23.9,
+
+      nome_rodovia: 'BR-153',
+      tipo_rodovia: 'Eixo Principal',
+      uf_rodovia: 'TO',
+      distancia_rodovia_km: 28.3,
+
+      nome_porto: 'Santa Terezinha',
+      tipo_porto: 'Porto Público (fluvial)',
+      uf_porto: 'MT',
+      rio_porto: 'Rio Araguaia',
+      distancia_porto_km: 317.9,
+
+      nome_sede: 'Jaú do Tocantins',
+      uf_sede: 'TO',
+      distancia_sede_km: 29.3,
+
+      nome_uc_proxima: 'APA dos Meandros do Rio Araguaia',
+      tipo_uc: 'Uso Sustentável (Federal)',
+      distancia_uc_km: 146.5,
+
+      sobreposicao_quilombola: false,
+    },
+    intel_mineral: {
+      substancia_contexto:
+        'Minério de ouro: reserva de valor e insumo eletrônico (referência SIGMINE / TERRADAR 864.231/2017).',
+      reservas_brasil_mundial_pct: 3.8,
+      producao_brasil_mundial_pct: 2.4,
+      demanda_projetada_2030:
+        'WGC Q2/2025: demanda total de ouro +3% a/a (1.249 t), valor recorde de USD 132 bi. Investimento (ETFs + barras/moedas) +78% a/a, principal driver. Bancos centrais compraram 166 t no trimestre. Joalheria -14% a/a (precos recordes reduzem acessibilidade). Tecnologia -2% a/a, mas demanda de IA segue forte. Producao de minas no Brasil +13% a/a (ramp-up Tocantinzinho/G Mining). Perspectiva: ETFs com potencial de alta, investimento institucional solido, joalheria pressionada por precos.',
+      demanda_projetada_estruturada: {
+        titulo: 'WGC Q2/2025',
+        itens: [
+          'Demanda total de ouro +3% a/a (1.249 t); valor recorde de USD 132 bi.',
+          'Investimento (ETFs + barras/moedas) +78% a/a; principal driver.',
+          'Bancos centrais compraram 166 t no trimestre.',
+          'Joalheria −14% a/a (preços recordes reduzem acessibilidade).',
+          'Tecnologia −2% a/a; demanda de IA segue forte.',
+          'Produção de minas no Brasil +13% a/a (ramp-up Tocantinzinho/G Mining).',
+          'Perspectiva: ETFs com potencial de alta; investimento institucional sólido; joalheria pressionada por preços.',
+        ],
+      },
+      preco_medio_usd_t: 156_341_123,
+      unidade_preco: 'oz',
+      preco_referencia_usd_oz: 4862.76,
+      tendencia_preco: 'alta',
+      cambio_brl_usd: 5.0229,
+      cambio_data: '2026-04-10',
+      cambio_nota: 'BCB PTAX oficial (venda), 10/04/2026 13:04:25',
+      preco_referencia_brl_g: 785.29,
+      var_1a_pct: 62.8,
+      cagr_5a_pct: 23.1,
+      aplicacoes_principais: [
+        'Reserva de valor',
+        'Eletrônicos',
+        'Joalheria',
+        'Medicina',
+      ],
+      paises_concorrentes: null,
+      estrategia_nacional:
+        'PNM 2030: rastreabilidade da cadeia produtiva e combate ao garimpo ilegal. Certificação de origem para exportação (compliance LBMA). Formalização e fortalecimento de MPEs e cooperativas garimpeiras.',
+      estrategia_nacional_itens: [
+        'PNM 2030: rastreabilidade da cadeia produtiva e combate ao garimpo ilegal.',
+        'Certificação de origem para exportação (compliance LBMA). Formalização e fortalecimento de MPEs e cooperativas garimpeiras.',
+      ],
+      potencial_reserva_estimado_t: null,
+      /** USD/ha (Master). 586_279_375 × 1600 ha / 1e6 = 938_047 Mi USD. */
+      valor_estimado_usd_ha: 586_279_375,
+      valor_estimado_usd_mi: 938_047,
+      valor_estimado_brl_tri: 4.71,
+      metodologia_estimativa:
+        '1ha × 750.000t (30m prof. × 2,5 t/m³) × teor 0,0005% (5 g/t)\n\n× US$ 156.341.123/t',
+      processos_vizinhos: PROCESSOS_VIZINHOS_864231,
+    },
+    fiscal: {
+      capag: 'C',
+      capag_descricao:
+        'Capacidade de pagamento. (ano base 2023). Endividamento: 0,00% (nota A). Poupança Corrente: 95,73% (nota C). Liquidez: 0,79% (nota B). Nota C determinada pela poupança corrente.',
+      capag_estruturado: {
+        resumo: 'Capacidade de pagamento.\n(ano base 2023)',
+        indicadores: [
+          { label: 'Endividamento', valor: '0,00%', nota: 'A' },
+          { label: 'Poupança Corrente', valor: '95,73%', nota: 'C' },
+          { label: 'Liquidez', valor: '0,79%', nota: 'B' },
+        ],
+        rodape: 'Nota C determinada pela poupança corrente.',
+      },
+      receita_propria_mi: 2.19,
+      divida_consolidada_mi: 1.75,
+      pib_municipal_mi: 110.8,
+      dependencia_transferencias_pct: 93.3,
+      cfem_processo: [
+        { ano: 2022, valor_recolhido_brl: 0 },
+        { ano: 2023, valor_recolhido_brl: 0 },
+        { ano: 2024, valor_recolhido_brl: 0 },
+        { ano: 2025, valor_recolhido_brl: 0 },
+      ],
+      cfem_municipio: [
+        { ano: 2022, valor_recolhido_brl: 21_289 },
+        { ano: 2023, valor_recolhido_brl: 6824 },
+        { ano: 2024, valor_recolhido_brl: 3492 },
+        { ano: 2025, valor_recolhido_brl: 33_767 },
+      ],
+      cfem_historico: [
+        { ano: 2022, valor_recolhido_brl: 0 },
+        { ano: 2023, valor_recolhido_brl: 0 },
+        { ano: 2024, valor_recolhido_brl: 0 },
+        { ano: 2025, valor_recolhido_brl: 0 },
+      ],
+      /** Soma municipal 2022–2025 (ANM) / 1e6; alinhado a `cfem_municipio`. */
+      cfem_total_5anos_mi: 0.065372,
+      cfem_municipal_historico: [
+        {
+          ano: 2022,
+          valor_total_municipio_brl: 21_289,
+          substancias: 'Zircônio, Granito, Areia',
+        },
+        {
+          ano: 2023,
+          valor_total_municipio_brl: 6824,
+          substancias: 'Zircônio, Areia',
+        },
+        {
+          ano: 2024,
+          valor_total_municipio_brl: 3492,
+          substancias: 'Zircônio, Areia',
+        },
+        {
+          ano: 2025,
+          valor_total_municipio_brl: 33_767,
+          substancias: 'Zircônio, Areia',
+        },
+      ],
+      incentivos_estaduais: ['Prospera Tocantins (score 2/3)'],
+      linhas_bndes: [
+        'BNDES Finem - Mineracao',
+        'BNDES Finame',
+        'BNDES Credito PME',
+        'BNDES Finem - Meio Ambiente',
+      ],
+      aliquota_cfem_pct: 1.5,
+      estimativa_cfem_anual_operacao_mi: 3.64,
+      observacao:
+        'Município com CAPAG C (ano base 2023, STN). Não publica RGF ao SICONFI. Classificação Dicf no Ranking de Qualidade da Informação. Indicadores fiscais extraídos do SICONFI DCA (exercício 2024). Dívida consolidada de R$ 1,75 Mi contraída em 2024 (empréstimos internos de longo prazo). Receita corrente líquida não disponível no exercício 2024 (município não publicou DCA 2024 até fev/2025, publicou posteriormente).',
+    },
+    timestamps: {
+      cadastro_mineiro: '2026-04-12',
+      sigmine: '2026-04-12',
+      terras_indigenas: '2026-04-12',
+      unidades_conservacao: '2026-04-12',
+      usgs: '2026-01-15',
+      preco_spot: '2026-03-31',
+      alertas_legislativos: '2026-04-12',
+      siconfi: '2025-02-19',
+      cfem: '2026-04-12',
+      cfem_municipal: '2026-04-12',
+    },
+    metadata: {
+      fonte_sigmine: 'REST API SIGMINE, consultado em 12/04/2026',
+      fonte_precos: 'IMF PCPS Mar/2026 + USGS MCS 2026',
+      fonte_reservas: 'USGS Mineral Commodity Summaries 2026',
+      fonte_territorial:
+        'Shapefiles oficiais processados em 12/04/2026 (geopandas, EPSG:5880 Brasil Polyconic): FUNAI (TIs), CNUC/MMA (UCs), INCRA (quilombolas), CAR/SICAR (APP), CPRM/SGB (aquíferos)',
+      fonte_fiscal:
+        'STN CAPAG Municípios (fev/2025, ano base 2023), SICONFI DCA I-C e I-AB (exercício 2024), IBGE API Agregados (PIB 2023), ANM Dados Abertos CFEM (2022-2025)',
+      fonte_car:
+        'GeoServer SICAR: 5 imóveis rurais sobrepõem o processo (~72% da área), todos "Aguardando análise"',
+      fonte_demanda: 'World Gold Council, Gold Demand Trends Q2 2025',
+      cambio: 5.0229,
+      cambio_data: '2026-04-10',
+      cambio_nota: 'BCB PTAX oficial (venda), 10/04/2026 13:04:25',
+      calculado_em: '2026-04-12T19:00:00Z',
+      versao_config: 'Config-Scores v1 + Master-Substancias v10',
+      nota_alertas:
+        'Alertas definidos como default 0 (Adoo não integrado). Scores de pendências e alertas regulatórios são artificialmente baixos.',
+      nota_postgis:
+        'Dados territoriais calculados via shapefiles Python (geopandas + pyproj). Em produção usar PostGIS com ST_Distance(::geography).',
+    },
+    oportunidade: {
+      perfis: {
+        conservador: {
+          valor: 72,
+          label: 'Favorável',
+          cor: '#E8A830',
+          pesos: { atratividade: 0.25, viabilidade: 0.3, seguranca: 0.45 },
+        },
+        moderado: {
+          valor: 70,
+          label: 'Favorável',
+          cor: '#E8A830',
+          pesos: { atratividade: 0.4, viabilidade: 0.3, seguranca: 0.3 },
+        },
+        arrojado: {
+          valor: 70,
+          label: 'Favorável',
+          cor: '#E8A830',
+          pesos: { atratividade: 0.55, viabilidade: 0.25, seguranca: 0.2 },
+        },
+      },
+      dimensoes: {
+        atratividade: { valor: 68, cor: '#D4A843' },
+        viabilidade: { valor: 65, cor: '#5B8CB8' },
+        seguranca: { valor: 79, cor: '#E8A830' },
+      },
+      decomposicao: {
+        atratividade: [
+          {
+            nome: 'A1 Relevância',
+            valor: 50,
+            peso: 0.25,
+            texto: 'OURO (scoreSubstancia)',
+          },
+          {
+            nome: 'A2 Gap',
+            valor: 40,
+            peso: 0.25,
+            texto: '1.4 p.p. (reservas 3.8% - produção 2.4%)',
+          },
+          {
+            nome: 'A3 Preço',
+            valor: 90,
+            peso: 0.2,
+            texto: 'log10(156M USD/t) = 8.2 (>4)',
+          },
+          {
+            nome: 'A4 Tendência',
+            valor: 90,
+            peso: 0.15,
+            texto: 'Alta (IMF +62.8% a/a, CAGR 23.1%)',
+          },
+          {
+            nome: 'A5 Valor',
+            valor: 95,
+            peso: 0.15,
+            texto: 'USD 938K Mi (>= 500 Mi)',
+          },
+        ],
+        viabilidade: [
+          {
+            nome: 'B1 CAPAG',
+            valor: 40,
+            peso: 0.2,
+            texto: 'CAPAG C (STN, ano base 2023)',
+          },
+          {
+            nome: 'B2 Fase',
+            valor: 50,
+            peso: 0.2,
+            texto: 'Pesquisa',
+          },
+          {
+            nome: 'B3 Infra',
+            valor: 90,
+            peso: 0.15,
+            texto: 'Ferrovia EF-151 a 23.9km',
+          },
+          {
+            nome: 'B4 Situação',
+            valor: 90,
+            peso: 0.15,
+            texto: 'Ativo',
+          },
+          {
+            nome: 'B5 Área',
+            valor: 70,
+            peso: 0.1,
+            texto: '1.600 ha (faixa 500-2000)',
+          },
+          {
+            nome: 'B6 Autonomia',
+            valor: 60,
+            peso: 0.1,
+            texto: 'Receita/Dívida = 2.19/1.75 = 1.25',
+          },
+          {
+            nome: 'B7 Incentivos',
+            valor: 70,
+            peso: 0.1,
+            texto: 'Prospera Tocantins (score 2/3)',
+          },
+        ],
+        seguranca: [
+          {
+            nome: 'C1 Solidez',
+            valor: 75,
+            peso: 0.35,
+            texto: '100 − RS(25) = 75',
+          },
+          {
+            nome: 'C2 Ambiental',
+            valor: 90,
+            peso: 0.2,
+            texto: '100 − ambiental(10) = 90',
+          },
+          {
+            nome: 'C3 Regulatório',
+            valor: 83,
+            peso: 0.15,
+            texto: '100 − regulatorio(17) = 83',
+          },
+          {
+            nome: 'C4 Recência',
+            valor: 75,
+            peso: 0.15,
+            texto: '30 dias desde despacho (13/03/2026)',
+          },
+          {
+            nome: 'C5 Restrições',
+            valor: 100,
+            peso: 0.1,
+            texto: '0 alertas restritivos (neutro)',
+            impacto_neutro: true,
+          },
+          {
+            nome: 'C6 Favoráveis',
+            valor: 15,
+            peso: 0.05,
+            texto: '0 alertas favoráveis (neutro)',
+            impacto_neutro: true,
+          },
+        ],
+      },
+      cruzamento: {
+        tipo: 'analise',
+        abertura: 'Este processo combina dois fatores favoráveis.',
+        explicacao:
+          'Com Risk Score de 25 (risco baixo) e Opportunity Score de 72 no perfil conservador (favorável), o processo 864.231/2017 apresenta uma relação risco-retorno favorável. A tendência de preço em alta (+62,8% a/a) e a infraestrutura próxima (ferrovia a 23,9 km) compensam parcialmente a capacidade fiscal limitada do município (CAPAG C, poupança corrente 95,73%). Há uma pendência ativa (GU vencida aguardando renovação pela ANM) que contribui para o score regulatório.',
+        contexto:
+          'A região conta com 4 processos vizinhos de minerais estratégicos (ouro, lítio, terras raras) em fase de pesquisa, sinalizando interesse geológico crescente. A CFEM municipal atual é modesta (R$ 65 mil em 4 anos, majoritariamente zircônio), mas a estimativa em operação é de R$ 3,6 Mi/ano.',
+        data: '12/04/2026',
+        rs: 25,
+        os: 72,
+      },
+    },
+  }
+}
+
+const relatoriosFromSeeds = Object.fromEntries(
   SEEDS.map((s) => [s.id, buildRelatorio(s)]),
 ) as Record<string, RelatorioData>
+
+const relatoriosMock: Record<string, RelatorioData> = {
+  ...relatoriosFromSeeds,
+  p_864231: relatorio864231V2(),
+}
 
 export { relatoriosMock }

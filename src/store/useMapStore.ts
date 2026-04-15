@@ -132,12 +132,19 @@ export interface MapStore {
   camadasGeo: Record<CamadaGeoId, boolean>
   toggleCamadaGeo: (id: CamadaGeoId) => void
 
+  /** Overlays simulados (864.231/2017 screenshot); não persistido. */
+  territorioSimuladoVisivel: boolean
+  setTerritorioSimuladoVisivel: (visivel: boolean) => void
+  toggleTerritorioSimulado: () => void
+
   setFiltro: <K extends keyof FiltrosState>(
     key: K,
     value: FiltrosState[K],
   ) => void
   toggleCamada: (regime: Regime) => void
   selecionarProcesso: (processo: Processo | null) => void
+  /** Adiciona processo vindo da API (evita duplicar por `numero`). */
+  adicionarProcesso: (processo: Processo) => void
   setHoveredProcessoId: (id: string | null) => void
   getProcessosFiltrados: () => Processo[]
   requestFlyTo: (
@@ -245,6 +252,16 @@ export const useMapStore = create<MapStore>()(
 
       camadasGeo: defaultCamadasGeo(),
 
+      territorioSimuladoVisivel: true,
+
+      setTerritorioSimuladoVisivel: (visivel) =>
+        set({ territorioSimuladoVisivel: visivel }),
+
+      toggleTerritorioSimulado: () =>
+        set((s) => ({
+          territorioSimuladoVisivel: !s.territorioSimuladoVisivel,
+        })),
+
       toggleCamadaGeo: (id) =>
         set((s) => ({
           camadasGeo: { ...s.camadasGeo, [id]: !s.camadasGeo[id] },
@@ -269,6 +286,13 @@ export const useMapStore = create<MapStore>()(
       selecionarProcesso: (processo) =>
         set({
           processoSelecionado: processo,
+        }),
+
+      adicionarProcesso: (processo) =>
+        set((state) => {
+          const existe = state.processos.some((p) => p.numero === processo.numero)
+          if (existe) return state
+          return { processos: [...state.processos, processo] }
         }),
 
       setHoveredProcessoId: (id) => set({ hoveredProcessoId: id }),

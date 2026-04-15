@@ -7,6 +7,8 @@ import {
   Scan,
   type LucideIcon,
 } from 'lucide-react'
+import { relatoriosMock } from '../../data/relatorio.mock'
+import { corFaixaOS } from '../../lib/oportunidadeRelatorioUi'
 import { normalizeSubstanciaKey, SUBSTANCIA_DEFS } from '../../lib/substancias'
 import { useMapStore } from '../../store/useMapStore'
 import type { AlertaLegislativo, Processo } from '../../types'
@@ -31,6 +33,10 @@ function substanciaIconForPopup(substancia: string): {
   color: string
 } {
   const key = normalizeSubstanciaKey(substancia)
+  if (key === 'MINERIO DE OURO') {
+    const ouro = SUBSTANCIA_DEFS.find((d) => d.key === 'OURO')!
+    return { Icon: ouro.Icon, color: ouro.color }
+  }
   const def = SUBSTANCIA_DEFS.find((d) => d.key === key)
   if (def) return { Icon: def.Icon, color: def.color }
   return { Icon: Circle, color: '#D3D1C7' }
@@ -140,6 +146,8 @@ export function ProcessoPopupContent({
     relatorioDrawerAberto && processoSelId === processo.id
 
   const r = processo.risk_score
+  const relatorio = relatoriosMock[processo.id]
+  const osConservador = relatorio?.oportunidade?.perfis.conservador.valor
   const { Icon: SubstIcon, color: substIconColor } = substanciaIconForPopup(
     processo.substancia,
   )
@@ -326,13 +334,14 @@ export function ProcessoPopupContent({
                         </span>
                         <div
                           className="min-w-0 flex-1 overflow-hidden rounded-sm"
-                          style={{ height: 3, backgroundColor: '#2C2C2A' }}
+                          style={{ height: 5, backgroundColor: '#2C2C2A', borderRadius: 3 }}
                         >
                           <div
                             className="h-full rounded-sm"
                             style={{
                               width: `${v}%`,
                               backgroundColor: corVal,
+                              borderRadius: 3,
                             }}
                           />
                         </div>
@@ -364,12 +373,96 @@ export function ProcessoPopupContent({
             </>
           )}
 
-          {totalAlertas > 0 && onVerTodosAlertasRadar ? (
+          {osConservador != null ? (
             <>
               <div
                 className="-mx-4 my-3 h-px shrink-0 bg-[#2C2C2A]"
                 aria-hidden
               />
+              <p
+                className="mt-1 mb-2.5 text-[13px] font-medium uppercase tracking-[1px] text-[#F1EFE8]"
+              >
+                Opportunity Score
+              </p>
+              <div className="flex w-full min-w-0 items-center gap-2">
+                <div
+                  className="flex min-w-0 items-center gap-2"
+                  style={{
+                    flexGrow: 1,
+                    flexShrink: 1,
+                    flexBasis: 0,
+                    minWidth: 0,
+                  }}
+                >
+                  <div
+                    className="min-w-0"
+                    style={{
+                      flexGrow: 1,
+                      flexShrink: 0,
+                      flexBasis: 0,
+                      minWidth: 0,
+                      height: 5,
+                      borderRadius: 3,
+                      backgroundColor: '#2C2C2A',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: `${Math.min(100, Math.max(0, osConservador))}%`,
+                        height: '100%',
+                        borderRadius: 3,
+                        backgroundColor: corFaixaOS(osConservador),
+                      }}
+                    />
+                  </div>
+                  <span
+                    className="w-[40px] shrink-0 text-right tabular-nums text-[15px] font-bold leading-none"
+                    style={{ color: corFaixaOS(osConservador) }}
+                  >
+                    {osConservador}
+                  </span>
+                </div>
+                {processo.risk_breakdown && r !== null ? (
+                  <div
+                    className="flex shrink-0 items-center justify-center border-0 bg-transparent py-0 pr-1.5 pl-0"
+                    aria-hidden
+                  >
+                    <ChevronRight
+                      size={14}
+                      strokeWidth={2}
+                      className="pointer-events-none invisible"
+                      aria-hidden
+                    />
+                  </div>
+                ) : null}
+              </div>
+              <div
+                className="w-full text-left"
+                style={{ marginTop: 2 }}
+              >
+                <span
+                  className="text-[12px] font-normal not-italic"
+                  style={{ color: '#8A877E' }}
+                >
+                  Perfil conservador
+                </span>
+              </div>
+              <div
+                className="-mx-4 my-3 h-px shrink-0 bg-[#2C2C2A]"
+                aria-hidden
+              />
+            </>
+          ) : null}
+
+          {totalAlertas > 0 && onVerTodosAlertasRadar ? (
+            <>
+              {osConservador == null ? (
+                <div
+                  className="-mx-4 my-3 h-px shrink-0 bg-[#2C2C2A]"
+                  aria-hidden
+                />
+              ) : null}
               <div className="flex min-w-0 flex-col">
                 <span className="whitespace-nowrap text-[13px] font-medium uppercase tracking-[1px] text-[#F1EFE8]">
                   Alertas regulatórios

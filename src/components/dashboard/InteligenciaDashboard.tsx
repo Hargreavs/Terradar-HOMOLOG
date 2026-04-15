@@ -139,7 +139,7 @@ function IconChevronPagina({ dir, size = 16 }: { dir: 'left' | 'right'; size?: n
   )
 }
 
-/** Ícones estilo Lucide (SVG inline — evita dependência lucide-react no bundle). */
+/** Ícones estilo Lucide (SVG inline; evita dependência lucide-react no bundle). */
 type IconTendenciaProps = {
   size?: number
   color?: string
@@ -457,7 +457,7 @@ const MESES_ABREV = [
   'Dez',
 ] as const
 
-/** Colunas do ranking de titulares — cabeçalhos e linhas compartilham a mesma largura. */
+/** Colunas do ranking de titulares: cabeçalhos e linhas compartilham a mesma largura. */
 /** Mesmo tamanho/cor dos rótulos “Processos” / “Risco médio” em PROCESSOS POR ESTADO. */
 const RANKING_TITULARES_HEAD_CELL: CSSProperties = {
   fontSize: 14,
@@ -481,7 +481,7 @@ const RANKING_TITULARES_COL_METRICA: CSSProperties = {
   alignSelf: 'center',
 }
 
-/** Célula “Risco” — conteúdo encostado à direita (próximo da coluna de ação / padding do card). */
+/** Célula “Risco”: conteúdo encostado à direita (próximo da coluna de ação / padding do card). */
 const RANKING_TITULARES_RISCO_NA_GRID: CSSProperties = {
   display: 'flex',
   justifyContent: 'flex-end',
@@ -497,7 +497,7 @@ const RANKING_TITULARES_COL_ACAO: CSSProperties = {
   alignItems: 'center',
 }
 
-/** Mesma trilha das linhas do ranking — alinha toggles às colunas Hectares / Risco. Coluna 5 ≥80px e cresce p/ “Por Processos” numa linha só. */
+/** Mesma trilha das linhas do ranking; alinha toggles às colunas Hectares / Risco. Coluna 5 ≥80px e cresce p/ “Por Processos” numa linha só. */
 const RANKING_TITULARES_GRID_TEMPLATE =
   '20px minmax(0,1fr) 168px 100px minmax(80px, max-content) 28px'
 

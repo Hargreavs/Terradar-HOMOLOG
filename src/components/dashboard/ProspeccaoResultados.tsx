@@ -29,6 +29,7 @@ import {
   corFaixaOpportunity,
   corMiniBarraValor,
   faixaFromScore,
+  getOpportunityLabel,
   qualificadorTextoMiniBarra,
   type OpportunityResult,
   type PerfilRisco,
@@ -38,7 +39,7 @@ import { barFillStyle, motionGroupStyle } from '../../lib/motionStyles'
 import { TODAS_SUBST } from '../../lib/substancias'
 
 
-/** Borda 1px — dourado mais suave que o accent pleno (#EF9F27) */
+/** Borda 1px, dourado mais suave que o accent pleno (#EF9F27) */
 const OPPORTUNITY_CARD_SELECTED_BORDER = 'rgba(239, 159, 39, 0.38)'
 const OPPORTUNITY_CARD_SELECTED_SHADOW = '0 0 12px rgba(239, 159, 39, 0.05)'
 
@@ -76,13 +77,6 @@ function corRanking(posicao: number): string {
   if (posicao === 2) return '#B4B2A9'
   if (posicao === 3) return '#C07840'
   return '#5F5E5A'
-}
-
-function faixaLabelCurto(faixa: OpportunityResult['faixa']): string {
-  if (faixa === 'alta') return 'Alta'
-  if (faixa === 'moderada') return 'Moderada'
-  if (faixa === 'baixa') return 'Baixa'
-  return 'Não recomendado'
 }
 
 /** Fontes exibidas no `title` de cada variável do drilldown */
@@ -983,7 +977,7 @@ export function ProspeccaoResultados({
                           letterSpacing: 0.5,
                         }}
                       >
-                        {faixaLabelCurto(faixaDisplay)}
+                        {getOpportunityLabel(scoreTotalDisplay)}
                       </span>
                     </div>
                   </div>

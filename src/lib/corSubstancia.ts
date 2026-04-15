@@ -3,6 +3,7 @@
 export const COR_SUBSTANCIA: Record<string, string> = {
   FERRO: '#7EADD4',
   OURO: '#D4A843',
+  'MINERIO DE OURO': '#D4A843',
   COBRE: '#C87C5B',
   NIOBIO: '#5CBFA0',
   'TERRAS RARAS': '#3D8B7A',

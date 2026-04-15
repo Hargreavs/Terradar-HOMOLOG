@@ -129,7 +129,7 @@ const COR_BOLINHA_RELEV: Record<Relevancia, string> = {
   favoravel: '#1D9E75',
 }
 
-/** Título de cartão — alinhado ao bloco "Resumo do dia" / cabeçalho do feed de alertas. */
+/** Título de cartão, alinhado ao bloco "Resumo do dia" / cabeçalho do feed de alertas. */
 const INTEL_DIST_REGIME_SECTION_TITLE: CSSProperties = {
   margin: 0,
   fontSize: 15,
@@ -237,15 +237,15 @@ const DISCLAIMER_RELEVANCIA: Record<Relevancia, string> = {
 
 function tooltipProcessoRisk(label: string, riskScore: number | null): string {
   if (riskScore == null) {
-    return `${label} — Risco não avaliado`
+    return `${label}. Risco não avaliado`
   }
   if (riskScore < 40) {
-    return `${label} — Risco: ${riskScore}/100 (Baixo)`
+    return `${label}. Risco: ${riskScore}/100 (Baixo)`
   }
   if (riskScore < 70) {
-    return `${label} — Risco: ${riskScore}/100 (Médio)`
+    return `${label}. Risco: ${riskScore}/100 (Médio)`
   }
-  return `${label} — Risco: ${riskScore}/100 (Alto)`
+  return `${label}. Risco: ${riskScore}/100 (Alto)`
 }
 
 function PeriodoSingleDropdown({

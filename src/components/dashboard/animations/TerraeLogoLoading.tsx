@@ -1,11 +1,18 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useId } from 'react'
 
 /**
  * TerraeLogo breathing/wave loading animation.
  * 4 bars that do a sequential vertical wave (staggered), like a calm equalizer.
  * Uses the exact Terrae brand gradient colors from the logo.
+ *
+ * IDs dos gradientes são únicos por instância (`useId`); senão, com vários SVGs na
+ * página, `fill: url(#terraeLoadGrad0)` resolve para o primeiro &lt;defs&gt; do documento
+ * e as barras podem ficar invisíveis.
  */
 export function TerraeLogoLoading({ size = 48, speed = 1 }: { size?: number; speed?: number }) {
+  const instanceId = useId().replace(/[^a-zA-Z0-9_-]/g, '_')
+  const gradId = (i: number) => `terraeLoadGrad_${instanceId}_${i}`
+
   const [elapsed, setElapsed] = useState(0)
   const raf = useRef<number | null>(null)
   const t0 = useRef<number | null>(null)
@@ -50,7 +57,7 @@ export function TerraeLogoLoading({ size = 48, speed = 1 }: { size?: number; spe
     >
       <defs>
         {bars.map((bar, i) => (
-          <linearGradient key={`grad-${i}`} id={`terraeLoadGrad${i}`} x1="0%" y1="0%" x2="100%" y2="0%">
+          <linearGradient key={`grad-${i}`} id={gradId(i)} x1="0%" y1="0%" x2="100%" y2="0%">
             <stop offset="0%" stopColor={bar.color} />
             <stop offset="100%" stopColor={bar.gradEnd} />
           </linearGradient>
@@ -79,7 +86,7 @@ export function TerraeLogoLoading({ size = 48, speed = 1 }: { size?: number; spe
             height={barHeight}
             rx={barRadius}
             ry={barRadius}
-            fill={`url(#terraeLoadGrad${i})`}
+            fill={`url(#${gradId(i)})`}
             opacity={opacity}
           />
         )

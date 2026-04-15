@@ -21,7 +21,9 @@ function linhaPontilhada() {
     <span
       aria-hidden
       style={{
-        flex: 1,
+        flexGrow: 1,
+        flexShrink: 1,
+        flexBasis: 0,
         minWidth: 6,
         margin: '0 5px',
         borderBottom: `1px dotted ${DOT}`,

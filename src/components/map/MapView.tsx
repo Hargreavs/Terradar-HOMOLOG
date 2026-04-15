@@ -25,6 +25,17 @@ import {
   formatCamadaGeoTooltip,
   syncCamadasGeoVisibility,
 } from '../../lib/mapCamadasGeo'
+import {
+  addTerritorioSimuladoLayers,
+  syncTerritorioSimuladoVisibility,
+  territorioSimuladoLayersPresent,
+} from '../../lib/mapTerritorioSimulado'
+import {
+  addTerritorioSimulado860232Layers,
+  refreshTerritorioSimulado860232FromProcessos,
+  syncTerritorioSimulado860232Visibility,
+  territorioSimulado860232LayersPresent,
+} from '../../lib/mapTerritorioSimulado860232'
 import { countFiltrosAlterados } from '../../lib/mapFiltrosCount'
 import {
   REGIME_BADGE_TOOLTIP,
@@ -67,6 +78,9 @@ import {
 import { usePainelFiltrosAnimation } from './MapFiltersOverlay'
 import { MapSearchBar } from './MapSearchBar'
 import { MapSidebar } from './MapSidebar'
+import type { RelatorioData } from '../../data/relatorio.mock'
+import { relatorioDataFromReportData } from '../../lib/relatorioDataFromReportData'
+import { buildReportData } from '../report/reportDataBuilder'
 import { ProcessoPopupContent } from './ProcessoPopup'
 import { RelatorioCompleto } from './RelatorioCompleto'
 
@@ -329,7 +343,7 @@ type ProcessosLayerHandlers = {
   onMoveEnd: () => void
 }
 
-/** Ignora no máx. um `click` após pan — Mapbox às vezes emite clique fantasma; timeout evita estado preso. */
+/** Ignora no máx. um `click` após pan. Mapbox às vezes emite clique fantasma; timeout evita estado preso. */
 type MapDragClickGuard = {
   consumeNextClick: boolean
   resetTimeoutId: ReturnType<typeof setTimeout> | null
@@ -337,6 +351,27 @@ type MapDragClickGuard = {
 
 /** Igual à transição do drawer (`RelatorioCompleto` transform 300ms) + margem. */
 const DRAWER_CLOSE_ANIM_MS = 320
+
+/**
+ * Ignora o próximo `click` do Mapbox (mesma lógica do fim do pan).
+ * Ao abrir o relatório a partir do popover, o teardown remove o popup; o mesmo gesto
+ * pode ainda disparar `click` no mapa sobre o polígono já selecionado, o que
+ * executaria o ramo “segundo clique no mesmo processo” e fecharia o drawer.
+ */
+function armarConsumoProximoCliqueMapa(
+  ref: MutableRefObject<MapDragClickGuard>,
+) {
+  const g = ref.current
+  if (g.resetTimeoutId != null) {
+    clearTimeout(g.resetTimeoutId)
+    g.resetTimeoutId = null
+  }
+  g.consumeNextClick = true
+  g.resetTimeoutId = setTimeout(() => {
+    g.consumeNextClick = false
+    g.resetTimeoutId = null
+  }, 500)
+}
 
 /** Mesma sequência que o ✕ do popover: teardown + drawer / seleção. */
 function fecharProcessoPopupComoBotaoFechar(
@@ -677,16 +712,7 @@ function attachProcessosLayerHandlers(
   }
 
   const onDragEnd = () => {
-    const g = dragClickGuardRef.current
-    if (g.resetTimeoutId != null) {
-      clearTimeout(g.resetTimeoutId)
-      g.resetTimeoutId = null
-    }
-    g.consumeNextClick = true
-    g.resetTimeoutId = setTimeout(() => {
-      g.consumeNextClick = false
-      g.resetTimeoutId = null
-    }, 500)
+    armarConsumoProximoCliqueMapa(dragClickGuardRef)
   }
 
   const onZoomStart = () => {
@@ -762,7 +788,7 @@ function attachProcessosLayerHandlers(
       }
     }
 
-    /* Mapa vazio: não teardown, não limpar seleção, não fechar drawer — pan/zoom/click fora do polígono mantêm o popover. */
+    /* Mapa vazio: não teardown, não limpar seleção, não fechar drawer; pan/zoom/click fora do polígono mantêm o popover. */
     return
   }
 
@@ -840,6 +866,7 @@ export function MapView() {
   }, [substanciasFiltro])
 
   const camadasGeo = useMapStore((s) => s.camadasGeo)
+  const territorioSimuladoVisivel = useMapStore((s) => s.territorioSimuladoVisivel)
   const filtrosAlteradosCount = useMemo(
     () => countFiltrosAlterados(filtros),
     [filtros],
@@ -975,11 +1002,27 @@ export function MapView() {
   }, [clearIntelSidebarAutoCloseTimer, clearIntelHoverIntentTimer])
 
   const [relatorioAbaInicial, setRelatorioAbaInicial] = useState<
-    'processo' | 'territorio' | 'inteligencia' | 'risco' | 'fiscal'
+    | 'processo'
+    | 'territorio'
+    | 'inteligencia'
+    | 'risco'
+    | 'oportunidade'
+    | 'fiscal'
   >('processo')
   /** Incrementa ao pedir a aba Risco no drawer (força sync mesmo se `abaInicial` já era `risco`). */
   const [relatorioAbaRiscoRequestId, setRelatorioAbaRiscoRequestId] =
     useState(0)
+
+  const [relatorioDadosApi, setRelatorioDadosApi] =
+    useState<RelatorioData | null>(null)
+  const [relatorioApiLoading, setRelatorioApiLoading] = useState(false)
+  const [relatorioApiErro, setRelatorioApiErro] = useState<string | null>(null)
+
+  useEffect(() => {
+    setRelatorioDadosApi(null)
+    setRelatorioApiErro(null)
+    setRelatorioApiLoading(false)
+  }, [processoSelecionado?.id])
 
   const verRelatorioRef = useRef<() => void>(() => {})
   verRelatorioRef.current = () => {
@@ -991,8 +1034,33 @@ export function MapView() {
     if (st.relatorioDrawerAberto) {
       st.setRelatorioDrawerAberto(false)
     } else {
+      armarConsumoProximoCliqueMapa(mapDragClickGuardRef)
       tearDownProcessoPopupRef.current?.()
       setRelatorioAbaInicial('processo')
+      const p = st.processoSelecionado
+      if (p?.fromApi) {
+        setRelatorioApiErro(null)
+        setRelatorioDadosApi(null)
+        setRelatorioApiLoading(true)
+        void (async () => {
+          try {
+            const rd = await buildReportData(p.numero)
+            setRelatorioDadosApi(relatorioDataFromReportData(rd, p))
+          } catch (e) {
+            setRelatorioApiErro(
+              e instanceof Error
+                ? e.message
+                : 'Não foi possível carregar o relatório.',
+            )
+          } finally {
+            setRelatorioApiLoading(false)
+          }
+        })()
+      } else {
+        setRelatorioDadosApi(null)
+        setRelatorioApiErro(null)
+        setRelatorioApiLoading(false)
+      }
       st.setRelatorioDrawerAberto(true)
     }
   }
@@ -1003,9 +1071,30 @@ export function MapView() {
       clearTimeout(pendingFecharProcessoTimeoutRef.current)
       pendingFecharProcessoTimeoutRef.current = null
     }
+    armarConsumoProximoCliqueMapa(mapDragClickGuardRef)
     tearDownProcessoPopupRef.current?.()
     setRelatorioAbaInicial('risco')
     setRelatorioAbaRiscoRequestId((n) => n + 1)
+    const p = useMapStore.getState().processoSelecionado
+    if (p?.fromApi) {
+      setRelatorioApiErro(null)
+      setRelatorioDadosApi(null)
+      setRelatorioApiLoading(true)
+      void (async () => {
+        try {
+          const rd = await buildReportData(p.numero)
+          setRelatorioDadosApi(relatorioDataFromReportData(rd, p))
+        } catch (e) {
+          setRelatorioApiErro(
+            e instanceof Error
+              ? e.message
+              : 'Não foi possível carregar o relatório.',
+          )
+        } finally {
+          setRelatorioApiLoading(false)
+        }
+      })()
+    }
     useMapStore.getState().setRelatorioDrawerAberto(true)
   }
 
@@ -1403,6 +1492,21 @@ export function MapView() {
       }
       addCamadasGeoLayers(map, 'processos-fill', CAMADAS_GEO_JSON)
       syncCamadasGeoVisibility(map, useMapStore.getState().camadasGeo)
+      if (!territorioSimuladoLayersPresent(map)) {
+        addTerritorioSimuladoLayers(map, 'processos-fill')
+      }
+      syncTerritorioSimuladoVisibility(
+        map,
+        useMapStore.getState().territorioSimuladoVisivel,
+      )
+      if (!territorioSimulado860232LayersPresent(map)) {
+        addTerritorioSimulado860232Layers(map, 'processos-fill')
+      }
+      syncTerritorioSimulado860232Visibility(
+        map,
+        useMapStore.getState().territorioSimuladoVisivel,
+      )
+      refreshTerritorioSimulado860232FromProcessos(map)
       const td = tearDownProcessoPopupRef.current
       if (td) {
         attachProcessosLayerHandlers(
@@ -1431,6 +1535,7 @@ export function MapView() {
 
     const filtrados = useMapStore.getState().getProcessosFiltrados()
     src.setData(buildGeoJSON(filtrados, modoVisualizacao))
+    refreshTerritorioSimulado860232FromProcessos(map)
 
     const sel = useMapStore.getState().processoSelecionado
     if (sel && !filtrados.some((p) => p.id === sel.id)) {
@@ -1441,7 +1546,7 @@ export function MapView() {
 
   /**
    * `requestFlyTo` atualiza o store; o `useEffect` nem sempre disparava a tempo (Strict Mode / ordem).
-   * Subscrição Zustand corre síncrono quando `flyTo` muda — garante `fitBounds` / `flyTo` no Mapbox.
+   * Subscrição Zustand corre síncrono quando `flyTo` muda; garante `fitBounds` / `flyTo` no Mapbox.
    */
   const prevFlyToRef = useRef<MapStore['flyTo']>(null)
 
@@ -1501,6 +1606,20 @@ export function MapView() {
     if (!map || !mapLoaded || !map.isStyleLoaded()) return
     syncCamadasGeoVisibility(map, camadasGeo)
   }, [mapLoaded, camadasGeo])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded || !map.isStyleLoaded()) return
+    if (!territorioSimuladoLayersPresent(map)) {
+      addTerritorioSimuladoLayers(map, 'processos-fill')
+    }
+    syncTerritorioSimuladoVisibility(map, territorioSimuladoVisivel)
+    if (!territorioSimulado860232LayersPresent(map)) {
+      addTerritorioSimulado860232Layers(map, 'processos-fill')
+    }
+    syncTerritorioSimulado860232Visibility(map, territorioSimuladoVisivel)
+    refreshTerritorioSimulado860232FromProcessos(map)
+  }, [mapLoaded, territorioSimuladoVisivel])
 
   useEffect(() => {
     const fn = () => setCamadaGeoTip(null)
@@ -1664,6 +1783,18 @@ export function MapView() {
         addProcessosLayers(map, geoJSON)
         addCamadasGeoLayers(map, 'processos-fill', CAMADAS_GEO_JSON)
         syncCamadasGeoVisibility(map, useMapStore.getState().camadasGeo)
+
+        addTerritorioSimuladoLayers(map, 'processos-fill')
+        syncTerritorioSimuladoVisibility(
+          map,
+          useMapStore.getState().territorioSimuladoVisivel,
+        )
+
+        addTerritorioSimulado860232Layers(map, 'processos-fill')
+        syncTerritorioSimulado860232Visibility(
+          map,
+          useMapStore.getState().territorioSimuladoVisivel,
+        )
 
         applySatelliteStylePostLoad(map, MAPBOX_STYLE_SATELLITE)
 
@@ -2102,6 +2233,9 @@ export function MapView() {
         onFechar={() => setRelatorioDrawerAberto(false)}
         abaInicial={relatorioAbaInicial}
         abaRiscoRequestId={relatorioAbaRiscoRequestId}
+        dadosRelatorioApi={relatorioDadosApi}
+        relatorioApiLoading={relatorioApiLoading}
+        relatorioApiErro={relatorioApiErro}
       />
       {camadaGeoTip
         ? createPortal(

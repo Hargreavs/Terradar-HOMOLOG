@@ -48,6 +48,7 @@ const LABEL_SUBSTANCIA_EXTRA: Record<string, string> = {
   PRASEODIMIO: 'Praseodímio',
   TERBIO: 'Térbio',
   DISPROSIO: 'Disprósio',
+  'MINERIO DE OURO': 'Minério de ouro',
 }
 
 /** Rótulo para exibição no relatório (acentuação correta; ex.: NIQUEL → Níquel). */
