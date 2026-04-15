@@ -180,12 +180,29 @@ export function mapDbRowToMapProcesso(row: Record<string, unknown>): Processo | 
   const year = Number.isFinite(ano_protocolo)
     ? ano_protocolo
     : anoFromNumeroAnm(numero)
+  const anoProtFinal =
+    row.ano_protocolo != null && Number.isFinite(Number(row.ano_protocolo))
+      ? Number(row.ano_protocolo)
+      : year
   const data_protocolo =
     typeof row.data_protocolo === 'string' && row.data_protocolo
       ? row.data_protocolo
       : `${year}-01-01`
 
   const titular = String(row.titular ?? '').trim() || '—'
+
+  const optStr = (v: unknown): string | undefined => {
+    if (v == null) return undefined
+    const s = String(v).trim()
+    return s === '' ? undefined : s
+  }
+
+  const isoDateOnly = (v: unknown): string | undefined => {
+    if (v == null) return undefined
+    const s = String(v).trim()
+    const m = /^(\d{4}-\d{2}-\d{2})/.exec(s)
+    return m ? m[1]! : undefined
+  }
   const substancia = String(row.substancia ?? '').trim() || '—'
   const uf = String(row.uf ?? '').trim() || '—'
   const municipio = String(row.municipio ?? '').trim() || '—'
@@ -225,19 +242,44 @@ export function mapDbRowToMapProcesso(row: Record<string, unknown>): Processo | 
     substancia,
     is_mineral_estrategico: false,
     titular,
+    cnpj_titular: optStr(row.cnpj_titular),
+    cnpj_filial: optStr(row.cnpj_filial),
+    nup_sei: optStr(row.nup_sei),
+    ultimo_evento_data: isoDateOnly(row.ultimo_evento_data),
+    ultimo_evento_descricao: optStr(row.ultimo_evento_descricao),
+    ultimo_evento_codigo:
+      row.ultimo_evento_codigo != null &&
+      Number.isFinite(Number(row.ultimo_evento_codigo))
+        ? Number(row.ultimo_evento_codigo)
+        : undefined,
+    portaria_lavra_data: isoDateOnly(row.portaria_lavra_data),
+    portaria_lavra_dou: optStr(row.portaria_lavra_dou),
+    licenca_ambiental_data: isoDateOnly(row.licenca_ambiental_data),
+    inicio_lavra_data: isoDateOnly(row.inicio_lavra_data),
+    plano_fechamento_data: isoDateOnly(row.plano_fechamento_data),
+    tah_ultimo_pagamento: isoDateOnly(row.tah_ultimo_pagamento),
+    ral_ultimo_data: isoDateOnly(row.ral_ultimo_data),
+    exigencia_pendente:
+      typeof row.exigencia_pendente === 'boolean'
+        ? row.exigencia_pendente
+        : undefined,
+    total_eventos:
+      row.total_eventos != null && Number.isFinite(Number(row.total_eventos))
+        ? Number(row.total_eventos)
+        : undefined,
     area_ha: areaSafe,
     uf,
     municipio,
     lat,
     lng,
     data_protocolo,
-    ano_protocolo: year,
+    ano_protocolo: anoProtFinal,
     situacao: 'ativo',
     risk_score,
     risk_breakdown,
     risk_decomposicao: null,
     valor_estimado_usd_mi: 0,
-    ultimo_despacho_data: data_protocolo,
+    ultimo_despacho_data: isoDateOnly(row.ultimo_evento_data) || data_protocolo,
     alertas: [] as AlertaLegislativo[],
     fiscal: EMPTY_FISCAL,
     geojson: buildGeojson(id, polyCoords),

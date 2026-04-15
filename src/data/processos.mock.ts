@@ -9,7 +9,6 @@ import type {
   Processo,
   RiskBreakdown,
 } from '../types'
-import { POLIGONO_860232_RING } from './processo860232Geo'
 import { POLIGONO_864231_RING } from './processo864231Geo'
 
 type RawProcesso = Omit<Processo, 'geojson' | 'risk_decomposicao'>
@@ -269,22 +268,10 @@ function makePolygon(lat: number, lng: number, id: string): GeoJSONPolygon {
   } as GeoJSONPolygon
 }
 
-/** Polígono SIGMINE REST API (864.231/2017, Natividade/TO), EPSG:4674: [lng, lat]. */
+/** Polígono SIGMINE REST API (864.231/2017, Jaú do Tocantins/TO), EPSG:4674: [lng, lat]. */
 function geojsonSigmine864231(): GeoJSONPolygon {
   const id = 'p_864231'
   const ring = POLIGONO_864231_RING
-  return {
-    type: 'Feature' as const,
-    id,
-    properties: { id },
-    geometry: { type: 'Polygon' as const, coordinates: [ring] },
-  } as GeoJSONPolygon
-}
-
-/** Polígono aproximado 860.232/1990 (Chapada da Natividade/TO), [lng, lat]. */
-function geojsonSigmine860232(): GeoJSONPolygon {
-  const id = 'p_860232'
-  const ring = POLIGONO_860232_RING
   return {
     type: 'Feature' as const,
     id,
@@ -1309,40 +1296,21 @@ const processosSeed: ProcessoSeed[] = [
     risk_score: 15,
   },
   {
-    id: 'p_860232',
-    numero: '860.232/1990',
-    regime: 'autorizacao_pesquisa',
-    fase: 'pesquisa',
-    substancia: 'MINÉRIO DE FERRO',
-    is_mineral_estrategico: false,
-    titular: 'Titular (mock 860.232)',
-    cnpj_titular: '00.000.000/0001-99',
-    area_ha: 1200,
-    uf: 'TO',
-    municipio: 'Chapada da Natividade',
-    lat: -11.55,
-    lng: -47.75,
-    data_protocolo: '1990',
-    ano_protocolo: 1990,
-    mes_protocolo: null,
-    situacao: 'ativo',
-    risk_score: 30,
-  },
-  {
     id: 'p_864231',
     numero: '864.231/2017',
     regime: 'autorizacao_pesquisa',
     fase: 'pesquisa',
     substancia: 'MINÉRIO DE OURO',
     is_mineral_estrategico: false,
-    titular: 'M P LANCA MINERADORA',
+    titular: 'M P Lanca Mineradora',
     cnpj_titular: '21.515.445/0001-84',
+    nup_sei: '48417.864231/2017-35',
     area_ha: 1600,
     uf: 'TO',
     municipio: 'Jaú do Tocantins',
     lat: -12.845,
     lng: -48.816,
-    data_protocolo: '2017',
+    data_protocolo: '2017-12-01',
     ano_protocolo: 2017,
     mes_protocolo: null,
     situacao: 'ativo',
@@ -1441,9 +1409,7 @@ export const processosMock: Processo[] = rawProcessos.map((p) => {
     geojson:
       p.id === 'p_864231'
         ? geojsonSigmine864231()
-        : p.id === 'p_860232'
-          ? geojsonSigmine860232()
-          : makePolygon(p.lat, p.lng, p.id),
+        : makePolygon(p.lat, p.lng, p.id),
     risk_decomposicao: null,
   }
   return {

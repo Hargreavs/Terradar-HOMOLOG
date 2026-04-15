@@ -36,7 +36,8 @@ export interface TerritorialAnalysis {
   aquiferos: { nome: string; tipo: string }[]
 }
 
-/** Busca processo por número (ex: "864.231/2017"). */
+/** Busca processo por número (ex: "864.231/2017"). Inclui cnpj_titular, nup_sei, etc.
+ *  `.select('*')` retorna todas as colunas (incl. resumo de eventos SCM 12.13). */
 export async function getProcesso(numero: string) {
   const { data, error } = await supabase
     .from('processos')
@@ -160,7 +161,7 @@ export async function getTerritoralAnalysis(
   return data as TerritorialAnalysis
 }
 
-/** Dados fiscais (SICONFI/IBGE) para o município — último exercício na tabela. */
+/** Dados fiscais (SICONFI/IBGE) para o município - último exercício na tabela (`idh`, `divida_consolidada`, etc.). */
 export async function getFiscal(municipioIbge: string) {
   const { data, error } = await supabase
     .from('fiscal_municipios')

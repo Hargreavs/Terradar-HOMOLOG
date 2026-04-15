@@ -30,12 +30,6 @@ import {
   syncTerritorioSimuladoVisibility,
   territorioSimuladoLayersPresent,
 } from '../../lib/mapTerritorioSimulado'
-import {
-  addTerritorioSimulado860232Layers,
-  refreshTerritorioSimulado860232FromProcessos,
-  syncTerritorioSimulado860232Visibility,
-  territorioSimulado860232LayersPresent,
-} from '../../lib/mapTerritorioSimulado860232'
 import { countFiltrosAlterados } from '../../lib/mapFiltrosCount'
 import {
   REGIME_BADGE_TOOLTIP,
@@ -1499,14 +1493,6 @@ export function MapView() {
         map,
         useMapStore.getState().territorioSimuladoVisivel,
       )
-      if (!territorioSimulado860232LayersPresent(map)) {
-        addTerritorioSimulado860232Layers(map, 'processos-fill')
-      }
-      syncTerritorioSimulado860232Visibility(
-        map,
-        useMapStore.getState().territorioSimuladoVisivel,
-      )
-      refreshTerritorioSimulado860232FromProcessos(map)
       const td = tearDownProcessoPopupRef.current
       if (td) {
         attachProcessosLayerHandlers(
@@ -1535,7 +1521,6 @@ export function MapView() {
 
     const filtrados = useMapStore.getState().getProcessosFiltrados()
     src.setData(buildGeoJSON(filtrados, modoVisualizacao))
-    refreshTerritorioSimulado860232FromProcessos(map)
 
     const sel = useMapStore.getState().processoSelecionado
     if (sel && !filtrados.some((p) => p.id === sel.id)) {
@@ -1614,11 +1599,6 @@ export function MapView() {
       addTerritorioSimuladoLayers(map, 'processos-fill')
     }
     syncTerritorioSimuladoVisibility(map, territorioSimuladoVisivel)
-    if (!territorioSimulado860232LayersPresent(map)) {
-      addTerritorioSimulado860232Layers(map, 'processos-fill')
-    }
-    syncTerritorioSimulado860232Visibility(map, territorioSimuladoVisivel)
-    refreshTerritorioSimulado860232FromProcessos(map)
   }, [mapLoaded, territorioSimuladoVisivel])
 
   useEffect(() => {
@@ -1786,12 +1766,6 @@ export function MapView() {
 
         addTerritorioSimuladoLayers(map, 'processos-fill')
         syncTerritorioSimuladoVisibility(
-          map,
-          useMapStore.getState().territorioSimuladoVisivel,
-        )
-
-        addTerritorioSimulado860232Layers(map, 'processos-fill')
-        syncTerritorioSimulado860232Visibility(
           map,
           useMapStore.getState().territorioSimuladoVisivel,
         )

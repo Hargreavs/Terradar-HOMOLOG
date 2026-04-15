@@ -24,6 +24,7 @@ import {
   formatDividaConsolidadaExibicao,
   normalizeCapagNotaDisplay,
 } from '../../lib/fiscalDisplay'
+import { piorIndicadorCapag } from '../../lib/capagPiorIndicador'
 
 /** 1 t métrica = 32.151 oz troy (preço master em USD/t → exibição em oz). */
 const OZ_POR_TONELADA = 32_151
@@ -158,6 +159,28 @@ function scoreFromDimensao(
     if (k in dims) return dimScore(dims[k])
   }
   return 0
+}
+
+function dadosSeiFromProcesso(
+  p: Record<string, unknown>,
+): ReportData['dados_sei'] | undefined {
+  const nup = String(p.nup_sei ?? p.numero_sei ?? '').trim()
+  if (!nup) return undefined
+  const pick = (key: string): string | undefined => {
+    const v = p[key]
+    if (v == null || String(v).trim() === '') return undefined
+    return String(v).trim()
+  }
+  return {
+    nup,
+    portaria_dou: pick('portaria_dou'),
+    licenca_ambiental: pick('licenca_ambiental'),
+    tah_pago: pick('tah_pago') ?? pick('tah_status'),
+    certidao: pick('certidao_regularidade') ?? pick('certidao'),
+    plano_lavra: pick('plano_lavra'),
+    plano_fechamento: pick('plano_fechamento_mina') ?? pick('plano_fechamento'),
+    ultimo_despacho: pick('ultimo_despacho'),
+  }
 }
 
 function estagioFromFase(fase: unknown): {
@@ -658,13 +681,29 @@ export async function buildReportData(
 
   const templateFiscal = indicadoresMunicipaisParaTemplate(fiscalMun, p)
 
+  const faseFmt = fmtFaseFromApi(String(p.fase ?? ''))
+  const regimeFmt = fmtRegimeFromApi(String(p.regime ?? ''))
+  const piorCap = piorIndicadorCapag(
+    endiv.notaLetra === '–' ? '–' : endiv.notaLetra,
+    poup.notaLetra === '–' ? '–' : poup.notaLetra,
+    liq.notaLetra === '–' ? '–' : liq.notaLetra,
+  )
+  const exercicioFiscalStr =
+    fiscalMun?.exercicio != null ? String(fiscalMun.exercicio) : 'N/D'
+  const anoBaseCapagStr =
+    capag?.ano_referencia != null
+      ? String(capag.ano_referencia)
+      : '2023'
+
   return {
     processo: String(p.numero ?? numeroProcesso),
     titular: nd(p.titular),
-    cnpj: nd(p.cnpj),
+    cnpj: nd(p.cnpj_titular ?? p.cnpj),
     substancia_anm: labelSubstanciaParaExibicao(substanciaRaw),
-    regime: fmtRegimeFromApi(String(p.regime ?? '')),
-    fase: fmtFaseFromApi(String(p.fase ?? '')),
+    regime: regimeFmt,
+    fase: faseFmt,
+    fase_processo: faseFmt,
+    regime_display: regimeFmt,
     area_ha: areaHa,
     municipio: municipioUf,
     bioma: analise?.bioma?.length
@@ -675,13 +714,28 @@ export async function buildReportData(
       ? formatIsoToBr(String(alvaraRaw))
       : 'Não disponível',
     alvara_status: nd(p.alvara_status),
-    ultimo_despacho: nd(p.ultimo_despacho),
+    ultimo_despacho: (() => {
+      const ud = p.ultimo_evento_descricao
+      if (ud != null && String(ud).trim() !== '') {
+        const ue = p.ultimo_evento_data
+        const datePart =
+          ue != null && String(ue).trim() !== ''
+            ? `${formatIsoToBr(String(ue))} · `
+            : ''
+        return nd(`${datePart}${String(ud).trim()}`)
+      }
+      return nd(p.ultimo_despacho)
+    })(),
     nup_sei: nd(String(p.nup_sei ?? p.numero_sei ?? '')),
     gu_status: nd(p.gu_status),
     gu_pendencia: nd(p.gu_pendencia),
     tah_status: nd(p.tah_status),
     licenca_ambiental: nd(p.licenca_ambiental),
     protocolo_anos: (() => {
+      const ap = p.ano_protocolo
+      if (ap != null && Number.isFinite(Number(ap))) {
+        return new Date().getFullYear() - Number(ap)
+      }
       const numero = String(p.numero ?? '')
       const match = /\/(\d{4})$/.exec(numero)
       if (match) {
@@ -723,6 +777,12 @@ export async function buildReportData(
     estrategia_nacional: mercado?.estrategia_nacional
       ? fixEstrategiaNacionalPnmAcentos(String(mercado.estrategia_nacional))
       : 'Não disponível',
+    aplicacoes_substancia: (() => {
+      const a = mercado?.aplicacoes
+      const u = mercado?.aplicacoes_usgs
+      const s = [a, u].find((x) => x != null && String(x).trim() !== '')
+      return s != null ? String(s).trim() : null
+    })(),
     cfem_aliquota_pct: cfemPctAliquota,
     valor_insitu_usd_ha: valReservaUsdHa,
     cfem_estimada_ha: cfemEstimadaHaFinal,
@@ -742,13 +802,31 @@ export async function buildReportData(
     capag_poupcorr_nota: poup.notaLetra === '–' ? '–' : poup.notaLetra,
     capag_liquidez: liq.texto,
     capag_liquidez_nota: liq.notaLetra === '–' ? '–' : liq.notaLetra,
+    capag_nota_final: capagNota,
+    capag_indicadores: {
+      endividamento: {
+        valor: endiv.texto,
+        nota: endiv.notaLetra === '–' ? '–' : endiv.notaLetra,
+      },
+      poupanca_corrente: {
+        valor: poup.texto,
+        nota: poup.notaLetra === '–' ? '–' : poup.notaLetra,
+      },
+      liquidez: {
+        valor: liq.texto,
+        nota: liq.notaLetra === '–' ? '–' : liq.notaLetra,
+      },
+    },
+    capag_pior_indicador_nome: piorCap.indicador,
+    capag_pior_indicador_letra: piorCap.letra,
+    dados_sei: dadosSeiFromProcesso(p),
     receita_propria: templateFiscal.receita_propria,
     divida: templateFiscal.divida,
     pib_municipal: pibMunicipalStr,
     dependencia_transf: templateFiscal.dependencia_transf,
     populacao: templateFiscal.populacao,
     idh: templateFiscal.idh,
-    fiscal_contexto_referencia: `CAPAG ano-base 2023 (STN). Fiscal SICONFI/IBGE: exercício ${fiscalMun?.exercicio != null ? String(fiscalMun.exercicio) : 'N/D'}.`,
+    fiscal_contexto_referencia: `CAPAG ano-base ${anoBaseCapagStr} | Exercício fiscal ${exercicioFiscalStr}`,
     incentivos: {
       programa_estadual:
         incentivosUf != null &&

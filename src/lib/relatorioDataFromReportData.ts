@@ -10,6 +10,7 @@ import type {
   DadosTerritoriais,
   IntelMineral,
   ObservacoesTecnicas,
+  ObservacoesTecnicasItem,
   RelatorioData,
   RelatorioOportunidadeData,
   Timestamps,
@@ -29,6 +30,9 @@ import {
   parsePibMunicipalMiFromTexto,
   parseReceitaPropriaMiFromTexto,
 } from './fiscalDisplay'
+import { piorIndicadorCapag } from './capagPiorIndicador'
+import { haversineKm } from './geoHaversine'
+import { centroideMunicipioSedeIbge } from './municipioSedeCentroideIbge'
 
 function todayIso(): string {
   const d = new Date()
@@ -42,6 +46,15 @@ function parsePtBrMoney(raw: string): number {
     t.replace(/\./g, '').replace(',', '.').replace(/[^\d.-]/g, ''),
   )
   return Number.isFinite(n) ? n : 0
+}
+
+/** Master de substâncias: texto com `;`, quebras de linha ou marcadores. */
+function parseAplicacoesSubstancia(raw: string | null | undefined): string[] {
+  if (raw == null || !String(raw).trim()) return []
+  return String(raw)
+    .split(/[;\n\u2022]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
 }
 
 function biomaFromString(raw: string): BiomaRelatorio | string {
@@ -58,7 +71,10 @@ function biomaFromString(raw: string): BiomaRelatorio | string {
   return t || 'Cerrado'
 }
 
-function territorialFromReport(rd: ReportData): DadosTerritoriais {
+function territorialFromReport(
+  rd: ReportData,
+  processo: Processo,
+): DadosTerritoriais {
   let distancia_ti_km: number | null = null
   let nome_ti_proxima: string | null = null
   let distancia_uc_pi_km: number | null = null
@@ -116,9 +132,29 @@ function territorialFromReport(rd: ReportData): DadosTerritoriais {
     }
   }
 
+  let nome_aquifero: string | null = null
+  let distancia_aquifero_km: number | null = null
+  let unidade_hidro_aq: string | null = null
+  let sobreposicao_aquifero = false
+  for (const L of rd.layers) {
+    if (/aqu[ií]fero/i.test(L.tipo)) {
+      const d = L.distancia_km
+      const sobre = L.sobreposto || d <= 0.05
+      if (
+        nome_aquifero == null ||
+        d < (distancia_aquifero_km ?? 1e9)
+      ) {
+        nome_aquifero = L.nome
+        distancia_aquifero_km = d
+        unidade_hidro_aq = L.detalhes?.trim() || null
+        sobreposicao_aquifero = sobre
+      }
+    }
+  }
+
   let distancia_ferrovia_km: number | null = null
   let nome_ferrovia: string | null = null
-  let distancia_rodovia_km = 0
+  let distancia_rodovia_km: number | null = null
   let nome_rodovia: string | null = null
   let distancia_porto_km: number | null = null
   let nome_porto: string | null = null
@@ -135,7 +171,10 @@ function territorialFromReport(rd: ReportData): DadosTerritoriais {
       }
     }
     if (inf.tipo === 'Rodovia') {
-      if (!nome_rodovia || inf.distancia_km < distancia_rodovia_km) {
+      if (
+        nome_rodovia == null ||
+        inf.distancia_km < (distancia_rodovia_km ?? Infinity)
+      ) {
         distancia_rodovia_km = inf.distancia_km
         nome_rodovia = inf.nome
       }
@@ -146,6 +185,44 @@ function territorialFromReport(rd: ReportData): DadosTerritoriais {
         nome_porto = inf.nome
         uf_porto = inf.detalhes || ''
       }
+    }
+  }
+
+  let distancia_sede_km: number | undefined
+  let nome_sede_pref = processo.municipio ?? ''
+
+  for (const L of rd.layers) {
+    if (/sede/i.test(L.tipo)) {
+      const d = L.distancia_km
+      if (distancia_sede_km === undefined || d < distancia_sede_km) {
+        distancia_sede_km = d
+        if (L.nome?.trim()) nome_sede_pref = L.nome.trim()
+      }
+    }
+  }
+  for (const inf of rd.infraestrutura) {
+    if (/sede/i.test(inf.tipo)) {
+      const d = inf.distancia_km
+      if (distancia_sede_km === undefined || d < distancia_sede_km) {
+        distancia_sede_km = d
+        if (inf.nome?.trim()) nome_sede_pref = inf.nome.trim()
+      }
+    }
+  }
+
+  if (
+    distancia_sede_km === undefined &&
+    Number.isFinite(processo.lat) &&
+    Number.isFinite(processo.lng)
+  ) {
+    const c = centroideMunicipioSedeIbge(processo.municipio, processo.uf)
+    if (c) {
+      distancia_sede_km = haversineKm(
+        processo.lat,
+        processo.lng,
+        c.lat,
+        c.lng,
+      )
     }
   }
 
@@ -162,18 +239,18 @@ function territorialFromReport(rd: ReportData): DadosTerritoriais {
     nome_uc_pi_proxima,
     tipo_uc_pi,
     distancia_uc_pi_km,
-    distancia_aquifero_km: null,
-    nome_aquifero: null,
-    unidade_hidrogeologica: null,
+    distancia_aquifero_km,
+    nome_aquifero,
+    unidade_hidrogeologica: unidade_hidro_aq,
     litologia_aquifero: null,
     espessura_aquifero: null,
     vazao_aquifero: null,
     produtividade_aquifero: null,
-    sobreposicao_aquifero: false,
+    sobreposicao_aquifero,
     bioma: biomaFromString(rd.bioma) as BiomaRelatorio,
-    distancia_sede_municipal_km: 0,
-    distancia_sede_km: 0,
-    nome_sede: '',
+    distancia_sede_municipal_km: distancia_sede_km,
+    distancia_sede_km,
+    nome_sede: nome_sede_pref,
     distancia_ferrovia_km,
     nome_ferrovia,
     situacao_ferrovia: 'Não disponível',
@@ -182,7 +259,10 @@ function territorialFromReport(rd: ReportData): DadosTerritoriais {
     nome_rodovia,
     tipo_rodovia: '',
     uf_rodovia: '',
-    distancia_rodovia_km,
+    distancia_rodovia_km:
+      nome_rodovia != null && nome_rodovia !== ''
+        ? (distancia_rodovia_km ?? 0)
+        : undefined,
     distancia_porto_km,
     nome_porto,
     tipo_porto: '',
@@ -225,7 +305,9 @@ function intelFromReport(rd: ReportData, processo: Processo): IntelMineral {
       rd.substancia_anm.toUpperCase().includes('OURO') ? 'oz' : 't',
     preco_referencia_usd_oz: rd.preco_oz_usd,
     tendencia_preco: tendencia,
-    aplicacoes_principais: [],
+    aplicacoes_principais: parseAplicacoesSubstancia(
+      rd.aplicacoes_substancia ?? null,
+    ),
     paises_concorrentes: [],
     estrategia_nacional:
       rd.estrategia_nacional &&
@@ -247,7 +329,7 @@ function intelFromReport(rd: ReportData, processo: Processo): IntelMineral {
   }
 }
 
-function fiscalFromReport(rd: ReportData, processo: Processo): DadosFiscaisRicos {
+function fiscalFromReport(rd: ReportData): DadosFiscaisRicos {
   const notaNorm = normalizeCapagNotaDisplay(rd.capag_nota)
   const badge = capagBadgeLetra(notaNorm)
   const capagPrincipal = badge ?? notaNorm
@@ -279,11 +361,6 @@ function fiscalFromReport(rd: ReportData, processo: Processo): DadosFiscaisRicos
       ? idhTxt
       : undefined
 
-  const estAnualMi =
-    processo.area_ha > 0 && rd.cfem_estimada_ha > 0
-      ? (rd.cfem_estimada_ha * processo.area_ha) / 1_000_000
-      : 0
-
   const receitaMi = parseReceitaPropriaMiFromTexto(rd.receita_propria)
   const dividaMi = parseDividaMiFromTexto(rd.divida)
   const depPct = parsePercentFromDependencia(rd.dependencia_transf)
@@ -311,10 +388,28 @@ function fiscalFromReport(rd: ReportData, processo: Processo): DadosFiscaisRicos
       'Indicadores em percentual conforme metodologia STN; liquidez pode constar como não disponível.',
   }
 
+  const piorCalc = piorIndicadorCapag(
+    rd.capag_endiv_nota,
+    rd.capag_poupcorr_nota,
+    rd.capag_liquidez_nota,
+  )
+  const capagPiorLetra =
+    rd.capag_pior_indicador_letra != null &&
+    String(rd.capag_pior_indicador_letra).trim() !== ''
+      ? String(rd.capag_pior_indicador_letra).trim()
+      : piorCalc.letra
+  const capagPiorNome =
+    rd.capag_pior_indicador_nome != null &&
+    String(rd.capag_pior_indicador_nome).trim() !== ''
+      ? String(rd.capag_pior_indicador_nome).trim()
+      : piorCalc.indicador
+
   return {
     capag: capagPrincipal,
     capag_descricao: '',
     capag_estruturado,
+    capag_pior_indicador_letra: capagPiorLetra,
+    capag_pior_indicador_nome: capagPiorNome,
     receita_propria_mi: receitaMi,
     divida_consolidada_mi: dividaMi,
     pib_municipal_mi: pibMi,
@@ -328,7 +423,7 @@ function fiscalFromReport(rd: ReportData, processo: Processo): DadosFiscaisRicos
     incentivos_estaduais: incentivosLista,
     linhas_bndes: linhasBndesLista,
     aliquota_cfem_pct: rd.cfem_aliquota_pct,
-    estimativa_cfem_anual_operacao_mi: estAnualMi,
+    cfem_estimada_ha: Number(rd.cfem_estimada_ha) || 0,
     observacao: '',
     contexto_referencia_fiscal: rd.fiscal_contexto_referencia,
   }
@@ -396,6 +491,106 @@ function oportunidadeFromReport(rd: ReportData): RelatorioOportunidadeData {
   }
 }
 
+function isoDatePrefix(v: unknown): string {
+  if (v == null) return ''
+  const s = String(v).trim()
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(s)
+  return m ? m[1]! : ''
+}
+
+function formatDataPtBrFromIsoYmd(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso)
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso
+}
+
+function observacoesTecnicasFromReport(
+  rd: ReportData,
+  processo: Processo,
+): ObservacoesTecnicas {
+  const anoDoNumero = (() => {
+    const m = /\/(\d{4})$/.exec(processo.numero)
+    return m ? parseInt(m[1], 10) : null
+  })()
+  const anoProt =
+    processo.ano_protocolo != null && processo.ano_protocolo > 0
+      ? processo.ano_protocolo
+      : anoDoNumero
+
+  const tempoTramitacaoValor =
+    anoProt != null
+      ? `~${new Date().getFullYear() - anoProt} anos`
+      : rd.protocolo_anos != null && rd.protocolo_anos >= 0
+        ? `~${Math.round(rd.protocolo_anos * 10) / 10} anos`
+        : null
+
+  const dataUltIso = isoDatePrefix(processo.ultimo_evento_data)
+  const ultimoEventoValor =
+    dataUltIso && processo.ultimo_evento_descricao?.trim()
+      ? `${formatDataPtBrFromIsoYmd(dataUltIso)} - ${processo.ultimo_evento_descricao.trim()}`
+      : rd.ultimo_despacho?.trim() && rd.ultimo_despacho !== 'Não disponível'
+        ? rd.ultimo_despacho.trim()
+        : null
+
+  const codigoEventoValor =
+    processo.ultimo_evento_codigo != null
+      ? `${processo.ultimo_evento_codigo} - ${processo.ultimo_evento_descricao ?? ''}`.trim()
+      : rd.dados_sei?.portaria_dou?.trim()
+        ? rd.dados_sei.portaria_dou.trim()
+        : rd.dados_sei?.ultimo_despacho?.trim() || null
+
+  const ciclo_regulatorio: ObservacoesTecnicasItem[] = [
+    {
+      label: 'Ano de protocolo',
+      valor: anoProt != null ? String(anoProt) : null,
+    },
+    {
+      label: 'Tempo de tramitação',
+      valor: tempoTramitacaoValor,
+    },
+    { label: 'Fase atual', valor: rd.fase?.trim() ? rd.fase : null },
+    {
+      label: 'Último evento',
+      valor: ultimoEventoValor,
+    },
+    {
+      label: 'Código do evento',
+      valor: codigoEventoValor,
+    },
+  ]
+
+  const cnpjExibir =
+    (processo.cnpj_filial != null
+      ? String(processo.cnpj_filial).trim()
+      : '') ||
+    (processo.cnpj_titular != null
+      ? String(processo.cnpj_titular).trim()
+      : '') ||
+    rd.cnpj?.trim() ||
+    ''
+
+  const nupSeiExibir =
+    (processo.nup_sei != null ? String(processo.nup_sei).trim() : '') ||
+    rd.nup_sei?.trim() ||
+    ''
+
+  const identificacao: ObservacoesTecnicasItem[] = [
+    {
+      label: 'Titular',
+      valor: rd.titular?.trim() || processo.titular?.trim() || null,
+    },
+    {
+      label: 'CNPJ',
+      valor: cnpjExibir ? cnpjExibir : 'Não disponível',
+    },
+    {
+      label: 'Processo SEI',
+      valor: nupSeiExibir ? nupSeiExibir : 'Não disponível',
+    },
+  ]
+
+  return { ciclo_regulatorio, identificacao }
+}
+
 export function relatorioDataFromReportData(
   rd: ReportData,
   processo: Processo,
@@ -414,30 +609,54 @@ export function relatorioDataFromReportData(
     alertas_legislativos: ts,
   }
 
+  const anoDoNumero = (() => {
+    const m = /\/(\d{4})$/.exec(processo.numero)
+    return m ? parseInt(m[1], 10) : null
+  })()
+  const anoProt =
+    processo.ano_protocolo != null && processo.ano_protocolo > 0
+      ? processo.ano_protocolo
+      : anoDoNumero
+
+  const dataUltimoDrawer =
+    isoDatePrefix(processo.ultimo_evento_data) ||
+    isoDatePrefix(processo.ultimo_despacho_data)
+
+  const textoUltimoDrawer =
+    processo.ultimo_evento_descricao?.trim() ||
+    (rd.ultimo_despacho && rd.ultimo_despacho !== 'Não disponível'
+      ? rd.ultimo_despacho
+      : 'Não disponível')
+
+  const tempoAnosDrawer =
+    anoProt != null
+      ? new Date().getFullYear() - anoProt
+      : rd.protocolo_anos
+
   const dados_anm: DadosANM = {
     fase_atual: rd.fase,
     data_protocolo: processo.data_protocolo,
-    ano_protocolo: processo.ano_protocolo,
-    tempo_tramitacao_anos: rd.protocolo_anos,
+    ano_protocolo: anoProt ?? processo.ano_protocolo,
+    tempo_tramitacao_anos: tempoAnosDrawer,
     pendencias: [],
-    ultimo_despacho: rd.ultimo_despacho,
-    data_ultimo_despacho: rd.ultimo_despacho,
-    numero_sei: rd.nup_sei,
+    ultimo_despacho: textoUltimoDrawer,
+    data_ultimo_despacho: dataUltimoDrawer || '',
+    numero_sei:
+      (processo.nup_sei != null ? String(processo.nup_sei).trim() : '') ||
+      rd.nup_sei ||
+      '',
     licenca_ambiental: rd.licenca_ambiental,
   }
 
-  const observacoes_tecnicas: ObservacoesTecnicas = {
-    ciclo_regulatorio: [],
-    identificacao: [],
-  }
+  const observacoes_tecnicas = observacoesTecnicasFromReport(rd, processo)
 
   return {
     processo_id: processo.id,
     dados_anm,
     observacoes_tecnicas,
-    territorial: territorialFromReport(rd),
+    territorial: territorialFromReport(rd, processo),
     intel_mineral: intelFromReport(rd, processo),
-    fiscal: fiscalFromReport(rd, processo),
+    fiscal: fiscalFromReport(rd),
     timestamps,
     metadata: {
       fonte_territorial: 'PostGIS · fn_territorial_analysis',

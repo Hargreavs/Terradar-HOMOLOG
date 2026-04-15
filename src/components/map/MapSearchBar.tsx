@@ -12,16 +12,22 @@ import { REGIME_COLORS, REGIME_LABELS } from '../../lib/regimes'
 import { useMapStore } from '../../store/useMapStore'
 import type { Processo } from '../../types'
 
-const NUMERO_RX = /\d{3}\.\d{3}\/\d{4}/
 const MAX_SUGESTOES = 20
 
 function digitos(s: string): string {
   return s.replace(/\D/g, '')
 }
 
-/** Número ANM completo: NNN.NNN/AAAA */
-function isNumeroANM(input: string): boolean {
-  return /^\d{3}\.\d{3}\/\d{4}$/.test(input.trim())
+/**
+ * Converte entradas como `860232/1990`, `8602321990` ou `860.232/1990`
+ * para o formato canônico ANM `NNN.NNN/AAAA` (usado no banco e na API).
+ */
+function normalizarNumeroANM(input: string): string | null {
+  const t = input.trim()
+  if (/^\d{3}\.\d{3}\/\d{4}$/.test(t)) return t
+  const d = digitos(t)
+  if (d.length !== 10) return null
+  return `${d.slice(0, 3)}.${d.slice(3, 6)}/${d.slice(6)}`
 }
 
 function filtrarSugestoesPorNumero(
@@ -78,7 +84,7 @@ export function MapSearchBar({
   )
 
   const mostrarBuscaRemota =
-    sugestoes.length === 0 && isNumeroANM(local)
+    sugestoes.length === 0 && normalizarNumeroANM(local) !== null
 
   const listaItemsCount = useMemo(() => {
     if (sugestoes.length > 0) return sugestoes.length
@@ -142,9 +148,14 @@ export function MapSearchBar({
 
   const buscarRemoto = useCallback(
     async (numero: string) => {
+      const canon = normalizarNumeroANM(numero)
+      if (!canon) {
+        showFeedback('Use o número completo do processo (6 dígitos + ano)')
+        return
+      }
       setBuscandoRemoto(true)
       try {
-        const resultado = await buscarProcessoPorNumero(numero)
+        const resultado = await buscarProcessoPorNumero(canon)
         if (!resultado) {
           showFeedback('Processo não encontrado no banco')
           return
@@ -182,18 +193,19 @@ export function MapSearchBar({
   )
 
   const tryFlyToNumero = useCallback(() => {
-    const m = local.match(NUMERO_RX)
-    if (!m) return
-    const norm = m[0].replace(/\s/g, '')
+    const norm = normalizarNumeroANM(local)
+    if (!norm) return
     const alvo = processos.find(
-      (p) => p.numero.replace(/\s/g, '') === norm,
+      (p) =>
+        p.numero.replace(/\s/g, '') === norm ||
+        digitos(p.numero) === digitos(norm),
     )
     if (alvo) {
       selecionarProcesso(alvo)
       requestFlyTo(alvo.lat, alvo.lng, 10, alvo.id)
       return
     }
-    if (isNumeroANM(local.trim())) void buscarRemoto(local.trim())
+    void buscarRemoto(local)
   }, [local, processos, requestFlyTo, selecionarProcesso, buscarRemoto])
 
   const escolherProcesso = useCallback(
@@ -238,7 +250,7 @@ export function MapSearchBar({
     if (e.key === 'Enter') {
       e.preventDefault()
       if (mostrarBuscaRemota) {
-        void buscarRemoto(local.trim())
+        void buscarRemoto(local)
         return
       }
       const pick =
@@ -381,7 +393,7 @@ export function MapSearchBar({
                   } ${buscandoRemoto ? 'cursor-wait opacity-80' : ''}`}
                   onMouseDown={(e) => {
                     e.preventDefault()
-                    if (!buscandoRemoto) void buscarRemoto(local.trim())
+                    if (!buscandoRemoto) void buscarRemoto(local)
                   }}
                   onMouseEnter={() => setHighlightIdx(0)}
                 >

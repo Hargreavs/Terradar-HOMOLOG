@@ -38,8 +38,11 @@ import {
   type PerfilOportunidadeOSKey,
 } from '../../lib/oportunidadeRelatorioUi'
 import { getOpportunityLabel } from '../../lib/opportunityScore'
-import type { Fase, Processo, Regime } from '../../types'
+import type { AlertaLegislativo, Fase, Processo, Regime } from '../../types'
 import { ExportReportButton } from '../report/ExportReportButton'
+import { fmtCfemEstimadaBrlMiPerHa } from '../report/reportHtmlUtils'
+import { fraseDeterminadaPeloIndicadorCapag } from '../../lib/capagPiorIndicador'
+import { normalizeCapagNotaDisplay } from '../../lib/fiscalDisplay'
 import { RiskDecomposicaoRelatorioPanel } from './RiskDecomposicaoRelatorioPanel'
 import { OportunidadeDecomposicaoRelatorioPanel } from './OportunidadeDecomposicaoRelatorioPanel'
 import { OportunidadePerfilCalcTooltipContent } from './OportunidadeScoreCalcTooltipContent'
@@ -326,6 +329,16 @@ function formatKmPtBr(km: number, decimals: number): string {
   return `${km.toFixed(decimals).replace('.', ',')} km`
 }
 
+function distanciaSensivelLabel(km: number): { text: string; color: string } {
+  if (km <= 0) return { text: 'SOBREPOSTO', color: '#E24B4A' }
+  return { text: formatKmPtBr(km, 1), color: corDistanciaKm(km) }
+}
+
+function distanciaLogisticaLabel(km: number): { text: string; color: string } {
+  if (km <= 0) return { text: 'ACESSO DIRETO', color: '#1D9E75' }
+  return { text: formatKmPtBr(km, 1), color: corDistanciaLogisticaKm(km) }
+}
+
 const GLOSSARIO_APP =
   'Área de Preservação Permanente (APP): faixa de proteção ao longo de rios, nascentes e topos de morro. Vedada a supressão de vegetação salvo em casos de utilidade pública (Código Florestal, Lei 12.651/2012).'
 
@@ -503,6 +516,8 @@ function BlocoParagrafosMultilinha({
 }
 
 const DOT_AQUIFERO = '#4A8FB8'
+/** Rótulo SOBREPOSTO no card Aquífero — âmbar/dourado padrão TERRADAR (`#EF9F27`). */
+const COR_SOBREPOSTO_AQUIFERO = '#EF9F27'
 
 function corTramitacaoAnos(anos: number): string {
   if (anos <= 5) return '#1D9E75'
@@ -1293,7 +1308,24 @@ export function RelatorioCompleto({
 
   const alertasOrdenados = useMemo(() => {
     if (!processo) return []
-    return [...processo.alertas].sort(
+    const extras: AlertaLegislativo[] = []
+    if (processo.exigencia_pendente === true) {
+      extras.push({
+        id: 'terr-exigencia-pendente-scm',
+        fonte: 'ANM',
+        fonte_diario: 'Microdados SCM',
+        data:
+          processo.ultimo_evento_data?.trim() ||
+          new Date().toISOString().slice(0, 10),
+        titulo: 'Exigência pendente',
+        resumo:
+          'Existe exigência publicada sem cumprimento registrado nos Microdados SCM.',
+        nivel_impacto: 2,
+        tipo_impacto: 'restritivo',
+        urgencia: 'imediata',
+      })
+    }
+    return [...extras, ...processo.alertas].sort(
       (a, b) => a.nivel_impacto - b.nivel_impacto,
     )
   }, [processo])
@@ -1453,30 +1485,28 @@ export function RelatorioCompleto({
   const anosCfemMunicipal = cfemHistFiscal.length
   const cfemMunicipalMediaAnualBrl =
     anosCfemMunicipal > 0 ? cfemMunicipalTotalBrl / anosCfemMunicipal : 0
-  const cfemEstimadaAnualBrl =
-    fiscal.estimativa_cfem_anual_operacao_mi * 1_000_000
-  const cfemRepresentatividadePct =
-    cfemMunicipalMediaAnualBrl > 0
-      ? Math.round((cfemEstimadaAnualBrl / cfemMunicipalMediaAnualBrl) * 100)
+  const cfemMultiplicadorHa =
+    cfemMunicipalMediaAnualBrl > 0 && fiscal.cfem_estimada_ha > 0
+      ? fiscal.cfem_estimada_ha / cfemMunicipalMediaAnualBrl
       : null
   const cfemPctPib =
-    fiscal.pib_municipal_mi > 0 &&
-    fiscal.estimativa_cfem_anual_operacao_mi > 0
-      ? (fiscal.estimativa_cfem_anual_operacao_mi / fiscal.pib_municipal_mi) *
-        100
+    fiscal.pib_municipal_mi > 0 && fiscal.cfem_estimada_ha > 0
+      ? (fiscal.cfem_estimada_ha / (fiscal.pib_municipal_mi * 1_000_000)) * 100
       : null
   const mostrarCfemLinha1 = cfemHistFiscal.length > 0
   const mostrarCfemLinha2 =
     cfemHistFiscal.length > 0 &&
     cfemMunicipalMediaAnualBrl > 0 &&
-    cfemRepresentatividadePct != null
+    cfemMultiplicadorHa != null &&
+    Number.isFinite(cfemMultiplicadorHa) &&
+    fiscal.cfem_estimada_ha > 0
   const mostrarCfemLinha3 =
     cfemPctPib != null &&
     Number.isFinite(cfemPctPib) &&
     fiscal.pib_municipal_mi > 0
   const mostrarContextoCfemComparativo =
-    fiscal.estimativa_cfem_anual_operacao_mi > 0 &&
-    (mostrarCfemLinha1 || mostrarCfemLinha3)
+    fiscal.cfem_estimada_ha > 0 &&
+    (mostrarCfemLinha1 || mostrarCfemLinha2 || mostrarCfemLinha3)
 
   const fontePrecoTendenciaCard =
     metadata?.fonte_demanda ??
@@ -2129,6 +2159,8 @@ export function RelatorioCompleto({
                   const corTextoEsquerda = ausenciaTiPositiva
                     ? DOT_AUSENCIA_POSITIVA
                     : '#D3D1C7'
+                  const distSens =
+                    row.km !== null ? distanciaSensivelLabel(row.km) : null
                   return (
                     <Fragment key={i}>
                       {i > 0 ? (
@@ -2200,16 +2232,16 @@ export function RelatorioCompleto({
                           </span>
                         )}
                       </div>
-                      {row.km !== null ? (
+                      {distSens ? (
                         <span
                           style={{
                             fontSize: FS.md,
                             fontWeight: 500,
-                            color: corDistanciaKm(row.km),
+                            color: distSens.color,
                             flexShrink: 0,
                           }}
                         >
-                          {formatKmPtBr(row.km, 1)}
+                          {distSens.text}
                         </span>
                       ) : null}
                     </div>
@@ -2294,6 +2326,10 @@ export function RelatorioCompleto({
                 </div>
                 <div aria-hidden style={separadorInsetTerritorio} />
                 {useQuilombolaDistancia ? (
+                  (() => {
+                    const qkm = territorial.distancia_quilombola_km as number
+                    const dq = distanciaSensivelLabel(qkm)
+                    return (
                   <div
                     style={{
                       display: 'flex',
@@ -2352,20 +2388,17 @@ export function RelatorioCompleto({
                       style={{
                         fontSize: FS.md,
                         fontWeight: 500,
-                        color: corDistanciaKm(
-                          territorial.distancia_quilombola_km as number,
-                        ),
+                        color: dq.color,
                         flexShrink: 0,
                         marginLeft: 'auto',
                         textAlign: 'right',
                       }}
                     >
-                      {formatKmPtBr(
-                        territorial.distancia_quilombola_km as number,
-                        1,
-                      )}
+                      {dq.text}
                     </span>
                   </div>
+                    )
+                  })()
                 ) : (
                   <div
                     style={{
@@ -2509,6 +2542,8 @@ export function RelatorioCompleto({
                   const corCirculo = row.temInfra
                     ? row.dot
                     : DOT_AUSENCIA_INFRA
+                  const distLog =
+                    row.km !== null ? distanciaLogisticaLabel(row.km) : null
                   return (
                     <Fragment key={row.key}>
                       {i > 0 ? (
@@ -2554,18 +2589,18 @@ export function RelatorioCompleto({
                             {row.textoEsquerda}
                           </span>
                         </div>
-                        {row.km !== null ? (
+                        {distLog ? (
                           <span
                             style={{
                               fontSize: FS.md,
                               fontWeight: 500,
-                              color: corDistanciaLogisticaKm(row.km),
+                              color: distLog.color,
                               flexShrink: 0,
                               marginLeft: 'auto',
                               textAlign: 'right',
                             }}
                           >
-                            {formatKmPtBr(row.km, 1)}
+                            {distLog.text}
                           </span>
                         ) : null}
                       </div>
@@ -2695,16 +2730,42 @@ export function RelatorioCompleto({
                         ) : null}
                       </div>
                     </div>
-                    {(territorial.sobreposicao_aquifero === true ||
-                      (territorial.sobreposicao_aquifero === undefined &&
-                        territorial.distancia_aquifero_km === 0)) ? (
+                    {territorial.distancia_aquifero_km != null &&
+                    !Number.isNaN(territorial.distancia_aquifero_km) ? (
+                      territorial.distancia_aquifero_km > 0 ? (
+                        <span
+                          style={{
+                            flexShrink: 0,
+                            fontSize: FS.md,
+                            fontWeight: 500,
+                            color: corDistanciaKm(territorial.distancia_aquifero_km),
+                            marginTop: 2,
+                          }}
+                        >
+                          {formatKmPtBr(territorial.distancia_aquifero_km, 1)}
+                        </span>
+                      ) : (
+                        <span
+                          style={{
+                            flexShrink: 0,
+                            fontSize: FS.sm,
+                            fontWeight: 700,
+                            letterSpacing: '0.06em',
+                            color: COR_SOBREPOSTO_AQUIFERO,
+                            marginTop: 2,
+                          }}
+                        >
+                          SOBREPOSTO
+                        </span>
+                      )
+                    ) : territorial.sobreposicao_aquifero === true ? (
                       <span
                         style={{
                           flexShrink: 0,
                           fontSize: FS.sm,
                           fontWeight: 700,
                           letterSpacing: '0.06em',
-                          color: '#E8A830',
+                          color: COR_SOBREPOSTO_AQUIFERO,
                           marginTop: 2,
                         }}
                       >
@@ -3154,24 +3215,37 @@ export function RelatorioCompleto({
             <Card>
               <SecLabel branco>Aplicações</SecLabel>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {intel_mineral.aplicacoes_principais.map((a) => (
-                  <span
-                    key={a}
+                {intel_mineral.aplicacoes_principais.length > 0 ? (
+                  intel_mineral.aplicacoes_principais.map((a) => (
+                    <span
+                      key={a}
+                      style={{
+                        borderRadius: 4,
+                        padding: '4px 8px',
+                        fontSize: FS.sm,
+                        backgroundColor: 'rgba(239, 159, 39, 0.15)',
+                        color: '#EF9F27',
+                      }}
+                    >
+                      {a}
+                    </span>
+                  ))
+                ) : (
+                  <p
                     style={{
-                      borderRadius: 4,
-                      padding: '4px 8px',
-                      fontSize: FS.sm,
-                      backgroundColor: 'rgba(239, 159, 39, 0.15)',
-                      color: '#EF9F27',
+                      fontSize: FS.lg,
+                      color: '#888780',
+                      margin: 0,
+                      lineHeight: 1.5,
                     }}
                   >
-                    {a}
-                  </span>
-                ))}
+                    Sem aplicações na master de substâncias para este cadastro.
+                  </p>
+                )}
               </div>
               <FonteLabel
                 dataIso={timestamps.usgs}
-                fonte="USGS Mineral Commodity Summaries"
+                fonte="Master substâncias TERRADAR / USGS MCS"
                 marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
               />
             </Card>
@@ -3469,10 +3543,12 @@ export function RelatorioCompleto({
                           >
                             {v.distancia_km == null
                               ? 'N/D'
-                              : `${v.distancia_km.toLocaleString('pt-BR', {
-                                  minimumFractionDigits: 1,
-                                  maximumFractionDigits: 1,
-                                })} km`}
+                              : v.distancia_km <= 0
+                                ? 'SOBREPOSTO'
+                                : `${v.distancia_km.toLocaleString('pt-BR', {
+                                    minimumFractionDigits: 1,
+                                    maximumFractionDigits: 1,
+                                  })} km`}
                           </td>
                         </tr>
                       ))}
@@ -4193,6 +4269,41 @@ export function RelatorioCompleto({
                   }}
                 />
               )}
+              {fiscal.capag_estruturado &&
+              normalizeCapagNotaDisplay(fiscal.capag) === 'n.d.' &&
+              fiscal.capag_pior_indicador_letra != null &&
+              ['A', 'B', 'C', 'D'].includes(
+                fiscal.capag_pior_indicador_letra.toUpperCase(),
+              ) &&
+              fiscal.capag_pior_indicador_nome != null &&
+              fiscal.capag_pior_indicador_nome !== 'indicadores' ? (
+                <p
+                  style={{
+                    fontSize: FS.lg,
+                    color: 'var(--amber, #EF9F27)',
+                    textAlign: 'center',
+                    margin: '0 0 8px 0',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {`Indicadores sugerem classificação equivalente a ${fiscal.capag_pior_indicador_letra} (determinada ${fraseDeterminadaPeloIndicadorCapag(
+                    fiscal.capag_pior_indicador_nome,
+                  )})`}
+                </p>
+              ) : null}
+              {fiscal.contexto_referencia_fiscal ? (
+                <p
+                  style={{
+                    fontSize: FS.sm,
+                    color: '#888780',
+                    textAlign: 'center',
+                    margin: '0 0 8px 0',
+                    lineHeight: 1.45,
+                  }}
+                >
+                  {fiscal.contexto_referencia_fiscal}
+                </p>
+              ) : null}
               <p
                 style={{
                   fontSize: FS.lg,
@@ -4216,7 +4327,7 @@ export function RelatorioCompleto({
               <div
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+                  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
                   gap: 12,
                 }}
               >
@@ -4224,22 +4335,14 @@ export function RelatorioCompleto({
                   {
                     l: 'Receita própria',
                     v: fiscal.receita_propria_mi,
-                    fmt: 'brl_mi' as const,
                   },
                   {
                     l: 'Dívida consolidada',
                     v: fiscal.divida_consolidada_mi,
-                    fmt: 'brl_mi' as const,
                   },
                   {
                     l: 'PIB municipal',
                     v: fiscal.pib_municipal_mi,
-                    fmt: 'brl_mi' as const,
-                  },
-                  {
-                    l: 'IDH',
-                    v: 0,
-                    fmt: 'idh' as const,
                   },
                 ].map((m) => (
                   <div
@@ -4271,9 +4374,7 @@ export function RelatorioCompleto({
                         lineHeight: 1.2,
                       }}
                     >
-                      {m.fmt === 'idh'
-                        ? fiscal.idh_municipal ?? 'Não disponível'
-                        : formatarRealBrlInteligente(m.v * 1_000_000)}
+                      {formatarRealBrlInteligente(m.v * 1_000_000)}
                     </p>
                   </div>
                 ))}
@@ -4315,18 +4416,6 @@ export function RelatorioCompleto({
                 fonte="STN / SICONFI (DCA)"
                 marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
               />
-              {fiscal.contexto_referencia_fiscal ? (
-                <p
-                  style={{
-                    fontSize: FS.sm,
-                    color: '#888780',
-                    marginTop: 10,
-                    lineHeight: 1.45,
-                  }}
-                >
-                  {fiscal.contexto_referencia_fiscal}
-                </p>
-              ) : null}
             </Card>
 
             {(fiscal.cfem_processo?.length ?? 0) > 0 ||
@@ -4672,7 +4761,7 @@ export function RelatorioCompleto({
 
             <Card>
               <SecLabel branco>Estimativa CFEM em operação</SecLabel>
-              {fiscal.estimativa_cfem_anual_operacao_mi === 0 ? (
+              {fiscal.cfem_estimada_ha === 0 ? (
                 <p
                   style={{
                     fontSize: FS.lg,
@@ -4704,10 +4793,7 @@ export function RelatorioCompleto({
                       margin: '0 0 8px 0',
                     }}
                   >
-                    {formatarRealBrlInteligente(
-                      fiscal.estimativa_cfem_anual_operacao_mi * 1_000_000,
-                    )}{' '}
-                    / ano
+                    R$ {fmtCfemEstimadaBrlMiPerHa(fiscal.cfem_estimada_ha)} / ha
                   </p>
                   {processo.regime === 'bloqueio_provisorio' ? (
                     <p
@@ -4729,7 +4815,7 @@ export function RelatorioCompleto({
                       lineHeight: 1.5,
                     }}
                   >
-                    Estimativa de CFEM anual em fase de operação
+                    Valor teórico de CFEM por hectare (valor in-situ × alíquota)
                   </p>
                   <p
                     style={{
@@ -4790,7 +4876,9 @@ export function RelatorioCompleto({
                           substâncias)
                         </p>
                       ) : null}
-                      {mostrarCfemLinha2 ? (
+                      {mostrarCfemLinha2 &&
+                      cfemMultiplicadorHa != null &&
+                      Number.isFinite(cfemMultiplicadorHa) ? (
                         <p
                           style={{
                             fontSize: FS.sm,
@@ -4800,48 +4888,22 @@ export function RelatorioCompleto({
                           }}
                         >
                           <span style={{ color: '#5F5E5A' }}>• </span>
-                          Este processo sozinho geraria{' '}
-                          {cfemRepresentatividadePct <= 100 ? (
-                            <>
-                              <span
-                                style={{ color: '#EF9F27', fontWeight: 500 }}
-                              >
-                                ~{cfemRepresentatividadePct}%
-                              </span>{' '}
-                              da CFEM histórica total do município por ano
-                            </>
-                          ) : cfemRepresentatividadePct <= 500 ? (
-                            <>
-                              <span
-                                style={{ color: '#EF9F27', fontWeight: 500 }}
-                              >
-                                ~
-                                {(cfemRepresentatividadePct / 100).toLocaleString(
+                          1 hectare deste processo geraria{' '}
+                          <span
+                            style={{ color: '#EF9F27', fontWeight: 500 }}
+                          >
+                            ~
+                            {cfemMultiplicadorHa >= 1000
+                              ? Math.round(cfemMultiplicadorHa).toLocaleString(
                                   'pt-BR',
-                                  {
-                                    minimumFractionDigits: 1,
-                                    maximumFractionDigits: 1,
-                                  },
-                                )}
-                                x
-                              </span>{' '}
-                              a média anual de CFEM do município
-                            </>
-                          ) : (
-                            <>
-                              <span
-                                style={{ color: '#EF9F27', fontWeight: 500 }}
-                              >
-                                ~
-                                {Math.round(
-                                  cfemEstimadaAnualBrl /
-                                    cfemMunicipalMediaAnualBrl,
-                                ).toLocaleString('pt-BR')}
-                                x
-                              </span>{' '}
-                              a média anual de CFEM do município
-                            </>
-                          )}
+                                )
+                              : cfemMultiplicadorHa.toLocaleString('pt-BR', {
+                                  minimumFractionDigits: 1,
+                                  maximumFractionDigits: 1,
+                                })}
+                            x
+                          </span>{' '}
+                          a média anual de CFEM do município
                         </p>
                       ) : null}
                       {mostrarCfemLinha3 && cfemPctPib != null ? (
@@ -4865,7 +4927,7 @@ export function RelatorioCompleto({
                             })}
                             %
                           </span>{' '}
-                          do PIB municipal (
+                          do PIB municipal por hectare minerado (
                           <span
                             style={{ color: '#EF9F27', fontWeight: 500 }}
                           >

@@ -1,7 +1,8 @@
 /**
- * ingest-fiscal.ts
+ * ingest-fiscal.ts (TERRADAR)
  *
  * SICONFI (STN DataLake) + IBGE → tabela `fiscal_municipios`.
+ * Regra: nunca sobrescrever valor existente no banco com NULL (merge antes do upsert).
  *
  * Uso:
  *   npx tsx server/scripts/ingest-fiscal.ts --ibge 1711506
@@ -24,6 +25,21 @@ interface SiconfiItem {
   conta?: string
   cod_conta?: string
   valor?: number
+}
+
+/** Não sobrescrever colunas com NULL/undefined (nem string vazia). */
+function mergePreserveNonNull<T extends Record<string, unknown>>(
+  existing: T | null,
+  incoming: T,
+): T {
+  if (!existing) return incoming
+  const out = { ...existing } as Record<string, unknown>
+  for (const [k, v] of Object.entries(incoming)) {
+    if (v === null || v === undefined) continue
+    if (typeof v === 'string' && v.trim() === '') continue
+    out[k] = v
+  }
+  return out as T
 }
 
 async function fetchDCA(
@@ -82,6 +98,69 @@ function extrairContaBalanco(items: SiconfiItem[], contaPrefixo: string): number
   return match?.valor ?? 0
 }
 
+/** Valor de linha DCA com coluna de data (saldo em referência). */
+function extrairValorContaDataRealizada(
+  items: SiconfiItem[],
+  matchConta: (conta: string) => boolean,
+): number | null {
+  const match = items.find((item) => {
+    const conta = item.conta?.trim() ?? ''
+    const coluna = item.coluna?.trim() ?? ''
+    if (!matchConta(conta)) return false
+    return /^\d{2}\/\d{2}\/\d{4}$/.test(coluna)
+  })
+  const v = match?.valor
+  return v != null && Number.isFinite(v) ? v : null
+}
+
+const DIVIDA_CONSOLIDADA_RE =
+  /d[ií]vida\s+consolidada|d\s*c\s*\(\s*i\s*\)|\bdc\b.*consolidad/i
+
+/**
+ * Dívida consolidada (DC) - procura conta explícita nos itens já carregados.
+ */
+function extrairDividaConsolidadaDeItens(
+  items: SiconfiItem[],
+  rotulo: string,
+): number | null {
+  const v = extrairValorContaDataRealizada(items, (conta) => {
+    const cl = conta.toLowerCase()
+    if (/amortiza|d[ií]vida\s+ativa\s+tribut/i.test(cl)) return false
+    return DIVIDA_CONSOLIDADA_RE.test(conta)
+  })
+  if (v != null && Number.isFinite(v)) {
+    console.log(`  [divida consolidada] ${rotulo} → R$ ${v.toFixed(2)}`)
+    return v
+  }
+  return null
+}
+
+/** Só outros anexos se I-AB não tiver linha DC (evita re-download do I-AB). */
+async function buscarDividaConsolidadaAnexosExtras(
+  ibge: string,
+  exercicioBase: number,
+): Promise<number | null> {
+  const anexos = ['DCA-Anexo I-D', 'DCA-Anexo I-F']
+  const anos = [exercicioBase, exercicioBase - 1].filter((y) => y >= 2020)
+
+  for (const anexo of anexos) {
+    for (const ano of anos) {
+      const { items, exercicio } = await fetchDCA(ibge, anexo, [ano])
+      if (exercicio === 0 || items.length === 0) continue
+      const v = extrairDividaConsolidadaDeItens(
+        items,
+        `${anexo} ex.${exercicio}`,
+      )
+      if (v != null) return v
+    }
+  }
+
+  console.log(
+    `  [divida consolidada] sem linha DC nos anexos DCA (fonte indisponível)`,
+  )
+  return null
+}
+
 const IBGE_BASE = 'https://servicodados.ibge.gov.br/api/v3'
 
 async function fetchPIB(ibge: string): Promise<number | null> {
@@ -113,18 +192,111 @@ async function fetchPIB(ibge: string): Promise<number | null> {
   }
 }
 
-/** IDHM 2010 (variável SIDRA 12762, agregado 6449), quando a API responde. */
-async function fetchIDHM2010(ibge: string): Promise<number | null> {
+/** Slug da URL ibge.gov.br/cidades-e-estados/{uf}/{slug}.html */
+function slugIbgeCidades(nomeMunicipio: string): string {
+  return nomeMunicipio
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/d['']/gi, 'd')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
+/**
+ * IDHM 2010 - página «Cidades e Estados» (PNUD), quando APIs agregados falham.
+ */
+async function fetchIDHMFromIbgeCidadesHtml(
+  uf: string,
+  nomeMunicipio: string,
+): Promise<number | null> {
+  const slug = slugIbgeCidades(nomeMunicipio)
+  if (!slug || !uf) return null
+  const url = `https://www.ibge.gov.br/cidades-e-estados/${uf.toLowerCase()}/${slug}.html`
+  console.log(`  [IBGE] IDHM (HTML Cidades) ${url}...`)
   try {
-    const url = `https://servicodados.ibge.gov.br/api/v3/agregados/6449/periodos/2010/variaveis/12762?localidades=N6[${ibge}]`
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'TERRADAR-ingest-fiscal/1.0' },
+    })
+    if (!res.ok) {
+      console.log(`    HTTP ${res.status}`)
+      return null
+    }
+    const html = await res.text()
+    const idx = html.search(/IDHM|índice de desenvolvimento humano municipal/i)
+    const slice = idx >= 0 ? html.slice(idx, idx + 2500) : html
+    // IBGE usa `<p class='ind-value'>0,662<small>&nbsp;[2010]</small>` (tags entre número e [2010])
+    const m = slice.match(
+      /(\d{1,2},\d{2,4})(?:\s|<[^>]+>|&nbsp;)*\[\s*2010\s*\]/i,
+    )
+    if (!m?.[1]) {
+      console.log(`    WARN: IDHM [2010] não encontrado no HTML`)
+      return null
+    }
+    const br = m[1].replace(/\./g, '').replace(',', '.')
+    const n = parseFloat(br)
+    if (!Number.isFinite(n)) return null
+    console.log(`    OK IDHM 2010: ${n}`)
+    return n
+  } catch (e) {
+    console.log(`    WARN IDHM HTML: ${e}`)
+    return null
+  }
+}
+
+/**
+ * IDHM - endpoint documentado `pesquisas/37/resultados/{ibge}` (hoje costuma retornar `[]`).
+ * Mantido como primeira tentativa rápida caso o IBGE volte a popular.
+ */
+async function fetchIDHMFromPesquisa37V1(ibge: string): Promise<number | null> {
+  try {
+    const url = `https://servicodados.ibge.gov.br/api/v1/pesquisas/37/resultados/${ibge}`
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(12_000),
+      headers: { 'User-Agent': 'TERRADAR-ingest-fiscal/1.0' },
+    })
+    if (!res.ok) return null
+    const data = (await res.json()) as unknown
+    if (!Array.isArray(data) || data.length === 0) return null
+    const first = data[0] as Record<string, unknown>
+    const raw =
+      first.res ?? first.resultado ?? first.valor ?? first.idhm ?? first.idh
+    const n =
+      typeof raw === 'number'
+        ? raw
+        : raw != null
+          ? parseFloat(String(raw).replace(',', '.'))
+          : NaN
+    if (!Number.isFinite(n)) return null
+    console.log(`  [IBGE] IDHM (pesquisas/37/resultados): ${n}`)
+    return n
+  } catch {
+    return null
+  }
+}
+
+/** IDHM 2010 - SIDRA agregado 6449 (quando a API responder). */
+async function fetchIDHM2010Agregados(ibge: string): Promise<number | null> {
+  try {
+    const loc = encodeURIComponent(`N6[${ibge}]`)
+    const url = `https://servicodados.ibge.gov.br/api/v3/agregados/6449/periodos/2010/variaveis/12762?localidades=${loc}`
     const res = await fetch(url)
     if (!res.ok) return null
-    const data = (await res.json()) as Array<{
+    const data = (await res.json()) as unknown
+    if (
+      typeof data === 'object' &&
+      data !== null &&
+      'statusCode' in data &&
+      (data as { statusCode?: number }).statusCode === 500
+    ) {
+      return null
+    }
+    const arr = data as Array<{
       resultados?: Array<{
         series?: Array<{ serie?: Record<string, string> }>
       }>
     }>
-    const serie = data[0]?.resultados?.[0]?.series?.[0]?.serie
+    const serie = arr[0]?.resultados?.[0]?.series?.[0]?.serie
     if (!serie || typeof serie !== 'object') return null
     const vals = Object.values(serie)
     const last = vals[vals.length - 1]
@@ -133,6 +305,24 @@ async function fetchIDHM2010(ibge: string): Promise<number | null> {
   } catch {
     return null
   }
+}
+
+async function fetchIDHM2010(
+  ibge: string,
+  uf: string,
+  nomeMunicipio: string,
+): Promise<number | null> {
+  const v1 = await fetchIDHMFromPesquisa37V1(ibge)
+  if (v1 != null) return v1
+  const api = await fetchIDHM2010Agregados(ibge)
+  if (api != null) {
+    console.log(`  [IBGE] IDHM agregados 6449: ${api}`)
+    return api
+  }
+  console.log(
+    `  [IBGE] WARN: agregados 6449 indisponível ou erro; tentando HTML Cidades`,
+  )
+  return fetchIDHMFromIbgeCidadesHtml(uf, nomeMunicipio)
 }
 
 async function fetchArea(ibge: string): Promise<number | null> {
@@ -171,7 +361,6 @@ interface FiscalRow {
   receita_tributaria: number | null
   transferencias_correntes: number | null
   passivo_nao_circulante: number | null
-  /** Dívida consolidada (RGF conta DC); preferir quando distinto do passivo DCA. */
   divida_consolidada: number | null
   dep_transferencias_pct: number | null
   autonomia_ratio: number | null
@@ -179,6 +368,53 @@ interface FiscalRow {
   area_km2: number | null
   densidade: number | null
   idh: number | null
+}
+
+async function fetchExistingFiscal(
+  ibge: string,
+  exercicio: number,
+): Promise<Record<string, unknown> | null> {
+  const { data, error } = await supabase
+    .from('fiscal_municipios')
+    .select('*')
+    .eq('municipio_ibge', ibge)
+    .eq('exercicio', exercicio)
+    .maybeSingle()
+  if (error) return null
+  return data ?? null
+}
+
+/** Exercício imediatamente anterior (para herdar idh/divida quando o ano novo ainda não tem). */
+async function fetchPreviousFiscalYear(
+  ibge: string,
+  exercicioAtual: number,
+): Promise<Record<string, unknown> | null> {
+  const { data, error } = await supabase
+    .from('fiscal_municipios')
+    .select('*')
+    .eq('municipio_ibge', ibge)
+    .lt('exercicio', exercicioAtual)
+    .order('exercicio', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) return null
+  return data ?? null
+}
+
+function carryIdhDividaFromPrevious(
+  merged: Record<string, unknown>,
+  latestAny: Record<string, unknown> | null,
+): Record<string, unknown> {
+  if (!latestAny) return merged
+  const out = { ...merged }
+  const keys = ['idh', 'divida_consolidada'] as const
+  for (const k of keys) {
+    const cur = out[k]
+    if (cur != null && cur !== '') continue
+    const prev = latestAny[k]
+    if (prev != null && prev !== '') out[k] = prev
+  }
+  return out
 }
 
 async function processarMunicipio(ibge: string): Promise<FiscalRow | null> {
@@ -215,8 +451,6 @@ async function processarMunicipio(ibge: string): Promise<FiscalRow | null> {
   const receitaCorrente = extrairContaReceita(receitaItems, '1.0.0.0.00.0.0')
   const receitaTributaria = extrairContaReceita(receitaItems, '1.1.0.0.00.0.0')
   const transferencias = extrairContaReceita(receitaItems, '1.7.0.0.00.0.0')
-  // Conta 2.2.2 = Empréstimos e Financiamentos (dívida financeira real)
-  // NÃO usar 2.2.0 (Passivo NC total) — inclui obrigações trabalhistas e fornecedores
   const passivoNC = extrairContaBalanco(balancoItems, '2.2.2.0.0.00.00')
 
   const populacao = receitaItems[0]?.populacao ?? null
@@ -238,11 +472,19 @@ async function processarMunicipio(ibge: string): Promise<FiscalRow | null> {
 
   const pib = await fetchPIB(ibge)
   const area = await fetchArea(ibge)
-  const idhm = await fetchIDHM2010(ibge)
+  const idhm = await fetchIDHM2010(ibge, uf, municipioNome)
   const densidade =
     populacao != null && area != null && area > 0
       ? populacao / area
       : null
+
+  let dividaValor = extrairDividaConsolidadaDeItens(
+    balancoItems,
+    `DCA-Anexo I-AB ex.${exBal || exercicio}`,
+  )
+  if (dividaValor == null) {
+    dividaValor = await buscarDividaConsolidadaAnexosExtras(ibge, exercicio)
+  }
 
   console.log(
     `  resumo ${municipioNome}/${uf} (receitas ex.${exercicio}, balanco ex.${exBal || 'n/a'}):`,
@@ -263,7 +505,7 @@ async function processarMunicipio(ibge: string): Promise<FiscalRow | null> {
     transferencias_correntes: transferencias || null,
     passivo_nao_circulante:
       passivoNC != null && Number.isFinite(passivoNC) ? passivoNC : null,
-    divida_consolidada: null,
+    divida_consolidada: dividaValor,
     dep_transferencias_pct:
       depTransf != null ? Math.round(depTransf * 10) / 10 : null,
     autonomia_ratio:
@@ -276,6 +518,33 @@ async function processarMunicipio(ibge: string): Promise<FiscalRow | null> {
     area_km2: area,
     densidade: densidade != null ? Math.round(densidade * 100) / 100 : null,
     idh: idhm,
+  }
+}
+
+const AUDIT_FISCAL_KEYS: Array<{
+  key: keyof FiscalRow
+  label: string
+  nullReason: 'fonte' | 'erro'
+}> = [
+  { key: 'receita_corrente', label: 'receita_corrente', nullReason: 'fonte' },
+  { key: 'idh', label: 'idh', nullReason: 'fonte' },
+  { key: 'divida_consolidada', label: 'divida_consolidada', nullReason: 'fonte' },
+  { key: 'pib_municipal_mi', label: 'pib_municipal_mi', nullReason: 'erro' },
+]
+
+function auditFiscalRow(ibge: string, row: Record<string, unknown>): void {
+  console.log(`\n[AUDIT] fiscal_municipios ${ibge}:`)
+  for (const { key, label, nullReason } of AUDIT_FISCAL_KEYS) {
+    const v = row[key as string]
+    if (v != null && v !== '') {
+      console.log(`  ✅ ${label} = ${typeof v === 'number' ? String(v) : v}`)
+    } else {
+      const tag =
+        nullReason === 'fonte'
+          ? '(fonte indisponível ou sem linha nos anexos)'
+          : '(verificar chamada IBGE/SICONFI)'
+      console.log(`  ⚠️ ${label} = NULL ${tag}`)
+    }
   }
 }
 
@@ -317,7 +586,7 @@ async function main() {
     process.exit(1)
   }
 
-  console.log(`\nIngestao fiscal: ${ibgeCodes.length} municipio(s)\n`)
+  console.log(`\nIngestao fiscal (TERRADAR): ${ibgeCodes.length} municipio(s)\n`)
 
   let ok = 0
   let skip = 0
@@ -330,16 +599,33 @@ async function main() {
         continue
       }
 
-      const { error } = await supabase.from('fiscal_municipios').upsert(
-        { ...fiscal, updated_at: new Date().toISOString() },
-        { onConflict: 'municipio_ibge,exercicio' },
+      const existing = await fetchExistingFiscal(ibge, fiscal.exercicio)
+      const anterior = await fetchPreviousFiscalYear(ibge, fiscal.exercicio)
+      let merged = mergePreserveNonNull(
+        existing as Record<string, unknown> | null,
+        { ...fiscal, updated_at: new Date().toISOString() } as unknown as Record<
+          string,
+          unknown
+        >,
       )
+      merged = carryIdhDividaFromPrevious(merged, anterior)
+
+      const { error } = await supabase.from('fiscal_municipios').upsert(merged, {
+        onConflict: 'municipio_ibge,exercicio',
+      })
 
       if (error) {
         console.error(`  erro Supabase ${ibge}: ${error.message}`)
         skip++
       } else {
         console.log(`  OK upsert ${fiscal.municipio_nome}/${fiscal.uf}`)
+        const { data: saved } = await supabase
+          .from('fiscal_municipios')
+          .select('*')
+          .eq('municipio_ibge', ibge)
+          .eq('exercicio', fiscal.exercicio)
+          .maybeSingle()
+        if (saved) auditFiscalRow(ibge, saved as Record<string, unknown>)
         ok++
       }
 

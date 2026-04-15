@@ -80,6 +80,23 @@ export interface Processo {
   titular: string
   /** Opcional, ex.: CNPJ verificado (processo real SIGMINE). */
   cnpj_titular?: string
+  /** CNPJ da filial operacional (fase 2 / BrasilAPI), quando existir. */
+  cnpj_filial?: string
+  /** NUP SEI (Microdados SCM / cadastro). */
+  nup_sei?: string
+  /** Resumo de eventos SCM (ingestão 12.13). */
+  ultimo_evento_data?: string
+  ultimo_evento_descricao?: string
+  ultimo_evento_codigo?: number
+  portaria_lavra_data?: string
+  portaria_lavra_dou?: string
+  licenca_ambiental_data?: string
+  inicio_lavra_data?: string
+  plano_fechamento_data?: string
+  tah_ultimo_pagamento?: string
+  ral_ultimo_data?: string
+  exigencia_pendente?: boolean
+  total_eventos?: number
   area_ha: number
   uf: string
   municipio: string

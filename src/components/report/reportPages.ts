@@ -364,6 +364,11 @@ export function buildPage5_Fiscal(
         <div class="sbig gold">${sanitizeReportText(data.capag_nota)}</div>
         <div style="font-size:8.5pt;color:var(--text-muted);margin-top:2px;">CAPAG (referência STN)</div>
         <div style="font-size:7.5pt;color:var(--text-muted);margin-top:4px;">${sanitizeReportText(data.fiscal_contexto_referencia)}</div>
+        ${
+          String(llm.capag_classificacao_equiv ?? '').trim() !== ''
+            ? `<div style="font-size:8.5pt;color:var(--amber);margin-top:8px;font-weight:600;">${sanitizeReportText(String(llm.capag_classificacao_equiv).replace(/\s+/g, ' ').trim())}</div>`
+            : ''
+        }
       </div>
       <table class="dsm">
         <thead><tr><th>Indicador</th><th>Valor</th><th>Nota</th></tr></thead>

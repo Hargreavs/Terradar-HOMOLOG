@@ -246,10 +246,15 @@ export interface DadosFiscaisRicos {
   incentivos_estaduais: string[]
   linhas_bndes: string[]
   aliquota_cfem_pct: number
-  estimativa_cfem_anual_operacao_mi: number
+  /** CFEM teórica por hectare (BRL absoluto; ex.: 44_200_000 ≈ R$ 44,2 Mi/ha). */
+  cfem_estimada_ha: number
   observacao: string
   /** Linha opcional: ano-base CAPAG / exercício SICONFI (TERRADAR 12.05). */
   contexto_referencia_fiscal?: string
+  /** Pior nota entre indicadores (A-D), para classificação equivalente quando nota global é n.d. */
+  capag_pior_indicador_letra?: string
+  /** Nome do indicador limitante (ex.: poupança corrente). */
+  capag_pior_indicador_nome?: string
 }
 
 export interface Timestamps {
@@ -1525,11 +1530,11 @@ const SEEDS: Seed[] = [
     regime: 'autorizacao_pesquisa',
     fase: 'pesquisa',
     substancia: 'MINÉRIO DE OURO',
-    titular: 'M P LANCA MINERADORA',
+    titular: 'M P Lanca Mineradora',
     area_ha: 1600,
     uf: 'TO',
     municipio: 'Jaú do Tocantins',
-    data_protocolo: '2017',
+    data_protocolo: '2017-12-01',
     ano_protocolo: 2017,
     situacao: 'ativo',
     risk_score: 25,
@@ -1578,16 +1583,6 @@ function fiscalRicoPara(
   const seed = s.id.split('').reduce((a, c) => a + c.charCodeAt(0), 0)
   const pibMi = pibMunicipioMi(s.municipio)
   const depPct = dependenciaTransferenciasPct(s.uf, seed)
-  const estimativaCfem =
-    Math.round(
-      valorEstimadoUsdMi *
-        0.051 *
-        (aliquota / 100) *
-        PRODUCAO_ANUAL_PCT *
-        5.1 *
-        100,
-    ) / 100
-
   const matriz: Record<
     string,
     Pick<
@@ -1728,8 +1723,10 @@ function fiscalRicoPara(
     cfem_total_5anos_mi: totalMi,
     cfem_municipal_historico: cfemMunicipalHistorico,
     aliquota_cfem_pct: aliquota,
-    estimativa_cfem_anual_operacao_mi:
-      s.regime === 'bloqueio_permanente' ? 0 : estimativaCfem,
+    cfem_estimada_ha:
+      s.regime === 'bloqueio_permanente'
+        ? 0
+        : 18_000_000 + (seed % 25) * 400_000,
   }
 }
 
@@ -1933,8 +1930,8 @@ function relatorio864231V2(): RelatorioData {
   return {
     processo_id: 'p_864231',
     dados_anm: {
-      fase_atual: 'AUTORIZACAO DE PESQUISA',
-      data_protocolo: '2017',
+      fase_atual: 'Autorização de Pesquisa',
+      data_protocolo: '2017-12-01',
       ano_protocolo: 2017,
       tempo_tramitacao_anos: 9,
       data_ultimo_despacho: '2026-03-13',
@@ -1961,7 +1958,11 @@ function relatorio864231V2(): RelatorioData {
         { label: 'Ano de protocolo', valor: '2017' },
         { label: 'Tempo de tramitação', valor: '~9 anos' },
         { label: 'Fase atual', valor: 'Autorização de Pesquisa' },
-        { label: 'Último evento', valor: '13/03/2026' },
+        {
+          label: 'Último evento',
+          valor:
+            '13/03/2026 - AUT PESQ/RAL ANO BASE APRESENTADO EM 13/03/2026',
+        },
         {
           label: 'Código do evento',
           valor:
@@ -2151,9 +2152,9 @@ function relatorio864231V2(): RelatorioData {
         'BNDES Finem - Meio Ambiente',
       ],
       aliquota_cfem_pct: 1.5,
-      estimativa_cfem_anual_operacao_mi: 3.64,
+      cfem_estimada_ha: 44_200_000,
       observacao:
-        'Município com CAPAG C (ano base 2023, STN). Não publica RGF ao SICONFI. Classificação Dicf no Ranking de Qualidade da Informação. Indicadores fiscais extraídos do SICONFI DCA (exercício 2024). Dívida consolidada de R$ 1,75 Mi contraída em 2024 (empréstimos internos de longo prazo). Receita corrente líquida não disponível no exercício 2024 (município não publicou DCA 2024 até fev/2025, publicou posteriormente).',
+        'Valores de exemplo alinhados a auditoria anterior (sedes com IBGE incorreto). TERRADAR 12.14: processo sediado em Jaú do Tocantins (IBGE 1711506); após correção no Supabase, re-ingerir SICONFI/CAPAG/CFEM municipal para 1711506 quando disponível.',
     },
     timestamps: {
       cadastro_mineiro: '2026-04-12',
@@ -2174,7 +2175,7 @@ function relatorio864231V2(): RelatorioData {
       fonte_territorial:
         'Shapefiles oficiais processados em 12/04/2026 (geopandas, EPSG:5880 Brasil Polyconic): FUNAI (TIs), CNUC/MMA (UCs), INCRA (quilombolas), CAR/SICAR (APP), CPRM/SGB (aquíferos)',
       fonte_fiscal:
-        'STN CAPAG Municípios (fev/2025, ano base 2023), SICONFI DCA I-C e I-AB (exercício 2024), IBGE API Agregados (PIB 2023), ANM Dados Abertos CFEM (2022-2025)',
+        'STN CAPAG Municípios (fev/2025, ano base 2023), SICONFI DCA I-C e I-AB (exercício 2024), IBGE API Agregados (PIB 2023), ANM Dados Abertos CFEM (2022-2025). TERRADAR 12.14: sede IBGE 1711506 (Jaú do Tocantins); revalidar após ingestão fiscal deste código.',
       fonte_car:
         'GeoServer SICAR: 5 imóveis rurais sobrepõem o processo (~72% da área), todos "Aguardando análise"',
       fonte_demanda: 'World Gold Council, Gold Demand Trends Q2 2025',
