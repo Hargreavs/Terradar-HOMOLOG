@@ -78,6 +78,8 @@ export interface Processo {
   substancia: string
   is_mineral_estrategico: boolean
   titular: string
+  /** Opcional, ex.: CNPJ verificado (processo real SIGMINE). */
+  cnpj_titular?: string
   area_ha: number
   uf: string
   municipio: string
@@ -85,11 +87,15 @@ export interface Processo {
   lng: number
   data_protocolo: string
   ano_protocolo: number
+  /** Mês do protocolo (1–12) quando disponível; usado p.ex. para regra SEI pré-2019. */
+  mes_protocolo?: number | null
   situacao: 'ativo' | 'inativo' | 'bloqueado'
   risk_score: number | null
   risk_breakdown: RiskBreakdown | null
   /** Decomposição por variável (mock/UI). Null quando `risk_score` é null. */
   risk_decomposicao: RiskScoreDecomposicao | null
+  /** Incluído dinamicamente pela busca no mapa (API / Supabase). */
+  fromApi?: boolean
   /** Valor estimado das reservas (milhões USD). */
   valor_estimado_usd_mi: number
   /** Data do último despacho ANM (YYYY-MM-DD). */
@@ -121,3 +127,13 @@ export interface FiltrosState {
   riskScoreMax: number
   searchQuery: string
 }
+
+/** Dados territoriais do relatório (alias de `DadosTerritoriais` no mock). */
+export type { Territorial } from '../data/relatorio.mock'
+
+/** Inteligência mineral (Master-Substâncias); definição canônica em `relatorio.mock.ts`. */
+export type {
+  DemandaProjetadaEstruturada,
+  IntelMineral,
+  UnidadePrecoIntel,
+} from '../data/relatorio.mock'

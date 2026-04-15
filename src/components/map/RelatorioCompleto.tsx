@@ -1,7 +1,6 @@
-import { createPortal, flushSync } from 'react-dom'
-import html2canvas from 'html2canvas'
-import jsPDF from 'jspdf'
+import { createPortal } from 'react-dom'
 import {
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -10,9 +9,15 @@ import {
   type CSSProperties,
   type ReactNode,
 } from 'react'
-import { ArrowUpRight } from 'lucide-react'
+import { ArrowUpRight, Info, Loader2, Sparkles } from 'lucide-react'
 import { relatoriosMock } from '../../data/relatorio.mock'
-import type { RelatorioData } from '../../data/relatorio.mock'
+import type {
+  DadosANM,
+  ObservacoesTecnicas,
+  ObservacoesTecnicasItem,
+  RelatorioData,
+  RelatorioOportunidadeData,
+} from '../../data/relatorio.mock'
 import {
   rotuloFontePublicacaoExibicao,
   textoTooltipNivelImpactoLegislativo,
@@ -27,19 +32,33 @@ import { AlertaItemImpactoBar } from '../legislativo/AlertaItemImpactoBar'
 import { CamadaTooltipHover } from '../filters/CamadaTooltipHover'
 import { TextoTruncadoComTooltip } from '../ui/TextoTruncadoComTooltip'
 import { gerarRiskDecomposicaoParaProcesso } from '../../lib/riskScoreDecomposicao'
+import {
+  corFaixaOS,
+  PESOS_OS_POR_PERFIL,
+  type PerfilOportunidadeOSKey,
+} from '../../lib/oportunidadeRelatorioUi'
+import { getOpportunityLabel } from '../../lib/opportunityScore'
 import type { Fase, Processo, Regime } from '../../types'
+import { ExportReportButton } from '../report/ExportReportButton'
 import { RiskDecomposicaoRelatorioPanel } from './RiskDecomposicaoRelatorioPanel'
+import { OportunidadeDecomposicaoRelatorioPanel } from './OportunidadeDecomposicaoRelatorioPanel'
+import { OportunidadePerfilCalcTooltipContent } from './OportunidadeScoreCalcTooltipContent'
 import { RiskTotalCalcTooltipContent } from './RiskScoreCalcTooltipContent'
 
-type AbaId = 'processo' | 'territorio' | 'inteligencia' | 'risco' | 'fiscal'
-
-type JsPdfDoc = InstanceType<typeof jsPDF>
+type AbaId =
+  | 'processo'
+  | 'territorio'
+  | 'inteligencia'
+  | 'risco'
+  | 'oportunidade'
+  | 'fiscal'
 
 const ABAS: { id: AbaId; label: string }[] = [
   { id: 'processo', label: 'Processo' },
   { id: 'territorio', label: 'Território' },
   { id: 'inteligencia', label: 'Inteligência' },
   { id: 'risco', label: 'Risco' },
+  { id: 'oportunidade', label: 'Oportunidade' },
   { id: 'fiscal', label: 'Fiscal' },
 ]
 
@@ -63,7 +82,27 @@ const FS = {
   highlight: 32,
 } as const
 
+/** Borda superior inativa (faixa com opacidade). */
+function hexCorParaRgba(hex: string, alpha: number): string {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim())
+  if (!m) return hex
+  const r = parseInt(m[1].slice(0, 2), 16)
+  const g = parseInt(m[1].slice(2, 4), 16)
+  const b = parseInt(m[1].slice(4, 6), 16)
+  return `rgba(${r},${g},${b},${alpha})`
+}
+
 const RX_DATA_ISO = /^\d{4}-\d{2}-\d{2}$/
+
+/** Total municipal na linha histórica: `valor_total_municipio_brl` (API) ou `valor_recolhido_brl` (mapeado). */
+function valorBrlCfemMunicipalHistorico(x: {
+  valor_recolhido_brl?: number
+  valor_total_municipio_brl?: number
+}): number {
+  const v = x.valor_total_municipio_brl
+  if (v != null && Number.isFinite(v)) return v
+  return x.valor_recolhido_brl ?? 0
+}
 
 /** Espaço vertical entre o último conteúdo do card e o rodapé "Atualizado em…". */
 const FONTE_LABEL_MARGIN_TOP_PX = 20
@@ -73,6 +112,48 @@ const FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX = 32
 
 /** Espaço abaixo dos títulos de secção do drawer (alinhado ao cabeçalho número do processo + badge). */
 const TITULO_SECAO_MARGIN_BOTTOM_PX = 30
+
+/** SEI/ANM: processos anteriores a set/2019 podem ter tramitação parcialmente digitalizada. */
+function mostrarDisclaimerSEI(p: Processo): boolean {
+  if (p.ano_protocolo < 2019) return true
+  return (
+    p.ano_protocolo === 2019 &&
+    p.mes_protocolo != null &&
+    p.mes_protocolo < 9
+  )
+}
+
+const TEXTO_DISCLAIMER_SEI_ANM =
+  'Processos protocolados antes de setembro de 2019 podem ter tramitação anterior à migração para o SEI/ANM parcialmente digitalizada. Documentos históricos podem não estar disponíveis integralmente.'
+
+const TEXTO_DISCLAIMER_SEI_OBSERVACOES =
+  'Tramitação anterior a setembro de 2019 pode ter digitalização parcial no SEI-ANM.'
+
+/** Observações técnicas v5.1 (SIGMINE / SEI-ANM). */
+const OBS_V5_TITULO_SECAO: CSSProperties = {
+  fontSize: 11,
+  color: '#B8821E',
+  letterSpacing: '0.14em',
+  textTransform: 'uppercase',
+  fontWeight: 600,
+  margin: 0,
+  marginBottom: 12,
+}
+
+const OBS_V5_SEP_ENTRE_SECOES: CSSProperties = {
+  height: 1,
+  backgroundColor: '#2C2C2A',
+  marginTop: 18,
+  marginBottom: 18,
+}
+
+function filtrarLinhasObservacoes(
+  itens: ObservacoesTecnicasItem[],
+): ObservacoesTecnicasItem[] {
+  return itens.filter(
+    (x) => x.valor != null && String(x.valor).trim() !== '',
+  )
+}
 
 function formatarDataIsoPtBr(iso: string | null | undefined): string {
   if (iso == null || iso === '') return ''
@@ -85,49 +166,6 @@ function formatarDataIsoPtBr(iso: string | null | undefined): string {
 /** Rótulo da substância com acentuação correta (ex.: NIQUEL → Níquel). */
 function apresentarSubstanciaLabel(s: string): string {
   return labelSubstanciaParaExibicao(s)
-}
-
-/** Destaca em negrito trechos de ha e município/UF no texto das observações. */
-function observacoesComNegritoHaLocal(texto: string, p: Processo): ReactNode {
-  const loc = `${p.municipio}/${p.uf}`
-  const areaForms = new Set<string>([
-    `${p.area_ha.toLocaleString('pt-BR')} ha`,
-    `${p.area_ha.toLocaleString('pt-BR', {
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 2,
-    })} ha`,
-  ])
-  const needles = [...areaForms, loc].filter((n) => texto.includes(n))
-  if (needles.length === 0) return texto
-
-  const out: ReactNode[] = []
-  let i = 0
-  let k = 0
-  while (i < texto.length) {
-    let nextIdx = -1
-    let found = ''
-    for (const n of needles) {
-      const j = texto.indexOf(n, i)
-      if (j !== -1 && (nextIdx === -1 || j < nextIdx)) {
-        nextIdx = j
-        found = n
-      }
-    }
-    if (nextIdx === -1) {
-      out.push(<span key={k++}>{texto.slice(i)}</span>)
-      break
-    }
-    if (nextIdx > i) {
-      out.push(<span key={k++}>{texto.slice(i, nextIdx)}</span>)
-    }
-    out.push(
-      <strong key={k++} style={{ fontWeight: 700 }}>
-        {found}
-      </strong>,
-    )
-    i = nextIdx + found.length
-  }
-  return <>{out}</>
 }
 
 /** Títulos de subseção no drawer (16px / 700); rótulos do grid Processo usam FS.md / 600. */
@@ -147,10 +185,36 @@ const FASE_LABELS: Record<Fase, string> = {
   encerrado: 'Encerrado',
 }
 
+/** Disclaimer hipotético: pré-lavra / disponibilidade; não exibir em lavra ou concessão. */
+function processoCfemDisclaimerHipotetico(p: Processo): boolean {
+  if (p.fase === 'lavra' || p.fase === 'encerrado') return false
+  if (p.fase === 'concessao') return false
+  return (
+    p.fase === 'requerimento' ||
+    p.fase === 'pesquisa' ||
+    p.regime === 'disponibilidade'
+  )
+}
+
 function corFaixaRisco(v: number): string {
   if (v < 40) return '#1D9E75'
   if (v <= 69) return '#E8A830'
   return '#E24B4A'
+}
+
+/** Rótulo curto para a coluna Substância (tabela Processos vizinhos). */
+function abreviarSubstanciaVizinho(raw: string): string {
+  const t = raw.trim()
+  const u = t
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+  if (u === 'MINERIO DE OURO') return 'Min. de Ouro'
+  if (u === 'OURO') return 'Ouro'
+  if (u === 'MINERIO DE LITIO') return 'Min. de Lítio'
+  if (u === 'TERRAS RARAS') return 'Terras Raras'
+  if (u === 'GRANITO') return 'Granito'
+  return t
 }
 
 function classificacaoRiscoTotal(r: number): string {
@@ -242,12 +306,24 @@ function IconTendenciaQueda({ className }: { className?: string }) {
   )
 }
 
-/** Cor semântica para o valor numérico em km (proximidade territorial / logística). */
+/** Cor semântica para distâncias em km no card Áreas Sensíveis (perto = risco). */
 function corDistanciaKm(km: number): string {
   if (km < 10) return '#E24B4A'
   if (km < 30) return '#E8A830'
   if (km <= 50) return '#D3D1C7'
   return '#1D9E75'
+}
+
+/** Infraestrutura logística: perto = favorável; longe = desfavorável (inverso de áreas sensíveis). */
+function corDistanciaLogisticaKm(km: number): string {
+  if (km <= 30) return '#1D9E75'
+  if (km <= 100) return '#E8A830'
+  return '#E24B4A'
+}
+
+/** Km em pt-BR (vírgula decimal), ex.: 109,7 km */
+function formatKmPtBr(km: number, decimals: number): string {
+  return `${km.toFixed(decimals).replace('.', ',')} km`
 }
 
 const GLOSSARIO_APP =
@@ -258,6 +334,9 @@ const GLOSSARIO_QUILOMBOLA =
 
 const AREAS_SENSIVEIS_DIST_TOOLTIP =
   'As distâncias são calculadas entre o centroide do processo minerário e o limite mais próximo de cada área sensível (FUNAI/ICMBio/INCRA). Cores indicam proximidade: vermelho (< 10 km, zona de influência direta), âmbar (10-30 km, zona de atenção), neutro (30-50 km), verde (> 50 km, distância segura). Referência: zonas de amortecimento conforme SNUC e normas específicas de cada UC.'
+
+const AQUIFERO_HIDROGEO_TOOLTIP =
+  'Dados de aquífero (CPRM/SGB): nome, unidade hidrogeológica e sobreposição com o polígono. Estudos hidrogeológicos específicos serão exigidos no licenciamento ambiental.'
 
 const SIGLAS_UC_COMUNS = [
   'APA',
@@ -320,7 +399,7 @@ function rotuloUcUmaLinha(nome: string, tipo: string | null): string {
 function tooltipTextoUcCompleto(nome: string, tipo: string | null): string {
   const n = nome.trim()
   if (!tipo) return n
-  return `${n} — ${tipo}`
+  return `${n}: ${tipo}`
 }
 
 const SEI_ANM_PESQUISA_URL =
@@ -352,28 +431,15 @@ function textoTooltipDependenciaTransferencias(pct: number): string {
   return `${s}% da receita total do município vem de transferências federais e estaduais (FPM, ICMS, FUNDEB, CFEM e outras). Alta dependência indica vulnerabilidade fiscal, o município gera pouca receita própria.`
 }
 
-function prazoVencimentoExibicaoRelatorio(
-  prazo: string | null,
-  regime: Regime,
-): { texto: string; corValor: string } {
-  if (prazo != null && prazo !== '' && RX_DATA_ISO.test(prazo)) {
-    return { texto: formatarDataIsoPtBr(prazo), corValor: '#D3D1C7' }
-  }
-  if (regime === 'bloqueio_permanente') {
-    return { texto: 'Indeterminado (bloqueio)', corValor: '#5F5E5A' }
-  }
-  if (regime === 'bloqueio_provisorio') {
-    return { texto: 'Pendente de decisão', corValor: '#E8A830' }
-  }
-  const semPrazo =
-    prazo == null || prazo === '' || prazo.trim() === 'Não definido'
-  if (semPrazo) {
-    return { texto: 'Não informado pela ANM', corValor: '#5F5E5A' }
-  }
-  return { texto: prazo, corValor: '#D3D1C7' }
+function anoProtocoloRelatorio(d: DadosANM): string {
+  if (d.ano_protocolo != null) return String(d.ano_protocolo)
+  const iso = d.data_protocolo
+  if (/^\d{4}$/.test(iso)) return iso
+  const y = parseInt(iso.slice(0, 4), 10)
+  return Number.isFinite(y) ? String(y) : iso
 }
 
-/** Dots em “Áreas sensíveis” — paleta v2 território. */
+/** Dots em “Áreas sensíveis”. Paleta v2 território. */
 const DOT_TI = '#D4785A'
 const DOT_UC = '#4A8C5E'
 const DOT_APP = '#6BAF7B'
@@ -383,9 +449,58 @@ const DOT_AUSENCIA_POSITIVA = '#1D9E75'
 
 /** Logística v2: ferrovia, porto, sede; ausência de infra usa cinza terciário. */
 const DOT_FERROVIA = '#8B7A6A'
+const DOT_RODOVIA = '#7A8B6E'
 const DOT_PORTO = '#5A8AA0'
 const DOT_SEDE_MUNICIPAL = '#9E958A'
 const DOT_AUSENCIA_INFRA = '#5F5E5A'
+
+/** Entre itens nos cards Território (Áreas sensíveis, Logística). */
+const separadorInsetTerritorio: CSSProperties = {
+  height: 1,
+  backgroundColor: '#2C2C2A',
+  margin: '10px 0',
+  marginLeft: 0,
+  marginRight: 0,
+  flexShrink: 0,
+}
+
+/** Subtexto do APP (Áreas sensíveis), alinhado ao texto após o bullet. */
+const areasSensiveisAppSubtextoStyle: CSSProperties = {
+  fontSize: 11,
+  color: '#888780',
+  fontStyle: 'italic',
+  marginTop: 2,
+  marginBottom: 0,
+  paddingLeft: 14,
+  lineHeight: 1.45,
+}
+
+/** Quebra `texto` em parágrafos por linhas em branco (`\\n\\n`). */
+function BlocoParagrafosMultilinha({
+  texto,
+  styleParagrafo,
+}: {
+  texto: string
+  styleParagrafo: CSSProperties
+}) {
+  const partes = texto.split(/\n\n+/).map((s) => s.trim()).filter(Boolean)
+  if (partes.length === 0) return null
+  return (
+    <>
+      {partes.map((p, i) => (
+        <p
+          key={i}
+          style={{
+            ...styleParagrafo,
+            marginTop: i === 0 ? styleParagrafo.marginTop : 8,
+          }}
+        >
+          {p}
+        </p>
+      ))}
+    </>
+  )
+}
 
 const DOT_AQUIFERO = '#4A8FB8'
 
@@ -434,6 +549,18 @@ function capagCor(letra: 'A' | 'B' | 'C' | 'D'): string {
   }
 }
 
+/** Cor do selo CAPAG no drawer: letras A–D ou texto STN (n.d., n.e.). */
+function capagCorExibicao(notaOuTexto: string): string {
+  const t = notaOuTexto.trim()
+  const low = t.toLowerCase()
+  if (low.startsWith('n.d') || low.startsWith('n.e')) return '#8A8880'
+  const one = t.length === 1 ? t.toUpperCase() : t.charAt(0).toUpperCase()
+  if (one === 'A' || one === 'B' || one === 'C' || one === 'D') {
+    return capagCor(one)
+  }
+  return '#8A8880'
+}
+
 function textoTooltipCapag(letra: 'A' | 'B' | 'C' | 'D'): string {
   switch (letra) {
     case 'A':
@@ -447,81 +574,29 @@ function textoTooltipCapag(letra: 'A' | 'B' | 'C' | 'D'): string {
   }
 }
 
-/**
- * Largura do HTML na captura ≈ folha A4 em px (~96dpi), para colunas/tabelas respirarem;
- * a imagem continua a ser escalada para a área útil (170mm) no jsPDF.
- */
-const PDF_LARGURA_CONTEUDO_PX = Math.round(210 * (96 / 25.4))
-
-/**
- * Largura fixa temporária para html2canvas: o conteúdo reflowa como na área útil do PDF
- * (tabelas menos truncadas). Repõe estilos ao terminar.
- */
-function definirLarguraCapturaPdf(el: HTMLElement, larguraPx: number): () => void {
-  const s = el.style
-  const prev = {
-    width: s.width,
-    minWidth: s.minWidth,
-    maxWidth: s.maxWidth,
-    boxSizing: s.boxSizing,
+function textoTooltipCapagPublico(notaOuTexto: string): string {
+  const low = notaOuTexto.trim().toLowerCase()
+  if (low.startsWith('n.d')) {
+    return 'n.d.: indicador ou nota não disponível na publicação STN consultada para o exercício de referência.'
   }
-  s.boxSizing = 'border-box'
-  s.width = `${larguraPx}px`
-  s.minWidth = `${larguraPx}px`
-  s.maxWidth = `${larguraPx}px`
-  return () => {
-    s.width = prev.width
-    s.minWidth = prev.minWidth
-    s.maxWidth = prev.maxWidth
-    s.boxSizing = prev.boxSizing
+  if (low.startsWith('n.e')) {
+    return 'n.e.: município não enquadrado na metodologia CAPAG STN para a posição consultada.'
   }
+  const c = notaOuTexto.trim().charAt(0).toUpperCase()
+  if (c === 'A' || c === 'B' || c === 'C' || c === 'D') {
+    return textoTooltipCapag(c)
+  }
+  return 'CAPAG (Capacidade de Pagamento): classificação fiscal municipal da Secretaria do Tesouro Nacional.'
 }
 
-/**
- * html2canvas só pinta a região visível de elementos com scroll. Expande o contentor para
- * altura total do conteúdo e remove o clip; devolve função que repõe os estilos inline.
- */
-function expandirAreaScrollRelatorioParaPdf(el: HTMLElement): () => void {
-  const s = el.style
-  const prev = {
-    overflow: s.overflow,
-    overflowY: s.overflowY,
-    overflowX: s.overflowX,
-    height: s.height,
-    maxHeight: s.maxHeight,
-    minHeight: s.minHeight,
-    flex: s.flex,
-    flexGrow: s.flexGrow,
-    flexShrink: s.flexShrink,
-    flexBasis: s.flexBasis,
+function capagCorIndicadorLinha(nota: string): string {
+  const t = nota.trim()
+  if (t === '–' || t === '-' || /^n\.d/i.test(t) || /^n\.e/i.test(t)) {
+    return '#8A8880'
   }
-
-  el.scrollTop = 0
-  /* Ceil + margem: scrollHeight por vezes fica ligeiramente abaixo do que o canvas pinta (subpixel). */
-  const alturaTotal = Math.ceil(el.scrollHeight) + 12
-
-  s.overflow = 'visible'
-  s.overflowY = 'visible'
-  s.overflowX = 'visible'
-  s.maxHeight = 'none'
-  s.flex = '0 0 auto'
-  s.flexGrow = '0'
-  s.flexShrink = '0'
-  s.flexBasis = 'auto'
-  s.height = alturaTotal > 0 ? `${alturaTotal}px` : 'auto'
-
-  return () => {
-    s.overflow = prev.overflow
-    s.overflowY = prev.overflowY
-    s.overflowX = prev.overflowX
-    s.height = prev.height
-    s.maxHeight = prev.maxHeight
-    s.minHeight = prev.minHeight
-    s.flex = prev.flex
-    s.flexGrow = prev.flexGrow
-    s.flexShrink = prev.flexShrink
-    s.flexBasis = prev.flexBasis
-  }
+  const c = t.charAt(0).toUpperCase()
+  if (c === 'A' || c === 'B' || c === 'C' || c === 'D') return capagCor(c)
+  return '#8A8880'
 }
 
 /** Igual ao parágrafo "Alíquota aplicável:" na subaba Fiscal (tamanho e cor do texto base). */
@@ -943,9 +1018,11 @@ function RelatorioCfemBarrasComTooltip({
 function Card({
   children,
   className = '',
+  style,
 }: {
   children: ReactNode
   className?: string
+  style?: CSSProperties
 }) {
   return (
     <div
@@ -954,6 +1031,7 @@ function Card({
         backgroundColor: '#1E1E1C',
         borderRadius: 8,
         padding: '20px 18px',
+        ...style,
       }}
     >
       {children}
@@ -985,20 +1063,168 @@ function SecLabel({
   )
 }
 
+const analiseTerradarCardStyle: CSSProperties = {
+  position: 'relative',
+  backgroundColor: 'rgba(212, 168, 67, 0.04)',
+  borderRadius: 8,
+  overflow: 'hidden',
+  display: 'flex',
+  alignItems: 'stretch',
+  width: '100%',
+  maxWidth: '100%',
+  boxSizing: 'border-box',
+}
+
+const analiseTerradarBordaGradiente: CSSProperties = {
+  width: 3,
+  flexShrink: 0,
+  alignSelf: 'stretch',
+  borderRadius: '3px 0 0 3px',
+  background: 'linear-gradient(to bottom, #D4A843, #1D9E75)',
+}
+
+const analiseTerradarTextoStyle: CSSProperties = {
+  fontSize: FS.md,
+  fontWeight: 400,
+  color: '#B4B2A9',
+  lineHeight: 1.6,
+  margin: 0,
+}
+
+const analiseTerradarDestaqueStyle: CSSProperties = {
+  fontWeight: 600,
+  color: '#F1EFE8',
+}
+
+function TextoOportunidadeComDestaqueNumeros({
+  texto,
+  destaques,
+}: {
+  texto: string
+  destaques: readonly number[]
+}) {
+  let partes: ReactNode[] = [texto]
+  destaques.forEach((num, di) => {
+    const str = String(num)
+    partes = partes.flatMap((parte, pi) => {
+      if (typeof parte !== 'string') return [parte]
+      const idx = parte.indexOf(str)
+      if (idx === -1) return [parte]
+      const out: ReactNode[] = []
+      if (idx > 0) out.push(parte.slice(0, idx))
+      out.push(
+        <strong
+          key={`${str}-${di}-${pi}-${idx}`}
+          style={analiseTerradarDestaqueStyle}
+        >
+          {str}
+        </strong>,
+      )
+      if (idx + str.length < parte.length) {
+        out.push(parte.slice(idx + str.length))
+      }
+      return out
+    })
+  })
+  return <>{partes}</>
+}
+
+function OportunidadeAnaliseTerradarCard({
+  cruzamento,
+}: {
+  cruzamento: RelatorioOportunidadeData['cruzamento']
+}) {
+  return (
+    <div style={analiseTerradarCardStyle}>
+      <div aria-hidden style={analiseTerradarBordaGradiente} />
+      <div
+        style={{
+          flexGrow: 1,
+          flexShrink: 1,
+          flexBasis: 0,
+          minWidth: 0,
+          padding: '22px 20px',
+          boxSizing: 'border-box',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            marginBottom: 16,
+          }}
+        >
+          <Sparkles size={16} color="#D4A843" strokeWidth={2} aria-hidden />
+          <span
+            style={{
+              fontSize: FS.md,
+              fontWeight: 700,
+              color: '#D4A843',
+              letterSpacing: '0.3px',
+            }}
+          >
+            Análise TERRADAR
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <p style={analiseTerradarTextoStyle}>{cruzamento.abertura}</p>
+          <p style={analiseTerradarTextoStyle}>
+            <TextoOportunidadeComDestaqueNumeros
+              texto={cruzamento.explicacao}
+              destaques={[cruzamento.rs, cruzamento.os]}
+            />
+          </p>
+          <p style={analiseTerradarTextoStyle}>{cruzamento.contexto}</p>
+        </div>
+
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6,
+            marginTop: 20,
+            paddingTop: 12,
+            borderTop: '1px solid rgba(212, 168, 67, 0.12)',
+          }}
+        >
+          <Sparkles size={11} color="#5F5E5A" strokeWidth={2} aria-hidden />
+          <span
+            style={{
+              fontSize: 11,
+              color: '#5F5E5A',
+              letterSpacing: '0.3px',
+            }}
+          >
+            {`TERRADAR · ${cruzamento.data}`}
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function FonteLabel({
   dataIso,
   fonte,
   marginTopPx = FONTE_LABEL_MARGIN_TOP_PX,
+  noWrap = false,
+  fonteTitulo = 'Fonte',
 }: {
   dataIso: string
   fonte: string
   marginTopPx?: number
+  noWrap?: boolean
+  /** `Fontes` no plural quando há várias fontes listadas no rodapé. */
+  fonteTitulo?: 'Fonte' | 'Fontes'
 }) {
   const [y, m, d] = dataIso.split('-')
   const linha =
     d && m && y
-      ? `Atualizado em ${d}/${m}/${y} · Fonte: ${fonte}`
-      : `Fonte: ${fonte}`
+      ? `Atualizado em ${d}/${m}/${y} · ${fonteTitulo}: ${fonte}`
+      : `${fonteTitulo}: ${fonte}`
   return (
     <span
       style={{
@@ -1008,367 +1234,12 @@ function FonteLabel({
         fontSize: 11,
         lineHeight: 1.45,
         color: '#5F5E5A',
+        whiteSpace: noWrap ? 'nowrap' : undefined,
       }}
     >
       {linha}
     </span>
   )
-}
-
-function IconePdfExportar({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      width={16}
-      height={16}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden
-    >
-      <path
-        d="M8 3h6l4 4v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M14 3v4h4M9 12h6M9 15.5h6M9 19h4"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-      />
-    </svg>
-  )
-}
-
-function hexParaRgb(hex: string): [number, number, number] {
-  const h = hex.replace('#', '')
-  return [
-    parseInt(h.slice(0, 2), 16),
-    parseInt(h.slice(2, 4), 16),
-    parseInt(h.slice(4, 6), 16),
-  ]
-}
-
-/** PNG estático em public/ (ex.: logo completo da capa). */
-async function carregarDataUrlAsset(caminhoRelativo: string): Promise<string | null> {
-  const base = (import.meta.env.BASE_URL || '/').replace(/\/?$/, '/')
-  try {
-    const res = await fetch(`${base}${caminhoRelativo}`)
-    if (!res.ok) return null
-    const blob = await res.blob()
-    return await new Promise((resolve: (v: string | null) => void) => {
-      const fr = new FileReader()
-      fr.onload = () =>
-        resolve(typeof fr.result === 'string' ? fr.result : null)
-      fr.onerror = () => resolve(null)
-      fr.readAsDataURL(blob)
-    })
-  } catch {
-    return null
-  }
-}
-
-async function carregarDataUrlPrimeiroDisponivel(
-  caminhos: string[],
-): Promise<string | null> {
-  for (const c of caminhos) {
-    const u = await carregarDataUrlAsset(c)
-    if (u) return u
-  }
-  return null
-}
-
-function medirImagemDataUrl(
-  dataUrl: string,
-): Promise<{ w: number; h: number } | null> {
-  return new Promise((resolve) => {
-    const img = new Image()
-    img.onload = () => {
-      if (img.naturalWidth > 0 && img.naturalHeight > 0)
-        resolve({ w: img.naturalWidth, h: img.naturalHeight })
-      else resolve(null)
-    }
-    img.onerror = () => resolve(null)
-    img.src = dataUrl
-  })
-}
-
-/** Mesmo RGB de `desenharCapaPdf` / header do drawer (#0D0D0C). */
-const PDF_CAPA_FUNDO_RGB: [number, number, number] = [13, 13, 12]
-
-function pixelEhFundoNeutroEscuro(r: number, g: number, b: number): boolean {
-  if (r > 130 && g > 128 && b > 122) return false
-  if (r > 50 && b < 55 && r - b > 15) return false
-  if (r > 80 && g > 50 && b < 50) return false
-  const avg = (r + g + b) / 3
-  const spread = Math.max(r, g, b) - Math.min(r, g, b)
-  return avg < 58 && spread < 40
-}
-
-/** Troca o preto/cinza do PNG da logo pelo hex exato da capa, sem apagar dourados/marrons. */
-async function uniformizarFundoLogoCapaPng(
-  dataUrl: string,
-): Promise<string | null> {
-  const [br, bg, bb] = PDF_CAPA_FUNDO_RGB
-  return new Promise((resolve) => {
-    const img = new Image()
-    img.onload = () => {
-      const iw = img.naturalWidth
-      const ih = img.naturalHeight
-      if (iw <= 0 || ih <= 0) {
-        resolve(null)
-        return
-      }
-      const c = document.createElement('canvas')
-      c.width = iw
-      c.height = ih
-      const ctx = c.getContext('2d')
-      if (!ctx) {
-        resolve(null)
-        return
-      }
-      ctx.drawImage(img, 0, 0)
-      const imageData = ctx.getImageData(0, 0, iw, ih)
-      const d = imageData.data
-      for (let i = 0; i < d.length; i += 4) {
-        const r = d[i]!
-        const gch = d[i + 1]!
-        const b = d[i + 2]!
-        if (pixelEhFundoNeutroEscuro(r, gch, b)) {
-          d[i] = br
-          d[i + 1] = bg
-          d[i + 2] = bb
-          d[i + 3] = 255
-        }
-      }
-      ctx.putImageData(imageData, 0, 0)
-      resolve(c.toDataURL('image/png'))
-    }
-    img.onerror = () => resolve(null)
-    img.src = dataUrl
-  })
-}
-
-/** Rasteriza o SVG do símbolo para PNG; cabeçalho das páginas de conteúdo. */
-async function carregarPdfSymbolPngRaster(): Promise<string | null> {
-  const base = (import.meta.env.BASE_URL || '/').replace(/\/?$/, '/')
-  const urls = [
-    `${base}assets/terradar-pdf-symbol.svg`,
-    `${base}assets/terradar-primary-dark.svg`,
-    `${base}assets/terrae-pdf-symbol.svg`,
-  ]
-  for (const url of urls) {
-    try {
-      const res = await fetch(url)
-      if (!res.ok) continue
-      const svg = await res.text()
-      const png = await new Promise<string | null>((resolve) => {
-        const img = new Image()
-        const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' })
-        const u = URL.createObjectURL(blob)
-        img.onload = () => {
-          const w = img.naturalWidth || 120
-          const h = img.naturalHeight || 124
-          const c = document.createElement('canvas')
-          const dpr = 2
-          c.width = w * dpr
-          c.height = h * dpr
-          const ctx = c.getContext('2d')
-          if (!ctx) {
-            URL.revokeObjectURL(u)
-            resolve(null)
-            return
-          }
-          ctx.scale(dpr, dpr)
-          ctx.drawImage(img, 0, 0, w, h)
-          URL.revokeObjectURL(u)
-          resolve(c.toDataURL('image/png'))
-        }
-        img.onerror = () => {
-          URL.revokeObjectURL(u)
-          resolve(null)
-        }
-        img.src = u
-      })
-      if (png) return png
-    } catch {
-      /* tenta próximo asset */
-    }
-  }
-  return null
-}
-
-/** Wordmark TERRADAR em fundo escuro (#1A1A18): TERRA #F1EFE8, DAR #D4A84B. */
-function desenharWordmarkTerradarCapaPdf(pdf: JsPdfDoc, x: number, y: number) {
-  pdf.setFontSize(26)
-  pdf.setFont('helvetica', 'bold')
-  pdf.setTextColor(241, 239, 232)
-  pdf.text('TERRA', x, y)
-  const xDar = x + pdf.getTextWidth('TERRA')
-  pdf.setTextColor(212, 168, 75)
-  pdf.text('DAR', xDar, y)
-}
-
-function desenharWordmarkTerradarRodapePdf(pdf: JsPdfDoc, x: number, y: number) {
-  pdf.setFontSize(8)
-  pdf.setFont('helvetica', 'normal')
-  let xw = x
-  pdf.setTextColor(241, 239, 232)
-  pdf.text('TERRA', xw, y)
-  xw += pdf.getTextWidth('TERRA')
-  pdf.setTextColor(212, 168, 75)
-  pdf.text('DAR', xw, y)
-  xw += pdf.getTextWidth('DAR')
-  pdf.setTextColor(136, 135, 128)
-  pdf.text(' · Mineral Intelligence', xw, y)
-}
-
-/** Ícone de barras verticais (gradiente ouro → bronze); capa e cabeçalho do PDF. */
-function desenharLogoSimboloPdf(
-  pdf: JsPdfDoc,
-  x: number,
-  y: number,
-  escala: number,
-) {
-  const cores: [number, number, number][] = [
-    [255, 224, 160],
-    [252, 200, 115],
-    [239, 159, 39],
-    [186, 117, 23],
-    [99, 56, 15],
-  ]
-  const largura = 2.8 * escala
-  const alturas = [3.5, 5, 6.5, 8, 9.5].map((h) => h * escala)
-  const hMax = Math.max(...alturas)
-  let cx = x
-  for (let i = 0; i < 5; i++) {
-    const [r, g, b] = cores[i]!
-    pdf.setFillColor(r, g, b)
-    const hb = alturas[i]!
-    pdf.rect(cx, y + (hMax - hb), largura, hb, 'F')
-    cx += largura + 0.55 * escala
-  }
-}
-
-function desenharCapaPdf(
-  pdf: JsPdfDoc,
-  processo: Processo,
-  regimeColor: string,
-  coverLogoPng: string | null,
-  coverLogoPx: { w: number; h: number } | null,
-  fallbackSymbolPng: string | null,
-) {
-  const w = 210
-  const h = 297
-  pdf.setFillColor(13, 13, 12)
-  pdf.rect(0, 0, w, h, 'F')
-
-  let yAposLogo = 46.5
-
-  if (coverLogoPng && coverLogoPx) {
-    const maxW = 155
-    const maxH = 28
-    const ar = coverLogoPx.h / coverLogoPx.w
-    let dw = maxW
-    let dh = dw * ar
-    if (dh > maxH) {
-      dh = maxH
-      dw = dh / ar
-    }
-    const x = (w - dw) / 2
-    const y = 22
-    pdf.addImage(coverLogoPng, 'PNG', x, y, dw, dh)
-    yAposLogo = y + dh + 10
-  } else {
-    let textoLogoX: number
-    if (fallbackSymbolPng) {
-      const logoWmm = 16
-      const logoHmm = logoWmm * (124 / 120)
-      pdf.addImage(fallbackSymbolPng, 'PNG', 22, 20, logoWmm, logoHmm)
-      textoLogoX = 22 + logoWmm + 5
-    } else {
-      desenharLogoSimboloPdf(pdf, 22, 24.5, 1)
-      textoLogoX = 48
-    }
-
-    desenharWordmarkTerradarCapaPdf(pdf, textoLogoX, 35.5)
-    pdf.setFontSize(9.5)
-    pdf.setFont('helvetica', 'normal')
-    pdf.setTextColor(186, 117, 23)
-    pdf.text('MINERAL INTELLIGENCE', textoLogoX, 41.5)
-    yAposLogo = 46.5
-  }
-
-  pdf.setDrawColor(239, 159, 39)
-  pdf.setLineWidth(0.35)
-  pdf.line(22, yAposLogo, w - 22, yAposLogo)
-
-  const yNumero = yAposLogo + 72
-  pdf.setFont('helvetica', 'normal')
-  pdf.setFontSize(32)
-  pdf.setTextColor(241, 239, 232)
-  pdf.text(processo.numero, w / 2, yNumero, { align: 'center' })
-
-  const [rr, gg, bb] = hexParaRgb(regimeColor)
-  pdf.setFontSize(14)
-  pdf.setTextColor(rr, gg, bb)
-  pdf.text(REGIME_LABELS[processo.regime], w / 2, yNumero + 18, {
-    align: 'center',
-  })
-
-  pdf.setTextColor(211, 209, 199)
-  pdf.setFontSize(14)
-  const titLines = pdf.splitTextToSize(processo.titular, 166)
-  let yTit = yNumero + 28
-  for (const line of titLines) {
-    pdf.text(line, w / 2, yTit, { align: 'center' })
-    yTit += 5.2
-  }
-
-  const now = new Date()
-  const ds = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} às ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
-  pdf.setFontSize(9)
-  pdf.setTextColor(95, 94, 90)
-  pdf.text(`Gerado em ${ds}`, w / 2, h - 30, { align: 'center' })
-  pdf.text(
-    'Dados: ANM/SIGMINE · FUNAI · ICMBio · STN · Adoo',
-    w / 2,
-    h - 24,
-    { align: 'center' },
-  )
-}
-
-function desenharHeaderFooterPaginaConteudo(
-  pdf: JsPdfDoc,
-  numeroProcesso: string,
-  paginaAtual: number,
-  totalPaginas: number,
-  logoSymbolPng: string | null,
-) {
-  const m = 20
-  pdf.setDrawColor(239, 159, 39)
-  pdf.setLineWidth(0.25)
-  pdf.line(m, 14, 210 - m, 14)
-  if (logoSymbolPng) {
-    const hmm = 5.2
-    const wmm = hmm * (120 / 124)
-    pdf.addImage(logoSymbolPng, 'PNG', m, 3.5, wmm, hmm)
-  } else {
-    desenharLogoSimboloPdf(pdf, m, 4, 0.32)
-  }
-  pdf.setFontSize(9)
-  pdf.setTextColor(136, 135, 128)
-  pdf.setFont('helvetica', 'normal')
-  pdf.text(numeroProcesso, 210 - m, 12, { align: 'right' })
-
-  const footY = 289
-  pdf.setDrawColor(44, 44, 42)
-  pdf.line(m, footY - 10, 210 - m, footY - 10)
-  desenharWordmarkTerradarRodapePdf(pdf, m, footY)
-  pdf.text(`${paginaAtual} / ${totalPaginas}`, 210 - m, footY, {
-    align: 'right',
-  })
 }
 
 export interface RelatorioCompletoProps {
@@ -1378,6 +1249,10 @@ export interface RelatorioCompletoProps {
   abaInicial?: AbaId
   /** Quando incrementa (ex.: «Ver decomposição completa» no mapa), força a aba ativa = `abaInicial`. */
   abaRiscoRequestId?: number
+  /** Quando o processo veio da API (`fromApi`), dados montados por `buildReportData` / `relatorioDataFromReportData`. */
+  dadosRelatorioApi?: RelatorioData | null
+  relatorioApiLoading?: boolean
+  relatorioApiErro?: string | null
 }
 
 export function RelatorioCompleto({
@@ -1386,22 +1261,35 @@ export function RelatorioCompleto({
   onFechar,
   abaInicial = 'processo',
   abaRiscoRequestId = 0,
+  dadosRelatorioApi = null,
+  relatorioApiLoading = false,
+  relatorioApiErro = null,
 }: RelatorioCompletoProps) {
-  const dados: RelatorioData | undefined = processo
-    ? relatoriosMock[processo.id]
+  const dadosResolved: RelatorioData | undefined = processo
+    ? dadosRelatorioApi ?? relatoriosMock[processo.id]
     : undefined
 
+  const loadingApi = Boolean(
+    processo?.fromApi && relatorioApiLoading && !dadosRelatorioApi,
+  )
+  const erroApi = Boolean(
+    processo?.fromApi &&
+      relatorioApiErro &&
+      !dadosRelatorioApi &&
+      !relatorioApiLoading,
+  )
+
+  const dados: RelatorioData | undefined = dadosResolved
+
   const [aba, setAba] = useState<AbaId>(abaInicial)
-  const [pdfGerando, setPdfGerando] = useState(false)
-  const pdfCaptureRef = useRef<HTMLDivElement>(null)
+  const [perfilOportunidadeAtivo, setPerfilOportunidadeAtivo] =
+    useState<PerfilOportunidadeOSKey>('conservador')
+  const [hoverPerfilOportunidade, setHoverPerfilOportunidade] =
+    useState<PerfilOportunidadeOSKey | null>(null)
 
   useEffect(() => {
     if (aberto) setAba(abaInicial)
   }, [aberto, abaInicial, abaRiscoRequestId])
-
-  const regimeColor = processo
-    ? (REGIME_COLORS[processo.regime] ?? '#888780')
-    : '#888780'
 
   const alertasOrdenados = useMemo(() => {
     if (!processo) return []
@@ -1417,119 +1305,256 @@ export function RelatorioCompleto({
     )
   }, [processo])
 
-  const exportarPDF = useCallback(async () => {
-    if (!processo || !dados || pdfGerando || !pdfCaptureRef.current) return
-    const abaAntes = aba
-    setPdfGerando(true)
-    try {
-      let coverLogoPng: string | null = null
-      const pathsLogoCapa = [
-        'assets/terradar-primary-dark.png',
-        'assets/terradar-pdf-cover-logo.png',
-        'assets/terrae-pdf-cover-logo.png',
-      ] as const
-      for (const p of pathsLogoCapa) {
-        const u = await carregarDataUrlAsset(p)
-        if (u) {
-          coverLogoPng = u
-          break
-        }
-      }
-      /* Alinha o fundo do PNG (#000 ou cinza escuro neutro) ao mesmo RGB da capa (`PDF_CAPA_FUNDO_RGB`). */
-      if (coverLogoPng) {
-        const uniformizado = await uniformizarFundoLogoCapaPng(coverLogoPng)
-        if (uniformizado) coverLogoPng = uniformizado
-      }
-      const coverLogoPx = coverLogoPng
-        ? await medirImagemDataUrl(coverLogoPng)
+  if (!processo) return null
+
+  if (loadingApi || erroApi) {
+    return (
+      <div
+        className="pointer-events-auto"
+        style={{
+          position: 'fixed',
+          top: 48,
+          right: 0,
+          width: 520,
+          height: 'calc(100vh - 48px)',
+          zIndex: 50,
+          display: 'flex',
+          flexDirection: 'column',
+          backgroundColor: '#111110',
+          borderLeft: '1px solid #2C2C2A',
+          transform: aberto ? 'translateX(0)' : 'translateX(100%)',
+          transition: 'transform 300ms ease-out',
+          boxSizing: 'border-box',
+        }}
+      >
+        <header
+          style={{
+            height: 56,
+            flexShrink: 0,
+            backgroundColor: '#0D0D0C',
+            borderBottom: '1px solid #2C2C2A',
+            padding: '0 20px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+          }}
+        >
+          <TextoTruncadoComTooltip
+            text={processo.numero}
+            placement="above"
+            className="block min-w-0"
+            style={{
+              fontSize: FS.base,
+              fontWeight: 500,
+              color: '#F1EFE8',
+              flexShrink: 1,
+            }}
+          />
+          <button
+            type="button"
+            onClick={onFechar}
+            aria-label="Fechar relatório"
+            className="cursor-pointer border-0 bg-transparent p-0"
+            style={{
+              fontSize: 18,
+              lineHeight: 1,
+              color: '#888780',
+            }}
+          >
+            ✕
+          </button>
+        </header>
+        <div
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 12,
+            padding: 24,
+          }}
+        >
+          {loadingApi ? (
+            <>
+              <Loader2
+                className="h-8 w-8 shrink-0 animate-spin"
+                aria-hidden
+                style={{ color: '#EF9F27' }}
+              />
+              <span style={{ fontSize: FS.md, color: '#888780' }}>
+                Carregando relatório…
+              </span>
+            </>
+          ) : (
+            <span
+              style={{
+                fontSize: FS.md,
+                color: '#E24B4A',
+                textAlign: 'center',
+                lineHeight: 1.45,
+              }}
+            >
+              {relatorioApiErro}
+            </span>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  if (!dados) return null
+
+  const {
+    dados_anm,
+    observacoes_tecnicas,
+    territorial,
+    intel_mineral,
+    fiscal,
+    timestamps,
+    metadata,
+    oportunidade,
+  } = dados
+
+  const cambioIntel = intel_mineral.cambio_brl_usd ?? metadata?.cambio
+  const areaHa = processo.area_ha
+  /** Mi USD/ha — valor in-situ teórico por hectare (sem multiplicar pela área do processo). */
+  const valorReservaUsdMiPorHa =
+    intel_mineral.valor_estimado_usd_ha != null
+      ? intel_mineral.valor_estimado_usd_ha / 1_000_000
+      : intel_mineral.valor_estimado_usd_mi != null && areaHa > 0
+        ? intel_mineral.valor_estimado_usd_mi / areaHa
         : null
-      const logoSymbolPng = await carregarPdfSymbolPngRaster()
-      const totalPaginas = 1 + ABAS.length
-      const pdf = new jsPDF({ unit: 'mm', format: 'a4' })
-      desenharCapaPdf(
-        pdf,
-        processo,
-        regimeColor,
-        coverLogoPng,
-        coverLogoPx,
-        logoSymbolPng,
-      )
+  /** Bilhões BRL/ha (cabeçalho do card). */
+  const valorReservaBrlBiPorHa =
+    intel_mineral.valor_estimado_brl_ha != null
+      ? intel_mineral.valor_estimado_brl_ha / 1_000_000_000
+      : cambioIntel != null && intel_mineral.valor_estimado_usd_ha != null
+        ? (intel_mineral.valor_estimado_usd_ha * cambioIntel) / 1_000_000_000
+        : cambioIntel != null && valorReservaUsdMiPorHa != null
+          ? (valorReservaUsdMiPorHa * cambioIntel) / 1000
+          : intel_mineral.valor_estimado_brl_tri != null && areaHa > 0
+            ? (intel_mineral.valor_estimado_brl_tri * 1000) / areaHa
+            : null
 
-      for (let i = 0; i < ABAS.length; i++) {
-        const id = ABAS[i]!.id
-        flushSync(() => setAba(id))
-        await new Promise<void>((r) => setTimeout(r, 120))
-        const el = pdfCaptureRef.current
-        if (!el) continue
-
-        const restaurarLargura = definirLarguraCapturaPdf(
-          el,
-          PDF_LARGURA_CONTEUDO_PX,
-        )
-        await new Promise<void>((r) => requestAnimationFrame(() => r()))
-        await new Promise<void>((r) => requestAnimationFrame(() => r()))
-
-        const restaurarScroll = expandirAreaScrollRelatorioParaPdf(el)
-        await new Promise<void>((r) => requestAnimationFrame(() => r()))
-        await new Promise<void>((r) => requestAnimationFrame(() => r()))
-
-        let canvas: HTMLCanvasElement
-        try {
-          canvas = await html2canvas(el, {
-            scale: 1.75,
-            useCORS: true,
-            logging: false,
-            backgroundColor: '#111110',
-          })
-        } finally {
-          restaurarScroll()
-          restaurarLargura()
-        }
-        const img = canvas.toDataURL('image/png', 1)
-        pdf.addPage()
-        desenharHeaderFooterPaginaConteudo(
-          pdf,
-          processo.numero,
-          2 + i,
-          totalPaginas,
-          logoSymbolPng,
-        )
-        const m = 20
-        const topReserve = 16
-        const botReserve = 14
-        const imgMaxW = 210 - 2 * m
-        const imgMaxH = 297 - m - topReserve - m - botReserve
-        const ratio = canvas.width / canvas.height
-        let dw = imgMaxW
-        let dh = dw / ratio
-        if (dh > imgMaxH) {
-          dh = imgMaxH
-          dw = dh * ratio
-        }
-        const xOff = m + (imgMaxW - dw) / 2
-        pdf.addImage(img, 'PNG', xOff, m + topReserve, dw, dh)
-      }
-
-      const hoje = new Date()
-      const d = `${hoje.getFullYear()}${String(hoje.getMonth() + 1).padStart(2, '0')}${String(hoje.getDate()).padStart(2, '0')}`
-      const safeNum = processo.numero.replace(/\//g, '_').replace(/\s/g, '_')
-      pdf.save(`TERRADAR_${safeNum}_${d}.pdf`)
-    } catch (e) {
-      console.error(e)
-    } finally {
-      flushSync(() => setAba(abaAntes))
-      setPdfGerando(false)
-    }
-  }, [aba, processo, dados, pdfGerando, regimeColor])
-
-  if (!processo || !dados) return null
-
-  const { dados_anm, territorial, intel_mineral, fiscal, timestamps } = dados
-
-  const prazoVencimentoCard = prazoVencimentoExibicaoRelatorio(
-    dados_anm.prazo_vencimento,
-    processo.regime,
+  const cfemMunicipioParaContexto =
+    fiscal.cfem_municipio.length > 0
+      ? fiscal.cfem_municipio
+      : fiscal.cfem_municipal_historico.map((h) => ({
+          ano: h.ano,
+          valor_recolhido_brl: h.valor_total_municipio_brl,
+        }))
+  const cfemHistFiscal = cfemMunicipioParaContexto
+  const cfemMunicipalTotalBrl = cfemHistFiscal.reduce(
+    (s, x) => s + valorBrlCfemMunicipalHistorico(x),
+    0,
   )
+  const anosCfemMunicipal = cfemHistFiscal.length
+  const cfemMunicipalMediaAnualBrl =
+    anosCfemMunicipal > 0 ? cfemMunicipalTotalBrl / anosCfemMunicipal : 0
+  const cfemEstimadaAnualBrl =
+    fiscal.estimativa_cfem_anual_operacao_mi * 1_000_000
+  const cfemRepresentatividadePct =
+    cfemMunicipalMediaAnualBrl > 0
+      ? Math.round((cfemEstimadaAnualBrl / cfemMunicipalMediaAnualBrl) * 100)
+      : null
+  const cfemPctPib =
+    fiscal.pib_municipal_mi > 0 &&
+    fiscal.estimativa_cfem_anual_operacao_mi > 0
+      ? (fiscal.estimativa_cfem_anual_operacao_mi / fiscal.pib_municipal_mi) *
+        100
+      : null
+  const mostrarCfemLinha1 = cfemHistFiscal.length > 0
+  const mostrarCfemLinha2 =
+    cfemHistFiscal.length > 0 &&
+    cfemMunicipalMediaAnualBrl > 0 &&
+    cfemRepresentatividadePct != null
+  const mostrarCfemLinha3 =
+    cfemPctPib != null &&
+    Number.isFinite(cfemPctPib) &&
+    fiscal.pib_municipal_mi > 0
+  const mostrarContextoCfemComparativo =
+    fiscal.estimativa_cfem_anual_operacao_mi > 0 &&
+    (mostrarCfemLinha1 || mostrarCfemLinha3)
+
+  const fontePrecoTendenciaCard =
+    metadata?.fonte_demanda ??
+    metadata?.fonte_precos ??
+    'IMF PCPS / USGS MCS 2026'
+
+  const ucUsNome = territorial.nome_uc_us_proxima ?? territorial.nome_uc_proxima
+  const ucUsTipo = territorial.tipo_uc_us ?? territorial.tipo_uc
+  const ucUsKm = territorial.distancia_uc_us_km ?? territorial.distancia_uc_km
+  const temUcPi =
+    territorial.nome_uc_pi_proxima != null &&
+    territorial.nome_uc_pi_proxima !== '' &&
+    territorial.distancia_uc_pi_km != null
+  const useQuilombolaDistancia =
+    territorial.distancia_quilombola_km != null &&
+    !Number.isNaN(Number(territorial.distancia_quilombola_km))
+  const nomeQuilombolaExibicao =
+    territorial.nome_quilombola_proximo ?? territorial.nome_quilombola
+
+  const distanciaSedeKm =
+    territorial.distancia_sede_km ?? territorial.distancia_sede_municipal_km
+
+  const auditoriaTerritorial =
+    territorial.fase_ti != null && territorial.fase_ti !== ''
+
+  const nomeTiLinha =
+    auditoriaTerritorial &&
+    territorial.nome_ti_proxima != null &&
+    territorial.nome_ti_proxima !== ''
+      ? territorial.fase_ti != null && territorial.fase_ti !== ''
+        ? `Terra Indígena · ${territorial.nome_ti_proxima} (${territorial.fase_ti})`
+        : `Terra Indígena · ${territorial.nome_ti_proxima}`
+      : territorial.nome_ti_proxima
+
+  const ucPiLinha =
+    territorial.nome_uc_pi_proxima != null && territorial.nome_uc_pi_proxima !== ''
+      ? auditoriaTerritorial
+        ? `UC Proteção integral · ${territorial.nome_uc_pi_proxima}`
+        : rotuloUcUmaLinha(
+            territorial.nome_uc_pi_proxima,
+            territorial.tipo_uc_pi ?? null,
+          )
+      : ''
+
+  const ucUsLinhaDisplay =
+    auditoriaTerritorial && ucUsNome
+      ? `UC Uso sustentável · ${ucUsNome}`
+      : rotuloUcUmaLinha(ucUsNome ?? '', ucUsTipo ?? null)
+
+  const areasSensiveisTiUcRows = [
+    {
+      dot: DOT_TI,
+      nome: nomeTiLinha,
+      tipo: 'Terra Indígena' as const,
+      km: territorial.distancia_ti_km,
+      semIdTexto: 'Sem terra indígena na região',
+    },
+    ...(temUcPi
+      ? [
+          {
+            dot: DOT_UC,
+            nome: ucPiLinha,
+            tipo: territorial.tipo_uc_pi as string,
+            km: territorial.distancia_uc_pi_km as number,
+            semIdTexto:
+              'Sem unidade de conservação identificada na região monitorada',
+          },
+        ]
+      : []),
+    {
+      dot: DOT_UC,
+      nome: ucUsLinhaDisplay,
+      tipo: ucUsTipo,
+      km: ucUsKm,
+      semIdTexto:
+        'Sem unidade de conservação identificada na região monitorada',
+    },
+  ]
 
   return (
     <div
@@ -1590,47 +1615,10 @@ export function RelatorioCompleto({
             display: 'flex',
             alignItems: 'center',
             flexShrink: 0,
+            gap: 8,
           }}
         >
-          <button
-            type="button"
-            onClick={() => void exportarPDF()}
-            disabled={pdfGerando}
-            className="cursor-pointer"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              boxSizing: 'border-box',
-              minHeight: 28,
-              borderWidth: 1,
-              borderStyle: 'solid',
-              borderColor: '#5F5E5A',
-              borderRadius: 6,
-              padding: '4px 12px',
-              backgroundColor: 'transparent',
-              fontSize: FS.md,
-              fontWeight: 400,
-              color: pdfGerando ? '#5F5E5A' : '#B4B2A9',
-              cursor: pdfGerando ? 'not-allowed' : 'pointer',
-            }}
-            onMouseEnter={(e) => {
-              if (pdfGerando) return
-              e.currentTarget.style.color = '#F1EFE8'
-              e.currentTarget.style.borderColor = '#888780'
-              e.currentTarget.style.backgroundColor = 'rgba(241, 239, 232, 0.08)'
-            }}
-            onMouseLeave={(e) => {
-              if (pdfGerando) return
-              e.currentTarget.style.color = '#B4B2A9'
-              e.currentTarget.style.borderColor = '#5F5E5A'
-              e.currentTarget.style.backgroundColor = 'transparent'
-            }}
-          >
-            <IconePdfExportar />
-            {pdfGerando ? 'Exportando...' : 'Exportar PDF'}
-          </button>
+          <ExportReportButton numeroProcesso={processo.numero} />
           <div
             style={{
               width: 1,
@@ -1673,31 +1661,6 @@ export function RelatorioCompleto({
           position: 'relative',
         }}
       >
-        {pdfGerando ? (
-          <div
-            className="terrae-relatorio-pdf-export-overlay"
-            role="status"
-            aria-live="polite"
-            aria-busy="true"
-          >
-            <div
-              className="terrae-relatorio-pdf-export-spinner"
-              aria-hidden
-            />
-            <span
-              style={{
-                fontSize: FS.base,
-                fontWeight: 500,
-                color: '#F1EFE8',
-                textAlign: 'center',
-                padding: '0 20px',
-              }}
-            >
-              Exportando relatório...
-            </span>
-          </div>
-        ) : null}
-
         <nav
           style={{
             height: 44,
@@ -1743,8 +1706,7 @@ export function RelatorioCompleto({
         </nav>
 
         <div
-          ref={pdfCaptureRef}
-          className={`terrae-relatorio-drawer-scroll min-h-0 flex-1 overflow-y-auto ${pdfGerando ? 'terrae-relatorio--pdf-export' : ''}`}
+          className="terrae-relatorio-drawer-scroll min-h-0 flex-1 overflow-y-auto"
           style={{
             padding: 22,
             display: 'flex',
@@ -1834,16 +1796,11 @@ export function RelatorioCompleto({
                   { label: 'Município', value: processo.municipio },
                   { label: 'Fase', value: FASE_LABELS[processo.fase] },
                   {
-                    label: 'Data Protocolo',
-                    value: formatarDataIsoPtBr(dados_anm.data_protocolo),
+                    label: 'Ano de protocolo',
+                    value: anoProtocoloRelatorio(dados_anm),
                   },
                   {
-                    label: 'Prazo Vencimento',
-                    value: prazoVencimentoCard.texto,
-                    valueColor: prazoVencimentoCard.corValor,
-                  },
-                  {
-                    label: 'Tempo de Tramitação',
+                    label: 'Tempo de tramitação',
                     value: `${dados_anm.tempo_tramitacao_anos} anos`,
                   },
                 ].map((row) => (
@@ -1876,7 +1833,7 @@ export function RelatorioCompleto({
                         lineHeight: 1.35,
                       }}
                     >
-                      {row.label === 'Tempo de Tramitação' ? (
+                      {row.label === 'Tempo de tramitação' ? (
                         <span
                           style={{
                             color: corTramitacaoAnos(
@@ -1943,6 +1900,35 @@ export function RelatorioCompleto({
               >
                 SEI: {dados_anm.numero_sei}
               </a>
+              {mostrarDisclaimerSEI(processo) ? (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: 8,
+                    fontSize: FS.sm,
+                    color: '#888780',
+                    lineHeight: 1.5,
+                    fontStyle: 'italic',
+                    marginTop: 14,
+                    paddingTop: 12,
+                    borderTop: '1px solid #2C2C2A',
+                  }}
+                >
+                  <Info
+                    size={14}
+                    aria-hidden
+                    style={{
+                      color: '#888780',
+                      flexShrink: 0,
+                      marginTop: 2,
+                    }}
+                  />
+                  <span>
+                    {TEXTO_DISCLAIMER_SEI_ANM.replace(/!/g, '')}
+                  </span>
+                </div>
+              ) : null}
               <FonteLabel
                 dataIso={timestamps.cadastro_mineiro}
                 fonte="SEI-ANM"
@@ -1979,29 +1965,125 @@ export function RelatorioCompleto({
               </Card>
             ) : null}
 
-            {dados_anm.observacoes_tecnicas.trim() ? (
-              <Card>
-                <SecLabel branco>Observações técnicas</SecLabel>
-                <p
-                  style={{
-                    fontSize: FS.lg,
-                    color: '#888780',
-                    fontStyle: 'italic',
-                    margin: 0,
-                    lineHeight: 1.5,
-                  }}
-                >
-                  {observacoesComNegritoHaLocal(
-                    dados_anm.observacoes_tecnicas,
-                    processo,
+            {(() => {
+              const ot: ObservacoesTecnicas = observacoes_tecnicas
+              const c = filtrarLinhasObservacoes(ot.ciclo_regulatorio)
+              const id = filtrarLinhasObservacoes(ot.identificacao)
+              const todasVazias = c.length === 0 && id.length === 0
+              const secoes: {
+                key: string
+                titulo: string
+                linhas: ObservacoesTecnicasItem[]
+              }[] = [
+                { key: 'ciclo', titulo: 'Ciclo regulatório', linhas: c },
+                { key: 'id', titulo: 'Identificação', linhas: id },
+              ].filter((s) => s.linhas.length > 0)
+              const rodapeData = formatarDataIsoPtBr(timestamps.cadastro_mineiro)
+              const mostrarDisclaimerObservacoes =
+                dados_anm.ano_protocolo != null &&
+                dados_anm.ano_protocolo < 2019
+              return (
+                <Card>
+                  <SecLabel branco>Observações técnicas</SecLabel>
+                  {todasVazias ? (
+                    <p
+                      style={{
+                        fontSize: FS.base,
+                        color: '#888780',
+                        margin: 0,
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      Dados oficiais ANM em atualização.
+                    </p>
+                  ) : (
+                    <>
+                      {secoes.map((sec, si) => (
+                        <Fragment key={sec.key}>
+                          {si > 0 ? (
+                            <div style={OBS_V5_SEP_ENTRE_SECOES} aria-hidden />
+                          ) : null}
+                          <div>
+                            <p style={OBS_V5_TITULO_SECAO}>{sec.titulo}</p>
+                            {sec.linhas.map((row, ri) => (
+                              <div
+                                key={`${sec.key}-${row.label}-${ri}`}
+                                style={{
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'baseline',
+                                  gap: 12,
+                                  paddingTop: 7,
+                                  paddingBottom: 7,
+                                  borderBottom:
+                                    ri < sec.linhas.length - 1
+                                      ? '1px dotted rgba(255,255,255,0.08)'
+                                      : 'none',
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    fontSize: FS.sm,
+                                    color: '#888780',
+                                    fontWeight: 400,
+                                    lineHeight: 1.45,
+                                    flexShrink: 0,
+                                  }}
+                                >
+                                  {row.label}
+                                </span>
+                                <span
+                                  style={{
+                                    fontSize: FS.md,
+                                    color: '#D3D1C7',
+                                    fontWeight: 500,
+                                    lineHeight: 1.45,
+                                    textAlign: 'right',
+                                    maxWidth: '55%',
+                                  }}
+                                >
+                                  {row.valor}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </Fragment>
+                      ))}
+                    </>
                   )}
-                </p>
-                <FonteLabel
-                  dataIso={timestamps.cadastro_mineiro}
-                  fonte="Terrae / Análise Técnica"
-                />
-              </Card>
-            ) : null}
+                  {!todasVazias && mostrarDisclaimerObservacoes ? (
+                    <p
+                      style={{
+                        fontSize: 12,
+                        color: '#5F5E5A',
+                        fontStyle: 'italic',
+                        lineHeight: 1.5,
+                        marginTop: 16,
+                        marginBottom: 0,
+                        paddingTop: 12,
+                        borderTop: '1px solid #2C2C2A',
+                      }}
+                    >
+                      {TEXTO_DISCLAIMER_SEI_OBSERVACOES}
+                    </p>
+                  ) : null}
+                  <span
+                    style={{
+                      display: 'block',
+                      textAlign: 'center',
+                      marginTop: 14,
+                      fontSize: 10,
+                      lineHeight: 1.45,
+                      color: '#5F5E5A',
+                    }}
+                  >
+                    {rodapeData
+                      ? `Atualizado em ${rodapeData} · Fonte: SIGMINE / SEI-ANM`
+                      : 'Fonte: SIGMINE / SEI-ANM'}
+                  </span>
+                </Card>
+              )
+            })()}
           </>
         ) : null}
 
@@ -2034,24 +2116,8 @@ export function RelatorioCompleto({
                   </span>
                 </CamadaTooltipHover>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {[
-                  {
-                    dot: DOT_TI,
-                    nome: territorial.nome_ti_proxima,
-                    tipo: 'Terra Indígena',
-                    km: territorial.distancia_ti_km,
-                    semIdTexto: 'Sem terra indígena na região',
-                  },
-                  {
-                    dot: DOT_UC,
-                    nome: territorial.nome_uc_proxima,
-                    tipo: territorial.tipo_uc,
-                    km: territorial.distancia_uc_km,
-                    semIdTexto:
-                      'Sem unidade de conservação identificada na região monitorada',
-                  },
-                ].map((row, i) => {
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                {areasSensiveisTiUcRows.map((row, i) => {
                   const semDado = row.km === null || row.nome == null
                   const ausenciaTiPositiva =
                     row.tipo === 'Terra Indígena' && semDado
@@ -2064,8 +2130,14 @@ export function RelatorioCompleto({
                     ? DOT_AUSENCIA_POSITIVA
                     : '#D3D1C7'
                   return (
-                    <div
-                      key={i}
+                    <Fragment key={i}>
+                      {i > 0 ? (
+                        <div
+                          aria-hidden
+                          style={separadorInsetTerritorio}
+                        />
+                      ) : null}
+                      <div
                       style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -2093,11 +2165,24 @@ export function RelatorioCompleto({
                         />
                         {row.nome && row.dot === DOT_UC ? (
                           <TextoTruncadoComTooltip
-                            text={rotuloUcUmaLinha(row.nome, row.tipo ?? null)}
-                            textoTooltip={tooltipTextoUcCompleto(
-                              row.nome,
-                              row.tipo ?? null,
-                            )}
+                            text={
+                              auditoriaTerritorial
+                                ? row.nome
+                                : rotuloUcUmaLinha(
+                                    row.nome,
+                                    row.tipo ?? null,
+                                  )
+                            }
+                            textoTooltip={
+                              auditoriaTerritorial
+                                ? row.tipo
+                                  ? `${row.nome}: ${row.tipo}`
+                                  : row.nome
+                                : tooltipTextoUcCompleto(
+                                    row.nome,
+                                    row.tipo ?? null,
+                                  )
+                            }
                             placement="side"
                             className="min-w-0 flex-1"
                             style={{ fontSize: FS.md, color: corTextoEsquerda }}
@@ -2108,6 +2193,7 @@ export function RelatorioCompleto({
                               fontSize: FS.md,
                               color: corTextoEsquerda,
                               minWidth: 0,
+                              flex: 1,
                             }}
                           >
                             {row.nome ? row.nome : row.semIdTexto}
@@ -2120,195 +2206,376 @@ export function RelatorioCompleto({
                             fontSize: FS.md,
                             fontWeight: 500,
                             color: corDistanciaKm(row.km),
+                            flexShrink: 0,
                           }}
                         >
-                          {`${row.km.toFixed(1)} km`}
+                          {formatKmPtBr(row.km, 1)}
                         </span>
                       ) : null}
                     </div>
+                    </Fragment>
                   )
                 })}
+                <div aria-hidden style={separadorInsetTerritorio} />
                 <div
                   style={{
                     display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
+                    flexDirection: 'column',
+                    gap: 0,
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: '50%',
-                        backgroundColor: DOT_APP,
-                        flexShrink: 0,
-                      }}
-                    />
-                    <CamadaTooltipHover texto={GLOSSARIO_APP} maxWidthPx={300}>
-                      <span
-                        style={{
-                          fontSize: FS.md,
-                          color: '#D3D1C7',
-                          cursor: 'help',
-                          textDecoration: 'underline dotted',
-                          textUnderlineOffset: 2,
-                        }}
-                      >
-                        APP
-                      </span>
-                    </CamadaTooltipHover>
-                  </div>
-                  <span
+                  <div
                     style={{
-                      fontSize: FS.md,
-                      fontWeight: 500,
-                      color: territorial.sobreposicao_app
-                        ? '#E24B4A'
-                        : '#1D9E75',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 8,
                     }}
                   >
-                    {territorial.sobreposicao_app ? 'Sim' : 'Não'}
-                  </span>
-                </div>
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span
+                    <div
                       style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: '50%',
-                        backgroundColor: DOT_QUILOMBOLA,
-                        flexShrink: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        minWidth: 0,
+                        flex: 1,
                       }}
-                    />
-                    <span style={{ fontSize: FS.md, color: '#D3D1C7' }}>
-                      <CamadaTooltipHover texto={GLOSSARIO_QUILOMBOLA} maxWidthPx={300}>
+                    >
+                      <span
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          backgroundColor: DOT_APP,
+                          flexShrink: 0,
+                        }}
+                      />
+                      <CamadaTooltipHover
+                        texto={GLOSSARIO_APP}
+                        maxWidthPx={300}
+                        inlineWrap
+                      >
                         <span
                           style={{
+                            fontSize: FS.md,
+                            color: '#D3D1C7',
                             cursor: 'help',
                             textDecoration: 'underline dotted',
                             textUnderlineOffset: 2,
                           }}
                         >
-                          Quilombola
+                          APP
                         </span>
                       </CamadaTooltipHover>
-                      {territorial.nome_quilombola
-                        ? ` (${territorial.nome_quilombola})`
-                        : ''}
+                    </div>
+                    <span
+                      style={{
+                        fontSize: FS.md,
+                        fontWeight: 500,
+                        color: territorial.sobreposicao_app
+                          ? '#E24B4A'
+                          : '#888780',
+                        flexShrink: 0,
+                        marginLeft: 'auto',
+                        textAlign: 'right',
+                      }}
+                    >
+                      {territorial.sobreposicao_app
+                        ? 'Sim'
+                        : 'Não verificada'}
                     </span>
                   </div>
-                  <span
+                  {territorial.observacao_app ? (
+                    <BlocoParagrafosMultilinha
+                      texto={territorial.observacao_app}
+                      styleParagrafo={areasSensiveisAppSubtextoStyle}
+                    />
+                  ) : null}
+                </div>
+                <div aria-hidden style={separadorInsetTerritorio} />
+                {useQuilombolaDistancia ? (
+                  <div
                     style={{
-                      fontSize: FS.md,
-                      fontWeight: 500,
-                      color: territorial.sobreposicao_quilombola
-                        ? '#E24B4A'
-                        : '#1D9E75',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 8,
                     }}
                   >
-                    {territorial.sobreposicao_quilombola ? 'Sim' : 'Não'}
-                  </span>
-                </div>
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        minWidth: 0,
+                        flex: 1,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          backgroundColor: DOT_QUILOMBOLA,
+                          flexShrink: 0,
+                        }}
+                      />
+                      <span
+                        style={{
+                          fontSize: FS.md,
+                          color: '#D3D1C7',
+                          minWidth: 0,
+                          flex: 1,
+                        }}
+                      >
+                        <CamadaTooltipHover
+                          texto={GLOSSARIO_QUILOMBOLA}
+                          maxWidthPx={300}
+                          inlineWrap
+                        >
+                          <span
+                            style={{
+                              cursor: 'help',
+                              textDecoration: 'underline dotted',
+                              textUnderlineOffset: 2,
+                            }}
+                          >
+                            Quilombola
+                          </span>
+                        </CamadaTooltipHover>
+                        {nomeQuilombolaExibicao
+                          ? ` · ${nomeQuilombolaExibicao}`
+                          : ''}
+                      </span>
+                    </div>
+                    <span
+                      style={{
+                        fontSize: FS.md,
+                        fontWeight: 500,
+                        color: corDistanciaKm(
+                          territorial.distancia_quilombola_km as number,
+                        ),
+                        flexShrink: 0,
+                        marginLeft: 'auto',
+                        textAlign: 'right',
+                      }}
+                    >
+                      {formatKmPtBr(
+                        territorial.distancia_quilombola_km as number,
+                        1,
+                      )}
+                    </span>
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 8,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        minWidth: 0,
+                        flex: 1,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          backgroundColor: DOT_QUILOMBOLA,
+                          flexShrink: 0,
+                        }}
+                      />
+                      <span
+                        style={{
+                          fontSize: FS.md,
+                          color: '#D3D1C7',
+                          minWidth: 0,
+                          flex: 1,
+                        }}
+                      >
+                        <CamadaTooltipHover
+                          texto={GLOSSARIO_QUILOMBOLA}
+                          maxWidthPx={300}
+                          inlineWrap
+                        >
+                          <span
+                            style={{
+                              cursor: 'help',
+                              textDecoration: 'underline dotted',
+                              textUnderlineOffset: 2,
+                            }}
+                          >
+                            Quilombola
+                          </span>
+                        </CamadaTooltipHover>
+                        {nomeQuilombolaExibicao
+                          ? ` (${nomeQuilombolaExibicao})`
+                          : ''}
+                      </span>
+                    </div>
+                    <span
+                      style={{
+                        fontSize: FS.md,
+                        fontWeight: 500,
+                        color: territorial.sobreposicao_quilombola
+                          ? '#E24B4A'
+                          : '#1D9E75',
+                        flexShrink: 0,
+                        marginLeft: 'auto',
+                        textAlign: 'right',
+                      }}
+                    >
+                      {territorial.sobreposicao_quilombola ? 'Sim' : 'Não'}
+                    </span>
+                  </div>
+                )}
               </div>
               <FonteLabel
                 dataIso={timestamps.terras_indigenas}
-                fonte="FUNAI / ICMBio"
+                fonte="FUNAI · CNUC/MMA · INCRA · CAR"
+                fonteTitulo="Fontes"
                 marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
               />
             </Card>
 
             <Card>
               <SecLabel branco>Logística</SecLabel>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {[
-                  {
-                    nome: territorial.nome_ferrovia,
-                    km: territorial.distancia_ferrovia_km,
-                    l: 'Ferrovia',
-                    semTexto: 'Sem ferrovia na região monitorada',
-                  },
-                  {
-                    nome: territorial.nome_porto,
-                    km: territorial.distancia_porto_km,
-                    l: 'Porto',
-                    semTexto: 'Sem porto na região monitorada',
-                  },
-                  {
-                    nome: 'Sede municipal',
-                    km: territorial.distancia_sede_municipal_km,
-                    l: 'Sede municipal',
-                    semTexto: '',
-                  },
-                ].map((row, i) => {
-                  const isSede = row.l === 'Sede municipal'
-                  const isFerrovia = row.l === 'Ferrovia'
-                  const isPorto = row.l === 'Porto'
-                  const temInfra =
-                    isSede || (row.nome != null && row.nome !== '')
-                  const corCirculo = !temInfra
-                    ? DOT_AUSENCIA_INFRA
-                    : isSede
-                      ? DOT_SEDE_MUNICIPAL
-                      : isFerrovia
-                        ? DOT_FERROVIA
-                        : isPorto
-                          ? DOT_PORTO
-                          : DOT_AUSENCIA_INFRA
-                  const textoEsquerda = isSede
-                    ? `${row.l} · ${processo.municipio}`
-                    : row.nome
-                      ? `${row.l} · ${row.nome}`
-                      : row.semTexto
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                {(
+                  [
+                    {
+                      key: 'ferro',
+                      dot: DOT_FERROVIA,
+                      textoEsquerda:
+                        territorial.nome_ferrovia != null &&
+                        territorial.nome_ferrovia !== ''
+                          ? `Ferrovia · ${territorial.nome_ferrovia}`
+                          : 'Sem ferrovia na região monitorada',
+                      km: territorial.distancia_ferrovia_km ?? null,
+                      temInfra:
+                        territorial.nome_ferrovia != null &&
+                        territorial.nome_ferrovia !== '',
+                    },
+                    ...(territorial.nome_rodovia != null &&
+                    territorial.nome_rodovia !== ''
+                      ? [
+                          {
+                            key: 'rod',
+                            dot: DOT_RODOVIA,
+                            textoEsquerda: `Rodovia · ${territorial.nome_rodovia}${territorial.tipo_rodovia ? ` · ${territorial.tipo_rodovia}` : ''}`,
+                            km:
+                              territorial.distancia_rodovia_km != null &&
+                              !Number.isNaN(territorial.distancia_rodovia_km)
+                                ? territorial.distancia_rodovia_km
+                                : null,
+                            temInfra: true,
+                          },
+                        ]
+                      : []),
+                    {
+                      key: 'porto',
+                      dot: DOT_PORTO,
+                      textoEsquerda:
+                        territorial.nome_porto != null &&
+                        territorial.nome_porto !== ''
+                          ? `Porto · ${territorial.nome_porto}${territorial.uf_porto ? ` (${territorial.uf_porto})` : ''}`
+                          : 'Sem porto na região monitorada',
+                      km: territorial.distancia_porto_km ?? null,
+                      temInfra:
+                        territorial.nome_porto != null &&
+                        territorial.nome_porto !== '',
+                    },
+                    {
+                      key: 'sede',
+                      dot: DOT_SEDE_MUNICIPAL,
+                      textoEsquerda: `Sede municipal · ${territorial.nome_sede ?? processo.municipio}`,
+                      km:
+                        distanciaSedeKm != null &&
+                        !Number.isNaN(distanciaSedeKm)
+                          ? distanciaSedeKm
+                          : null,
+                      temInfra: true,
+                    },
+                  ] as const
+                ).map((row, i) => {
+                  const corCirculo = row.temInfra
+                    ? row.dot
+                    : DOT_AUSENCIA_INFRA
                   return (
-                    <div
-                      key={i}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 8,
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span
-                          style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: '50%',
-                            backgroundColor: corCirculo,
-                            flexShrink: 0,
-                          }}
+                    <Fragment key={row.key}>
+                      {i > 0 ? (
+                        <div
+                          aria-hidden
+                          style={separadorInsetTerritorio}
                         />
-                        <span style={{ fontSize: FS.md, color: '#D3D1C7' }}>
-                          {textoEsquerda}
-                        </span>
-                      </div>
-                      {row.km !== null ? (
-                        <span
+                      ) : null}
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 8,
+                        }}
+                      >
+                        <div
                           style={{
-                            fontSize: FS.md,
-                            fontWeight: 500,
-                            color: corDistanciaKm(row.km),
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            minWidth: 0,
+                            flex: 1,
                           }}
                         >
-                          {`${row.km.toFixed(1)} km`}
-                        </span>
-                      ) : null}
-                    </div>
+                          <span
+                            style={{
+                              width: 8,
+                              height: 8,
+                              borderRadius: '50%',
+                              backgroundColor: corCirculo,
+                              flexShrink: 0,
+                            }}
+                          />
+                          <span
+                            style={{
+                              fontSize: FS.md,
+                              color: '#D3D1C7',
+                              minWidth: 0,
+                              flex: 1,
+                            }}
+                          >
+                            {row.textoEsquerda}
+                          </span>
+                        </div>
+                        {row.km !== null ? (
+                          <span
+                            style={{
+                              fontSize: FS.md,
+                              fontWeight: 500,
+                              color: corDistanciaLogisticaKm(row.km),
+                              flexShrink: 0,
+                              marginLeft: 'auto',
+                              textAlign: 'right',
+                            }}
+                          >
+                            {formatKmPtBr(row.km, 1)}
+                          </span>
+                        ) : null}
+                      </div>
+                    </Fragment>
                   )
                 })}
               </div>
               <FonteLabel
                 dataIso={timestamps.sigmine}
-                fonte="DNIT / Antaq"
+                fonte="DNIT · ANTAQ · IBGE/OSM"
                 marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
               />
             </Card>
@@ -2343,85 +2610,139 @@ export function RelatorioCompleto({
             </Card>
 
             <Card>
-              <SecLabel branco>Aquífero</SecLabel>
               {territorial.nome_aquifero ? (
                 <>
                   <div
                     style={{
                       display: 'flex',
-                      alignItems: 'flex-start',
+                      alignItems: 'center',
                       gap: 8,
-                      marginBottom: 4,
+                      marginBottom: TITULO_SECAO_MARGIN_BOTTOM_PX,
                     }}
                   >
+                    <SecLabel branco style={{ marginBottom: 0, flex: 1 }}>
+                      Aquífero
+                    </SecLabel>
+                    <CamadaTooltipHover
+                      texto={AQUIFERO_HIDROGEO_TOOLTIP}
+                      maxWidthPx={300}
+                    >
+                      <span
+                        aria-label="Contexto hidrogeológico"
+                        style={{
+                          cursor: 'help',
+                          fontSize: FS.md,
+                          color: '#888780',
+                          lineHeight: 1,
+                          flexShrink: 0,
+                        }}
+                      >
+                        ⓘ
+                      </span>
+                    </CamadaTooltipHover>
+                  </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      justifyContent: 'space-between',
+                      gap: 12,
+                      marginBottom: 0,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: 8,
+                        minWidth: 0,
+                        flex: 1,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          backgroundColor: DOT_AQUIFERO,
+                          flexShrink: 0,
+                          marginTop: 6,
+                        }}
+                        aria-hidden
+                      />
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <p
+                          style={{
+                            fontSize: FS.lg,
+                            color: '#D3D1C7',
+                            margin: 0,
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          {territorial.nome_aquifero}
+                        </p>
+                        {territorial.unidade_hidrogeologica ? (
+                          <p
+                            style={{
+                              fontSize: FS.md,
+                              color: '#888780',
+                              margin: '4px 0 0 0',
+                              lineHeight: 1.45,
+                            }}
+                          >
+                            {territorial.unidade_hidrogeologica}
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                    {(territorial.sobreposicao_aquifero === true ||
+                      (territorial.sobreposicao_aquifero === undefined &&
+                        territorial.distancia_aquifero_km === 0)) ? (
+                      <span
+                        style={{
+                          flexShrink: 0,
+                          fontSize: FS.sm,
+                          fontWeight: 700,
+                          letterSpacing: '0.06em',
+                          color: '#E8A830',
+                          marginTop: 2,
+                        }}
+                      >
+                        SOBREPOSTO
+                      </span>
+                    ) : null}
+                  </div>
+                  <FonteLabel
+                    dataIso={timestamps.cadastro_mineiro}
+                    fonte="CPRM/SGB"
+                    marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
+                  />
+                </>
+              ) : (
+                <>
+                  <SecLabel branco>Aquífero</SecLabel>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span
                       style={{
                         width: 8,
                         height: 8,
                         borderRadius: '50%',
-                        backgroundColor: DOT_AQUIFERO,
+                        backgroundColor: DOT_AUSENCIA_POSITIVA,
                         flexShrink: 0,
-                        marginTop: 6,
                       }}
                       aria-hidden
                     />
-                    <p
-                      style={{
-                        fontSize: FS.lg,
-                        color: '#D3D1C7',
-                        margin: 0,
-                        lineHeight: 1.5,
-                        flex: 1,
-                      }}
-                    >
-                      {territorial.nome_aquifero}
+                    <p style={{ fontSize: FS.base, color: '#1D9E75', margin: 0 }}>
+                      Nenhum aquífero relevante identificado
                     </p>
                   </div>
-                  <p
-                    style={{
-                      fontSize: FS.lg,
-                      color: '#888780',
-                      margin: 0,
-                      lineHeight: 1.5,
-                      paddingLeft: 16,
-                    }}
-                  >
-                    {territorial.distancia_aquifero_km !== null ? (
-                      <>
-                        Distância aproximada:{' '}
-                        <span
-                          style={{
-                            color: corDistanciaKm(territorial.distancia_aquifero_km),
-                          }}
-                        >
-                          {`${territorial.distancia_aquifero_km.toFixed(1)} km`}
-                        </span>
-                      </>
-                    ) : null}
-                  </p>
-                </>
-              ) : (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: '50%',
-                      backgroundColor: DOT_AUSENCIA_POSITIVA,
-                      flexShrink: 0,
-                    }}
-                    aria-hidden
+                  <FonteLabel
+                    dataIso={timestamps.sigmine}
+                    fonte="CPRM/SGB"
+                    marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
                   />
-                  <p style={{ fontSize: FS.base, color: '#1D9E75', margin: 0 }}>
-                    Nenhum aquífero relevante identificado
-                  </p>
-                </div>
+                </>
               )}
-              <FonteLabel
-                dataIso={timestamps.sigmine}
-                fonte="CPRM / SGB"
-                marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
-              />
             </Card>
           </>
         ) : null}
@@ -2631,16 +2952,62 @@ export function RelatorioCompleto({
                     {intel_mineral.preco_referencia_usd_oz.toLocaleString('pt-BR')}
                     /oz
                   </p>
+                  {intel_mineral.preco_referencia_brl_g != null &&
+                  (intel_mineral.cambio_brl_usd ?? metadata?.cambio) != null ? (
+                    <>
+                      <p
+                        style={{
+                          fontSize: FS.h2,
+                          fontWeight: 400,
+                          color: 'rgba(241, 239, 232, 0.6)',
+                          margin: '0 0 4px 0',
+                        }}
+                      >
+                        ≈ R${' '}
+                        {intel_mineral.preco_referencia_brl_g.toLocaleString(
+                          'pt-BR',
+                          {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          },
+                        )}
+                        /g
+                      </p>
+                      <p
+                        style={{
+                          fontSize: FS.min,
+                          color: 'rgba(241, 239, 232, 0.4)',
+                          fontStyle: 'italic',
+                          margin: '0 0 10px 0',
+                          lineHeight: 1.45,
+                        }}
+                      >
+                        (câmbio R${' '}
+                        {(
+                          intel_mineral.cambio_brl_usd ?? metadata?.cambio
+                        )!.toLocaleString('pt-BR', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}{' '}
+                        {(() => {
+                          const d = formatarDataIsoPtBr(
+                            intel_mineral.cambio_data ?? metadata?.cambio_data,
+                          )
+                          return d ? ` em ${d}` : ''
+                        })()}
+                        )
+                      </p>
+                    </>
+                  ) : null}
                   <p
                     style={{
                       fontSize: FS.sm,
-                      color: '#888780',
-                      margin: '0 0 4px 0',
-                      lineHeight: 1.5,
+                      color: 'rgba(241, 239, 232, 0.45)',
+                      margin: '0 0 10px 0',
+                      lineHeight: 1.45,
                     }}
                   >
-                    (≈ USD{' '}
-                    {intel_mineral.preco_medio_usd_t.toLocaleString('pt-BR')}/t)
+                    {intel_mineral.preco_medio_usd_t.toLocaleString('pt-BR')} USD/t
                   </p>
                 </>
               ) : (
@@ -2699,12 +3066,87 @@ export function RelatorioCompleto({
                   </span>
                 )
               })()}
-              <p style={{ fontSize: FS.lg, color: '#888780', margin: 0, lineHeight: 1.5 }}>
-                Demanda projetada 2030: {intel_mineral.demanda_projetada_2030}
-              </p>
+              {intel_mineral.var_1a_pct != null ? (
+                <p
+                  style={{
+                    fontSize: FS.sm,
+                    color: '#888780',
+                    margin: '0 0 14px 0',
+                    lineHeight: 1.45,
+                  }}
+                >
+                  Var. 12m:{' '}
+                  {intel_mineral.var_1a_pct > 0 ? '+' : ''}
+                  {intel_mineral.var_1a_pct}%
+                  {intel_mineral.cagr_5a_pct != null ? (
+                    <span style={{ marginLeft: 16 }}>
+                      CAGR 5a:{' '}
+                      {intel_mineral.cagr_5a_pct > 0 ? '+' : ''}
+                      {intel_mineral.cagr_5a_pct}%
+                    </span>
+                  ) : null}
+                </p>
+              ) : null}
+              <div style={{ marginTop: 14 }}>
+                <p
+                  style={{
+                    ...subsecaoTituloStyle,
+                    marginBottom: 8,
+                  }}
+                >
+                  Demanda projetada 2030
+                </p>
+                {intel_mineral.demanda_projetada_estruturada ? (
+                  <>
+                    <p
+                      style={{
+                        fontSize: FS.lg,
+                        fontWeight: 600,
+                        color: '#E8A830',
+                        margin: '0 0 10px 0',
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      {intel_mineral.demanda_projetada_estruturada.titulo}
+                    </p>
+                    <div style={{ margin: 0, padding: 0 }}>
+                      {intel_mineral.demanda_projetada_estruturada.itens.map(
+                        (t, i, arr) => (
+                          <p
+                            key={i}
+                            style={{
+                              margin:
+                                i < arr.length - 1 ? '0 0 8px 0' : 0,
+                              padding: 0,
+                              color: '#D3D1C7',
+                              fontSize: FS.md,
+                              lineHeight: 1.55,
+                            }}
+                          >
+                            {t}
+                          </p>
+                        ),
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <p
+                    style={{
+                      fontSize: FS.lg,
+                      color: '#D3D1C7',
+                      margin: 0,
+                      lineHeight: 1.55,
+                    }}
+                  >
+                    {intel_mineral.demanda_projetada_2030}
+                  </p>
+                )}
+              </div>
               <FonteLabel
-                dataIso={timestamps.preco_spot}
-                fonte="Trading Economics / LME · Projeção: IEA Critical Minerals Report 2025"
+                dataIso={
+                  metadata?.calculado_em?.slice(0, 10) ?? timestamps.preco_spot
+                }
+                fonte={fontePrecoTendenciaCard}
                 marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
               />
             </Card>
@@ -2736,18 +3178,39 @@ export function RelatorioCompleto({
 
             <Card>
               <SecLabel branco>Estratégia nacional</SecLabel>
-              <p
+              <div
                 style={{
-                  fontSize: FS.lg,
-                  color: '#D3D1C7',
-                  margin: 0,
-                  lineHeight: 1.5,
                   borderLeft: '3px solid #EF9F27',
                   paddingLeft: 12,
                 }}
               >
-                {intel_mineral.estrategia_nacional}
-              </p>
+                {intel_mineral.estrategia_nacional_itens &&
+                intel_mineral.estrategia_nacional_itens.length > 0 ? (
+                  intel_mineral.estrategia_nacional_itens.map((t, i) => (
+                    <p
+                      key={i}
+                      style={{
+                        fontSize: FS.lg,
+                        color: '#D3D1C7',
+                        margin: i === 0 ? 0 : '10px 0 0 0',
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      {t}
+                    </p>
+                  ))
+                ) : (
+                  <BlocoParagrafosMultilinha
+                    texto={intel_mineral.estrategia_nacional}
+                    styleParagrafo={{
+                      fontSize: FS.lg,
+                      color: '#D3D1C7',
+                      margin: 0,
+                      lineHeight: 1.5,
+                    }}
+                  />
+                )}
+              </div>
               <FonteLabel
                 dataIso={timestamps.alertas_legislativos}
                 fonte="MME / Plano Nacional de Mineração 2030 + Adoo (monitoramento regulatório)"
@@ -2771,32 +3234,113 @@ export function RelatorioCompleto({
                   marginBottom: 8,
                 }}
               >
-                Valor estimado da reserva
+                Valor in-situ teórico
               </p>
               <p
                 style={{
                   fontSize: FS.highlight,
                   fontWeight: 500,
                   color: '#EF9F27',
-                  margin: '0 0 20px 0',
+                  margin:
+                    valorReservaBrlBiPorHa != null ? '0 0 8px 0' : '0 0 20px 0',
                 }}
               >
-                {formatarUsdMiInteligente(intel_mineral.valor_estimado_usd_mi)}
+                {valorReservaUsdMiPorHa != null
+                  ? `${formatarUsdMiInteligente(valorReservaUsdMiPorHa)}/ha`
+                  : '—'}
               </p>
-              <p
-                style={{
+              {valorReservaBrlBiPorHa != null ? (
+                <>
+                  <p
+                    style={{
+                      fontSize: FS.display,
+                      fontWeight: 500,
+                      color: 'rgba(232, 168, 48, 0.7)',
+                      margin:
+                        (intel_mineral.cambio_brl_usd ?? metadata?.cambio) !=
+                        null
+                          ? '0 0 4px 0'
+                          : '0 0 16px 0',
+                    }}
+                  >
+                    ≈ R${' '}
+                    {valorReservaBrlBiPorHa.toLocaleString('pt-BR', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}{' '}
+                    bi/ha
+                  </p>
+                  {(intel_mineral.cambio_brl_usd ?? metadata?.cambio) != null ? (
+                    <p
+                      style={{
+                        fontSize: FS.min,
+                        color: 'rgba(241, 239, 232, 0.4)',
+                        fontStyle: 'italic',
+                        margin: '0 0 16px 0',
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      (câmbio R${' '}
+                      {(
+                        intel_mineral.cambio_brl_usd ?? metadata?.cambio
+                      )!.toLocaleString('pt-BR', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                      {(() => {
+                        const d = formatarDataIsoPtBr(
+                          intel_mineral.cambio_data ?? metadata?.cambio_data,
+                        )
+                        return d ? ` em ${d}` : ''
+                      })()}
+                      )
+                    </p>
+                  ) : null}
+                </>
+              ) : null}
+              <BlocoParagrafosMultilinha
+                texto={intel_mineral.metodologia_estimativa}
+                styleParagrafo={{
                   fontSize: FS.sm,
                   color: '#A3A29A',
                   fontStyle: 'italic',
                   margin: 0,
                   lineHeight: 1.5,
                 }}
+              />
+              <div
+                style={{
+                  marginTop: 8,
+                  textAlign: 'left',
+                }}
               >
-                {intel_mineral.metodologia_estimativa}
-              </p>
+                <p
+                  style={{
+                    fontSize: FS.min,
+                    color: 'rgba(241, 239, 232, 0.7)',
+                    margin: 0,
+                    lineHeight: 1.55,
+                  }}
+                >
+                  Estimativa teórica padronizada de valor in-situ por hectare,
+                  com premissas fixas de volume e teor.
+                </p>
+                <p
+                  style={{
+                    fontSize: FS.min,
+                    color: 'rgba(239, 159, 39, 0.7)',
+                    margin: '6px 0 0 0',
+                    lineHeight: 1.55,
+                  }}
+                >
+                  Não substitui avaliação de recurso (NI 43-101 / JORC). Valor
+                  realizável depende de cubagem, viabilidade técnica, recuperação
+                  metalúrgica e condições de mercado.
+                </p>
+              </div>
               <FonteLabel
                 dataIso={timestamps.sigmine}
-                fonte="Estimativa Terrae / SIGMINE"
+                fonte="Estimativa TERRADAR / SIGMINE"
                 marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
               />
             </div>
@@ -2807,18 +3351,22 @@ export function RelatorioCompleto({
                   ...subsecaoTituloStyle,
                   color: '#F1EFE8',
                   margin: 0,
-                  marginBottom: TITULO_SECAO_MARGIN_BOTTOM_PX,
+                  marginBottom: 4,
                 }}
               >
                 Processos vizinhos
               </p>
-              <div
-                style={
-                  pdfGerando
-                    ? { overflow: 'visible' }
-                    : { overflowX: 'auto' }
-                }
+              <p
+                style={{
+                  fontSize: FS.min,
+                  color: 'rgba(241, 239, 232, 0.4)',
+                  margin: '0 0 8px 0',
+                  lineHeight: 1.45,
+                }}
               >
+                111 processos num raio de 25 km · 5 mais relevantes
+              </p>
+              <div style={{ overflowX: 'auto' }}>
                 <table
                   style={{
                     width: '100%',
@@ -2828,7 +3376,14 @@ export function RelatorioCompleto({
                 >
                   <thead>
                     <tr>
-                      {(['Nº processo', 'Titular', 'Fase'] as const).map((h) => (
+                      {(
+                        [
+                          'Nº processo',
+                          'Titular',
+                          'Substância',
+                          'Área (ha)',
+                        ] as const
+                      ).map((h) => (
                         <th
                           key={h}
                           style={{
@@ -2864,67 +3419,63 @@ export function RelatorioCompleto({
                           </span>
                         </CamadaTooltipHover>
                       </th>
-                      <th
-                        style={{
-                          textAlign: 'left',
-                          ...subsecaoTituloStyle,
-                          fontSize: FS.min,
-                          padding: '0 6px 8px 0',
-                        }}
-                      >
-                        <CamadaTooltipHover
-                          texto="Risk Score do processo vizinho (0-100, calculado pelo modelo de risco Terrae)"
-                          maxWidthPx={300}
-                        >
-                          <span
-                            style={{
-                              cursor: 'help',
-                              textDecoration: 'underline dotted',
-                              textUnderlineOffset: 2,
-                            }}
-                          >
-                            RISK
-                          </span>
-                        </CamadaTooltipHover>
-                      </th>
                     </tr>
                   </thead>
                   <tbody>
-                    {intel_mineral.processos_vizinhos.map((v, i) => (
-                      <tr
-                        key={v.numero}
-                        style={{
-                          backgroundColor: i % 2 === 0 ? '#0D0D0C' : '#1A1A18',
-                        }}
-                      >
-                        <td style={{ padding: '8px 6px 8px 0', color: '#D3D1C7' }}>
-                          {v.numero}
-                        </td>
-                        <td style={{ padding: '8px 6px 8px 0', color: '#D3D1C7' }}>
-                          <TextoTruncadoComTooltip
-                            text={v.titular}
-                            placement="above"
-                            className="block max-w-[100px] terrae-pdf-titular-wrap"
-                            style={{ fontSize: FS.md, color: '#D3D1C7' }}
-                          />
-                        </td>
-                        <td style={{ padding: '8px 6px 8px 0', color: '#D3D1C7' }}>
-                          {v.fase}
-                        </td>
-                        <td style={{ padding: '8px 6px 8px 0', color: '#D3D1C7' }}>
-                          {v.distancia_km} km
-                        </td>
-                        <td
+                    {[...intel_mineral.processos_vizinhos]
+                      .sort(
+                        (a, b) =>
+                          (a.distancia_km ?? 0) - (b.distancia_km ?? 0),
+                      )
+                      .map((v, i) => (
+                        <tr
+                          key={v.numero}
                           style={{
-                            padding: '8px 0',
-                            fontWeight: 500,
-                            color: corFaixaRisco(v.risk_score),
+                            backgroundColor: i % 2 === 0 ? '#0D0D0C' : '#1A1A18',
                           }}
                         >
-                          {v.risk_score}
-                        </td>
-                      </tr>
-                    ))}
+                          <td
+                            style={{ padding: '8px 6px 8px 0', color: '#D3D1C7' }}
+                          >
+                            {v.numero}
+                          </td>
+                          <td
+                            style={{ padding: '8px 6px 8px 0', color: '#D3D1C7' }}
+                          >
+                            <span
+                              title={v.titular}
+                              style={{ display: 'block', minWidth: 0 }}
+                            >
+                              <TextoTruncadoComTooltip
+                                text={v.titular}
+                                placement="above"
+                                className="block max-w-[100px] terrae-pdf-titular-wrap"
+                                style={{ fontSize: FS.md, color: '#D3D1C7' }}
+                              />
+                            </span>
+                          </td>
+                          <td
+                            style={{ padding: '8px 6px 8px 0', color: '#D3D1C7' }}
+                          >
+                            {abreviarSubstanciaVizinho(v.substancia)}
+                          </td>
+                          <td
+                            style={{ padding: '8px 6px 8px 0', color: '#D3D1C7' }}
+                          >
+                            {Math.round(v.area_ha).toLocaleString('pt-BR')}
+                          </td>
+                          <td
+                            style={{ padding: '8px 6px 8px 0', color: '#D3D1C7' }}
+                          >
+                            {v.distancia_km == null
+                              ? 'N/D'
+                              : `${v.distancia_km.toLocaleString('pt-BR', {
+                                  minimumFractionDigits: 1,
+                                  maximumFractionDigits: 1,
+                                })} km`}
+                          </td>
+                        </tr>
+                      ))}
                   </tbody>
                 </table>
               </div>
@@ -3071,6 +3622,7 @@ export function RelatorioCompleto({
                                   width: `${Math.min(100, Math.max(0, val))}%`,
                                   height: '100%',
                                   backgroundColor: cor,
+                                  borderRadius: 3,
                                 }}
                               />
                             </div>
@@ -3299,6 +3851,188 @@ export function RelatorioCompleto({
           </>
         ) : null}
 
+        {aba === 'oportunidade' ? (
+          oportunidade ? (
+            <>
+              <div
+                style={{
+                  flexShrink: 0,
+                  width: '100%',
+                  overflow: 'visible',
+                  minWidth: 0,
+                }}
+              >
+                <Card style={{ overflow: 'visible' }}>
+                  <SecLabel branco>Opportunity Score</SecLabel>
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                      gap: 12,
+                      width: '100%',
+                      maxWidth: '100%',
+                      boxSizing: 'border-box',
+                    }}
+                  >
+                    {(
+                      [
+                        ['conservador', 'CONSERVADOR'] as const,
+                        ['moderado', 'MODERADO'] as const,
+                        ['arrojado', 'ARROJADO'] as const,
+                      ] as const
+                    ).map(([k, titulo]) => {
+                      const p = oportunidade.perfis[k]
+                      const corFaixa = corFaixaOS(p.valor)
+                      const isAtivo = perfilOportunidadeAtivo === k
+                      const opacidadeConteudo = isAtivo
+                        ? 1
+                        : hoverPerfilOportunidade === k
+                          ? 0.75
+                          : 0.5
+                      return (
+                        <button
+                          key={k}
+                          type="button"
+                          aria-pressed={isAtivo}
+                          onClick={() => setPerfilOportunidadeAtivo(k)}
+                          onMouseEnter={() => setHoverPerfilOportunidade(k)}
+                          onMouseLeave={() => setHoverPerfilOportunidade(null)}
+                          style={{
+                            minWidth: 0,
+                            backgroundColor: '#161614',
+                            borderRadius: 6,
+                            padding: '16px 12px',
+                            textAlign: 'center',
+                            boxSizing: 'border-box',
+                            cursor: 'pointer',
+                            border: isAtivo
+                              ? `1px solid ${corFaixa}`
+                              : '1px solid rgba(255,255,255,0.06)',
+                            borderTop: isAtivo
+                              ? `3px solid ${corFaixa}`
+                              : `3px solid ${hexCorParaRgba(corFaixa, 0.4)}`,
+                            transition:
+                              'opacity 150ms ease, border-color 150ms ease',
+                            appearance: 'none',
+                            fontFamily: 'inherit',
+                            margin: 0,
+                          }}
+                        >
+                          <div
+                            style={{
+                              opacity: opacidadeConteudo,
+                              transition: 'opacity 150ms ease',
+                            }}
+                          >
+                            <p
+                              style={{
+                                fontSize: 11,
+                                fontWeight: 600,
+                                letterSpacing: '0.8px',
+                                textTransform: 'uppercase',
+                                color: '#888780',
+                                margin: '0 0 10px 0',
+                              }}
+                            >
+                              {titulo}
+                            </p>
+                            <p
+                              style={{
+                                margin: 0,
+                                lineHeight: 1,
+                              }}
+                            >
+                              <CamadaTooltipHover
+                                conteudo={
+                                  <OportunidadePerfilCalcTooltipContent
+                                    perfil={k}
+                                    oportunidade={oportunidade}
+                                  />
+                                }
+                                maxWidthPx={280}
+                                preferAbove
+                                inlineWrap
+                              >
+                                <span
+                                  style={{
+                                    fontSize: 36,
+                                    fontWeight: 500,
+                                    color: corFaixa,
+                                    fontVariantNumeric: 'tabular-nums',
+                                    borderBottom: `1px dotted ${corFaixa}`,
+                                    cursor: 'help',
+                                    display: 'inline-block',
+                                  }}
+                                >
+                                  {p.valor}
+                                </span>
+                              </CamadaTooltipHover>
+                            </p>
+                            <p
+                              style={{
+                                fontSize: FS.md,
+                                fontWeight: 600,
+                                color: corFaixa,
+                                marginTop: 4,
+                                marginBottom: 0,
+                              }}
+                            >
+                              {getOpportunityLabel(p.valor)}
+                            </p>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <FonteLabel
+                    dataIso={timestamps.cadastro_mineiro}
+                    fonte="TERRADAR, com dados ANM, IBGE, Tesouro e USGS"
+                    marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
+                    noWrap
+                  />
+                </Card>
+              </div>
+
+              <div
+                style={{
+                  flexShrink: 0,
+                  width: '100%',
+                  overflow: 'visible',
+                  minWidth: 0,
+                }}
+              >
+                <Card style={{ overflow: 'visible' }}>
+                  <OportunidadeDecomposicaoRelatorioPanel
+                    oportunidade={oportunidade}
+                    pesosPerfil={
+                      PESOS_OS_POR_PERFIL[perfilOportunidadeAtivo]
+                    }
+                  />
+                </Card>
+              </div>
+
+              <div
+                style={{
+                  flexShrink: 0,
+                  width: '100%',
+                  overflow: 'visible',
+                  minWidth: 0,
+                }}
+              >
+                <OportunidadeAnaliseTerradarCard
+                  cruzamento={oportunidade.cruzamento}
+                />
+              </div>
+            </>
+          ) : (
+            <Card>
+              <p style={{ fontSize: FS.base, color: '#888780', margin: 0 }}>
+                Dados de Opportunity Score não disponíveis para este processo.
+              </p>
+            </Card>
+          )
+        ) : null}
+
         {aba === 'fiscal' ? (
           <>
             <Card>
@@ -3307,13 +4041,13 @@ export function RelatorioCompleto({
                   fontSize: FS.jumbo,
                   fontWeight: 500,
                   textAlign: 'center',
-                  color: capagCor(fiscal.capag),
+                  color: capagCorExibicao(fiscal.capag),
                   margin: '0 0 8px 0',
                 }}
               >
                 <CamadaTooltipHover
                   className="inline-block"
-                  texto={textoTooltipCapag(fiscal.capag)}
+                  texto={textoTooltipCapagPublico(fiscal.capag)}
                   maxWidthPx={360}
                   preferBelow
                   bubblePadding="10px 12px"
@@ -3329,17 +4063,136 @@ export function RelatorioCompleto({
                   </span>
                 </CamadaTooltipHover>
               </p>
-              <p
-                style={{
-                  fontSize: FS.lg,
-                  color: '#888780',
-                  textAlign: 'center',
-                  margin: '0 0 8px 0',
-                  lineHeight: 1.5,
-                }}
-              >
-                {fiscal.capag_descricao}
-              </p>
+              {fiscal.capag_estruturado ? (
+                <>
+                  {fiscal.capag_estruturado.resumo
+                    .split('\n')
+                    .map((linha) => linha.trim())
+                    .filter(Boolean)
+                    .map((linha, i, arr) => (
+                      <p
+                        key={i}
+                        style={{
+                          fontSize: FS.lg,
+                          color: '#888780',
+                          textAlign: 'center',
+                          margin:
+                            i === 0
+                              ? '0 0 4px 0'
+                              : i === arr.length - 1
+                                ? '0 0 16px 0'
+                                : '0 0 4px 0',
+                          lineHeight: 1.5,
+                        }}
+                      >
+                        {linha}
+                      </p>
+                    ))}
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 0,
+                      margin: '0 0 16px 0',
+                    }}
+                  >
+                    {fiscal.capag_estruturado.indicadores.map((ind, i, arr) => (
+                      <div
+                        key={ind.label}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          gap: 12,
+                          paddingTop: i === 0 ? 0 : 10,
+                          paddingBottom: 10,
+                          borderBottom:
+                            i < arr.length - 1
+                              ? '1px dotted rgba(255,255,255,0.08)'
+                              : 'none',
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: FS.sm,
+                            color: SECTION_TITLE,
+                            fontWeight: 600,
+                            letterSpacing: '0.06em',
+                            textTransform: 'uppercase',
+                            lineHeight: 1.35,
+                          }}
+                        >
+                          {ind.label}
+                        </span>
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 10,
+                            flexShrink: 0,
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontSize: FS.metric,
+                              fontWeight: 500,
+                              color: '#F1EFE8',
+                              fontVariantNumeric: 'tabular-nums',
+                              lineHeight: 1.2,
+                            }}
+                          >
+                            {ind.valor}
+                          </span>
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              minWidth: 28,
+                              padding: '4px 8px',
+                              borderRadius: 4,
+                              fontSize: FS.sm,
+                              fontWeight: 700,
+                              color: capagCorIndicadorLinha(ind.nota),
+                              backgroundColor: hexCorParaRgba(
+                                capagCorIndicadorLinha(ind.nota),
+                                0.15,
+                              ),
+                            }}
+                          >
+                            {ind.nota}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {fiscal.capag_estruturado.rodape ? (
+                    <p
+                      style={{
+                        fontSize: FS.sm,
+                        color: '#888780',
+                        fontStyle: 'italic',
+                        textAlign: 'center',
+                        margin: '0 0 8px 0',
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      {fiscal.capag_estruturado.rodape}
+                    </p>
+                  ) : null}
+                </>
+              ) : (
+                <BlocoParagrafosMultilinha
+                  texto={fiscal.capag_descricao}
+                  styleParagrafo={{
+                    fontSize: FS.lg,
+                    color: '#888780',
+                    textAlign: 'center',
+                    margin: '0 0 8px 0',
+                    lineHeight: 1.5,
+                  }}
+                />
+              )}
               <p
                 style={{
                   fontSize: FS.lg,
@@ -3354,7 +4207,7 @@ export function RelatorioCompleto({
               </p>
               <FonteLabel
                 dataIso={timestamps.siconfi}
-                fonte="STN / SICONFI"
+                fonte="STN / CAPAG Municipios"
                 marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
               />
             </Card>
@@ -3363,7 +4216,7 @@ export function RelatorioCompleto({
               <div
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: '1fr 1fr 1fr',
+                  gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
                   gap: 12,
                 }}
               >
@@ -3371,14 +4224,22 @@ export function RelatorioCompleto({
                   {
                     l: 'Receita própria',
                     v: fiscal.receita_propria_mi,
+                    fmt: 'brl_mi' as const,
                   },
                   {
                     l: 'Dívida consolidada',
                     v: fiscal.divida_consolidada_mi,
+                    fmt: 'brl_mi' as const,
                   },
                   {
                     l: 'PIB municipal',
                     v: fiscal.pib_municipal_mi,
+                    fmt: 'brl_mi' as const,
+                  },
+                  {
+                    l: 'IDH',
+                    v: 0,
+                    fmt: 'idh' as const,
                   },
                 ].map((m) => (
                   <div
@@ -3410,7 +4271,9 @@ export function RelatorioCompleto({
                         lineHeight: 1.2,
                       }}
                     >
-                      {formatarRealBrlInteligente(m.v * 1_000_000)}
+                      {m.fmt === 'idh'
+                        ? fiscal.idh_municipal ?? 'Não disponível'
+                        : formatarRealBrlInteligente(m.v * 1_000_000)}
                     </p>
                   </div>
                 ))}
@@ -3449,12 +4312,26 @@ export function RelatorioCompleto({
               </p>
               <FonteLabel
                 dataIso={timestamps.siconfi}
-                fonte="STN / FINBRA"
+                fonte="STN / SICONFI (DCA)"
                 marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
               />
+              {fiscal.contexto_referencia_fiscal ? (
+                <p
+                  style={{
+                    fontSize: FS.sm,
+                    color: '#888780',
+                    marginTop: 10,
+                    lineHeight: 1.45,
+                  }}
+                >
+                  {fiscal.contexto_referencia_fiscal}
+                </p>
+              ) : null}
             </Card>
 
-            {fiscal.cfem_historico.length > 0 ||
+            {(fiscal.cfem_processo?.length ?? 0) > 0 ||
+            (fiscal.cfem_municipio?.length ?? 0) > 0 ||
+            fiscal.cfem_historico.length > 0 ||
             fiscal.cfem_municipal_historico.length > 0 ? (
               <Card>
                 <SecLabel branco style={{ marginBottom: 4 }}>
@@ -3471,74 +4348,34 @@ export function RelatorioCompleto({
                 >
                   Arrecadação deste processo comparada ao total do município
                 </p>
-                {fiscal.cfem_historico.some(
-                  (h) => h.valor_recolhido_brl > 0,
-                ) ? (
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      alignItems: 'center',
-                      gap: 16,
-                      marginBottom: 18,
-                    }}
-                  >
-                    <div
-                      style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-                    >
-                      <span
-                        style={{
-                          width: 12,
-                          height: 12,
-                          borderRadius: 2,
-                          backgroundColor: '#4A90B8',
-                          flexShrink: 0,
-                        }}
-                        aria-hidden
-                      />
-                      <span style={{ fontSize: FS.sm, color: '#D3D1C7' }}>
-                        Este processo
-                      </span>
-                    </div>
-                    <div
-                      style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-                    >
-                      <span
-                        style={{
-                          width: 12,
-                          height: 12,
-                          borderRadius: 2,
-                          backgroundColor: '#EF9F27',
-                          flexShrink: 0,
-                        }}
-                        aria-hidden
-                      />
-                      <span style={{ fontSize: FS.sm, color: '#D3D1C7' }}>
-                        Município
-                      </span>
-                    </div>
-                  </div>
-                ) : null}
                 {(() => {
-                  const processoTemCfem = fiscal.cfem_historico.some(
+                  const cfemProc =
+                    fiscal.cfem_processo.length > 0
+                      ? fiscal.cfem_processo
+                      : fiscal.cfem_historico
+                  const cfemMun =
+                    fiscal.cfem_municipio.length > 0
+                      ? fiscal.cfem_municipio
+                      : fiscal.cfem_municipal_historico.map((h) => ({
+                          ano: h.ano,
+                          valor_recolhido_brl: h.valor_total_municipio_brl,
+                        }))
+                  const processoTemCfem = cfemProc.some(
                     (h) => h.valor_recolhido_brl > 0,
                   )
                   const procPorAno = new Map(
-                    fiscal.cfem_historico.map((h) => [
-                      h.ano,
-                      h.valor_recolhido_brl,
-                    ]),
+                    cfemProc.map((h) => [h.ano, h.valor_recolhido_brl]),
                   )
                   const munPorAno = new Map(
-                    fiscal.cfem_municipal_historico.map((h) => [
+                    cfemMun.map((h) => [
                       h.ano,
-                      h.valor_total_municipio_brl,
+                      valorBrlCfemMunicipalHistorico(h),
                     ]),
                   )
                   const anos = [
                     ...new Set([
-                      ...fiscal.cfem_historico.map((h) => h.ano),
-                      ...fiscal.cfem_municipal_historico.map((h) => h.ano),
+                      ...cfemProc.map((h) => h.ano),
+                      ...cfemMun.map((h) => h.ano),
                     ]),
                   ].sort((a, b) => a - b)
                   const maxProc = Math.max(
@@ -3550,18 +4387,16 @@ export function RelatorioCompleto({
                     1,
                   )
                   const trackH = 80
-                  const totalProc = fiscal.cfem_historico.reduce(
+                  const totalProc = cfemProc.reduce(
                     (s, h) => s + h.valor_recolhido_brl,
                     0,
                   )
-                  const totalMun = fiscal.cfem_municipal_historico.reduce(
-                    (s, h) => s + h.valor_total_municipio_brl,
+                  const totalMun = cfemMun.reduce(
+                    (s, h) => s + valorBrlCfemMunicipalHistorico(h),
                     0,
                   )
-                  const pctRep =
-                    totalMun > 0 ? (100 * totalProc) / totalMun : null
                   let linhaPct: ReactNode = null
-                  if (!processoTemCfem) {
+                  if (totalProc === 0) {
                     linhaPct = (
                       <p
                         style={{
@@ -3571,14 +4406,15 @@ export function RelatorioCompleto({
                           lineHeight: 1.45,
                         }}
                       >
-                        Este processo não gerou CFEM no período 2020-2024
+                        Este processo não gerou CFEM no período 2022-2025
                       </p>
                     )
-                  } else if (pctRep != null && totalMun > 0) {
-                    const muitoBaixa = pctRep > 0 && pctRep < 1
+                  } else if (totalMun > 0) {
+                    const pct = (totalProc / totalMun) * 100
+                    const muitoBaixa = pct > 0 && pct < 1
                     const pctTexto = muitoBaixa
                       ? '< 1%'
-                      : `${pctRep.toLocaleString('pt-BR', {
+                      : `${pct.toLocaleString('pt-BR', {
                           maximumFractionDigits: 1,
                           minimumFractionDigits: 0,
                         })}%`
@@ -3602,6 +4438,19 @@ export function RelatorioCompleto({
                         da CFEM municipal
                       </p>
                     )
+                  } else {
+                    linhaPct = (
+                      <p
+                        style={{
+                          fontSize: FS.min,
+                          color: '#5F5E5A',
+                          margin: '10px 0 0 0',
+                          lineHeight: 1.5,
+                        }}
+                      >
+                        Dados municipais indisponíveis
+                      </p>
+                    )
                   }
                   const dataIsoCfem = [
                     timestamps.cfem,
@@ -3609,6 +4458,60 @@ export function RelatorioCompleto({
                   ].reduce((a, b) => (a > b ? a : b))
                   return (
                     <>
+                      {processoTemCfem ? (
+                        <div
+                          style={{
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            alignItems: 'center',
+                            gap: 16,
+                            marginBottom: 18,
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                            }}
+                          >
+                            <span
+                              style={{
+                                width: 12,
+                                height: 12,
+                                borderRadius: 2,
+                                backgroundColor: '#4A90B8',
+                                flexShrink: 0,
+                              }}
+                              aria-hidden
+                            />
+                            <span style={{ fontSize: FS.sm, color: '#D3D1C7' }}>
+                              Este processo
+                            </span>
+                          </div>
+                          <div
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                            }}
+                          >
+                            <span
+                              style={{
+                                width: 12,
+                                height: 12,
+                                borderRadius: 2,
+                                backgroundColor: '#EF9F27',
+                                flexShrink: 0,
+                              }}
+                              aria-hidden
+                            />
+                            <span style={{ fontSize: FS.sm, color: '#D3D1C7' }}>
+                              Município
+                            </span>
+                          </div>
+                        </div>
+                      ) : null}
                       <RelatorioCfemBarrasComTooltip
                         processoTemCfem={processoTemCfem}
                         anos={anos}
@@ -3769,7 +4672,18 @@ export function RelatorioCompleto({
 
             <Card>
               <SecLabel branco>Estimativa CFEM em operação</SecLabel>
-              {processo.regime === 'bloqueio_permanente' ? (
+              {fiscal.estimativa_cfem_anual_operacao_mi === 0 ? (
+                <p
+                  style={{
+                    fontSize: FS.lg,
+                    color: '#5F5E5A',
+                    margin: 0,
+                    lineHeight: 1.5,
+                  }}
+                >
+                  Sem estimativa disponível
+                </p>
+              ) : processo.regime === 'bloqueio_permanente' ? (
                 <p
                   style={{
                     fontSize: FS.xxl,
@@ -3807,36 +4721,195 @@ export function RelatorioCompleto({
                       (projeção condicional ao levantamento do bloqueio)
                     </p>
                   ) : null}
+                  <p
+                    style={{
+                      fontSize: FS.lg,
+                      color: SECTION_TITLE,
+                      margin: '0 0 10px 0',
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    Estimativa de CFEM anual em fase de operação
+                  </p>
+                  <p
+                    style={{
+                      fontSize: FS.lg,
+                      color: '#888780',
+                      margin: '6px 0 0 0',
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    Alíquota aplicável:{' '}
+                    <span style={{ color: '#F1EFE8' }}>
+                      {fiscal.aliquota_cfem_pct.toLocaleString('pt-BR', {
+                        minimumFractionDigits: 1,
+                        maximumFractionDigits: 2,
+                      })}
+                      %
+                    </span>
+                  </p>
+                  {mostrarContextoCfemComparativo ? (
+                    <div
+                      style={{
+                        borderTop: '1px solid #2A2A28',
+                        marginTop: 16,
+                        paddingTop: 14,
+                      }}
+                    >
+                      <p
+                        style={{
+                          fontSize: FS.min,
+                          fontWeight: 600,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em',
+                          color: '#8E8D87',
+                          textAlign: 'left',
+                          margin: '0 0 10px 0',
+                          lineHeight: 1.35,
+                        }}
+                      >
+                        CONTEXTO COMPARATIVO
+                      </p>
+                      {mostrarCfemLinha1 ? (
+                        <p
+                          style={{
+                            fontSize: FS.sm,
+                            color: '#D3D1C7',
+                            lineHeight: 1.5,
+                            margin: '0 0 8px 0',
+                          }}
+                        >
+                          <span style={{ color: '#5F5E5A' }}>• </span>
+                          {processo.municipio} arrecadou{' '}
+                          <span
+                            style={{ color: '#EF9F27', fontWeight: 500 }}
+                          >
+                            {formatarRealBrlInteligente(cfemMunicipalTotalBrl)}
+                          </span>{' '}
+                          de CFEM nos últimos {anosCfemMunicipal} anos (todas as
+                          substâncias)
+                        </p>
+                      ) : null}
+                      {mostrarCfemLinha2 ? (
+                        <p
+                          style={{
+                            fontSize: FS.sm,
+                            color: '#D3D1C7',
+                            lineHeight: 1.5,
+                            margin: '0 0 8px 0',
+                          }}
+                        >
+                          <span style={{ color: '#5F5E5A' }}>• </span>
+                          Este processo sozinho geraria{' '}
+                          {cfemRepresentatividadePct <= 100 ? (
+                            <>
+                              <span
+                                style={{ color: '#EF9F27', fontWeight: 500 }}
+                              >
+                                ~{cfemRepresentatividadePct}%
+                              </span>{' '}
+                              da CFEM histórica total do município por ano
+                            </>
+                          ) : cfemRepresentatividadePct <= 500 ? (
+                            <>
+                              <span
+                                style={{ color: '#EF9F27', fontWeight: 500 }}
+                              >
+                                ~
+                                {(cfemRepresentatividadePct / 100).toLocaleString(
+                                  'pt-BR',
+                                  {
+                                    minimumFractionDigits: 1,
+                                    maximumFractionDigits: 1,
+                                  },
+                                )}
+                                x
+                              </span>{' '}
+                              a média anual de CFEM do município
+                            </>
+                          ) : (
+                            <>
+                              <span
+                                style={{ color: '#EF9F27', fontWeight: 500 }}
+                              >
+                                ~
+                                {Math.round(
+                                  cfemEstimadaAnualBrl /
+                                    cfemMunicipalMediaAnualBrl,
+                                ).toLocaleString('pt-BR')}
+                                x
+                              </span>{' '}
+                              a média anual de CFEM do município
+                            </>
+                          )}
+                        </p>
+                      ) : null}
+                      {mostrarCfemLinha3 && cfemPctPib != null ? (
+                        <p
+                          style={{
+                            fontSize: FS.sm,
+                            color: '#D3D1C7',
+                            lineHeight: 1.5,
+                            margin: 0,
+                          }}
+                        >
+                          <span style={{ color: '#5F5E5A' }}>• </span>
+                          Equivale a{' '}
+                          <span
+                            style={{ color: '#EF9F27', fontWeight: 500 }}
+                          >
+                            ~
+                            {cfemPctPib.toLocaleString('pt-BR', {
+                              minimumFractionDigits: 1,
+                              maximumFractionDigits: 1,
+                            })}
+                            %
+                          </span>{' '}
+                          do PIB municipal (
+                          <span
+                            style={{ color: '#EF9F27', fontWeight: 500 }}
+                          >
+                            {formatarRealBrlInteligente(
+                              fiscal.pib_municipal_mi * 1_000_000,
+                            )}
+                          </span>
+                          )
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {processoCfemDisclaimerHipotetico(processo) ? (
+                    <div
+                      style={{
+                        marginTop: 12,
+                        backgroundColor: '#1A1A18',
+                        borderRadius: 6,
+                        padding: '10px 12px',
+                        borderLeft: '3px solid #E8A830',
+                      }}
+                    >
+                      <p
+                        style={{
+                          fontSize: FS.md,
+                          color: '#A3A29A',
+                          fontStyle: 'italic',
+                          lineHeight: 1.5,
+                          margin: 0,
+                        }}
+                      >
+                        Projeção hipotética. Processo em fase de pesquisa, sem
+                        produção ativa. Valores baseados em declaração comercial
+                        do titular, não em relatório de lavra aprovado pela ANM.
+                      </p>
+                    </div>
+                  ) : null}
+                  <FonteLabel
+                    dataIso={timestamps.cfem}
+                    fonte="ANM / CFEM · Lei 13.540/2017 · IBGE Cidades"
+                    marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
+                  />
                 </>
               )}
-              <p
-                style={{
-                  fontSize: FS.lg,
-                  color: SECTION_TITLE,
-                  margin: '0 0 10px 0',
-                  lineHeight: 1.5,
-                }}
-              >
-                Estimativa de CFEM anual em fase de operação
-              </p>
-              <p
-                style={{
-                  fontSize: FS.lg,
-                  color: '#888780',
-                  margin: '6px 0 0 0',
-                  lineHeight: 1.5,
-                }}
-              >
-                Alíquota aplicável:{' '}
-                <span style={{ color: '#F1EFE8' }}>
-                  {fiscal.aliquota_cfem_pct}%
-                </span>
-              </p>
-              <FonteLabel
-                dataIso={timestamps.cfem}
-                fonte="ANM / CFEM · Alíquotas"
-                marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
-              />
             </Card>
           </>
         ) : null}

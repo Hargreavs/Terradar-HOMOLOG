@@ -236,7 +236,9 @@ export function RiskDecomposicaoRelatorioPanel({
                   alignItems: 'center',
                   gap: 6,
                   minWidth: 0,
-                  flex: 1,
+                  flexGrow: 1,
+                  flexShrink: 1,
+                  flexBasis: 0,
                 }}
               >
                 <ChevronRight
@@ -278,50 +280,64 @@ export function RiskDecomposicaoRelatorioPanel({
                   display: 'flex',
                   alignItems: 'center',
                   gap: 8,
+                  flexGrow: 0,
                   flexShrink: 0,
-                  minWidth: 0,
+                  flexBasis: 'auto',
                 }}
               >
                 <div
                   style={{
                     width: 72,
-                    maxWidth: '22vw',
                     height: 5,
-                    backgroundColor: '#2C2C2A',
                     borderRadius: 3,
+                    backgroundColor: '#2C2C2A',
                     overflow: 'hidden',
+                    flexShrink: 0,
+                    boxSizing: 'border-box',
                   }}
                 >
                   <div
                     style={{
-                      height: '100%',
                       width: `${Math.min(100, Math.max(0, d.det.score))}%`,
-                      backgroundColor: corBar,
+                      height: '100%',
                       borderRadius: 3,
+                      backgroundColor: corBar,
                     }}
                   />
                 </div>
-                <CamadaTooltipHover
-                  conteudo={
-                    <RiskDimensionCalcTooltipContent dim={d.key} det={d.det} />
-                  }
-                  maxWidthPx={280}
-                  preferAbove
+                <div
+                  style={{
+                    width: 40,
+                    flexShrink: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'flex-end',
+                  }}
                 >
-                  <span
-                    style={{
-                      fontSize: FS.lg,
-                      fontWeight: 700,
-                      color: corBar,
-                      whiteSpace: 'nowrap',
-                      fontVariantNumeric: 'tabular-nums',
-                      borderBottom: `1px dotted ${corBar}`,
-                      cursor: 'help',
-                    }}
+                  <CamadaTooltipHover
+                    conteudo={
+                      <RiskDimensionCalcTooltipContent dim={d.key} det={d.det} />
+                    }
+                    maxWidthPx={280}
+                    preferAbove
+                    inlineWrap
                   >
-                    {d.det.score}
-                  </span>
-                </CamadaTooltipHover>
+                    <span
+                      style={{
+                        fontSize: FS.lg,
+                        fontWeight: 700,
+                        color: corBar,
+                        whiteSpace: 'nowrap',
+                        fontVariantNumeric: 'tabular-nums',
+                        borderBottom: `1px dotted ${corBar}`,
+                        cursor: 'help',
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      {d.det.score}
+                    </span>
+                  </CamadaTooltipHover>
+                </div>
               </div>
             </button>
 
@@ -348,7 +364,9 @@ export function RiskDecomposicaoRelatorioPanel({
                           color: '#D3D1C7',
                           lineHeight: 1.35,
                           minWidth: 0,
-                          flex: '1 1 120px',
+                          flexGrow: 1,
+                          flexShrink: 1,
+                          flexBasis: 120,
                           cursor: 'default',
                         }}
                       >

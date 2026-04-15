@@ -37,7 +37,7 @@ export function CamadaTooltipHover({
   bubbleBackgroundColor = '#2C2C2A',
   bubbleBorder = '1px solid #3a3a38',
   bubblePadding = '6px 10px',
-  /** Só acima do alvo (ex.: gatilho centrado no drawer lateral — evita lateral no mapa). */
+  /** Só acima do alvo (ex.: gatilho centrado no drawer lateral; evita lateral no mapa). */
   preferAbove = false,
   /** Abaixo do alvo, centrado (ex.: letra CAPAG). Ignora `preferAbove`. */
   preferBelow = false,

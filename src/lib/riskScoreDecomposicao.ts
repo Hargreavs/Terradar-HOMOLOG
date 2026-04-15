@@ -47,6 +47,8 @@ export const SUBSTANCIA_RISK_LOOKUP: Record<string, number> = {
   NIOBIO: 40,
   COBRE: 45,
   OURO: 50,
+  /** Mesmo perfil de risco geológico que OURO (SIGMINE “minério de ouro”). */
+  'MINERIO DE OURO': 50,
   NIQUEL: 55,
   GRAFITA: 55,
   ESTANHO: 45,
@@ -416,7 +418,7 @@ const UF_AMAZONIA_LEGAL = new Set(['AM', 'PA', 'RR', 'AP', 'AC', 'RO'])
 
 /**
  * Mock ambiental: só entra fator se a área do processo (bbox) intercepta a feição
- * das camadas GeoJSON usadas no mapa — alinha texto de risco ao desenho das camadas.
+ * das camadas GeoJSON usadas no mapa; alinha texto de risco ao desenho das camadas.
  * Score = min(100, soma dos pesos dos fatores presentes).
  */
 export function ambientalDetalheMockFromProcesso(p: {
@@ -425,6 +427,22 @@ export function ambientalDetalheMockFromProcesso(p: {
   lng: number
   uf: string
 }): RiskDimensaoDetalhe {
+  /** Processo real 864.231/2017: score ambiental auditado (aquífero / unidade granular). */
+  if (p.id === 'p_864231') {
+    return {
+      score: 10,
+      variaveis: [
+        {
+          nome: 'Proximidade a aquífero',
+          valor: 10,
+          texto:
+            'Depósito Aluvionar (Qa), Unidade Granular (Gr): sobreposição (0 km; CPRM/SGB + SIGMINE 12/04/2026)',
+          fonte: 'CPRM/SGB + SIGMINE',
+        },
+      ],
+    }
+  }
+
   const proc = processFootprintBBox(p.id, p.lat, p.lng)
   const id = p.id
 
@@ -480,7 +498,7 @@ export function ambientalDetalheMockFromProcesso(p: {
     variaveis.push({
       nome: 'Sobreposição com APP',
       valor: 25,
-      texto: `${tipo} (${appPct}% da área; ${String(appFeat.properties?.municipio ?? '—')}/${String(appFeat.properties?.uf ?? '—')})`,
+      texto: `${tipo} (${appPct}% da área; ${String(appFeat.properties?.municipio ?? 'N/D')}/${String(appFeat.properties?.uf ?? 'N/D')})`,
       fonte: 'CAR/SICAR',
     })
   }
@@ -496,7 +514,7 @@ export function ambientalDetalheMockFromProcesso(p: {
     variaveis.push({
       nome: 'Proximidade a quilombola',
       valor: 20,
-      texto: `${nome} — intersecta ou margeia a área (referência cartográfica ~${quarKm}km)`,
+      texto: `${nome}: intersecta ou margeia a área (referência cartográfica ~${quarKm}km)`,
       fonte: 'INCRA',
     })
   }
@@ -531,7 +549,7 @@ export function ambientalDetalheMockFromProcesso(p: {
     variaveis.push({
       nome: 'Proximidade a aquífero',
       valor: 10,
-      texto: `${nome} — manancial subjacente ou adjacente à área`,
+      texto: `${nome}: manancial subjacente ou adjacente à área`,
       fonte: 'ANA/CPRM',
     })
   }
@@ -541,7 +559,7 @@ export function ambientalDetalheMockFromProcesso(p: {
     variaveis.push({
       nome: 'Bioma Amazônia',
       valor: 10,
-      texto: 'Amazônia Legal — contexto regional de sensibilidade ambiental',
+      texto: 'Amazônia Legal: contexto regional de sensibilidade ambiental',
       fonte: 'IBGE',
     })
     soma += 10
@@ -585,6 +603,35 @@ function socialWeighted(i: number, d: number, c: number, cap: number): number {
 }
 
 function variaveisSociais(p: Processo, alvo: number): RiskDimensaoVariavel[] {
+  if (p.id === 'p_864231') {
+    return [
+      {
+        nome: 'IDH-M',
+        valor: 35,
+        texto: 'IDH 0,662 (Jaú do Tocantins/TO)',
+        fonte: 'PNUD/Atlas Brasil',
+      },
+      {
+        nome: 'Densidade populacional',
+        valor: 5,
+        texto: '1,54 hab/km² (baixa densidade)',
+        fonte: 'IBGE/Censo',
+      },
+      {
+        nome: 'Comunidades tradicionais',
+        valor: 5,
+        texto: '112,5 km (TI Avá-Canoeiro, referência FUNAI)',
+        fonte: 'FUNAI',
+      },
+      {
+        nome: 'CAPAG município',
+        valor: 40,
+        texto: 'CAPAG C (situação fiscal frágil)',
+        fonte: 'STN/SICONFI',
+      },
+    ]
+  }
+
   const idh = idhProxyUf(p.uf)
   const idhStr = idh.toFixed(2)
   const capMap: Record<string, number> = { A: 12, B: 28, C: 55, D: 85 }
@@ -679,7 +726,40 @@ function variaveisSociais(p: Processo, alvo: number): RiskDimensaoVariavel[] {
   ]
 }
 
-function variaveisRegulatorias(p: Processo, alvo: number): RiskDimensaoVariavel[] {
+function variaveisRegulatorias(p: Processo, _alvo: number): RiskDimensaoVariavel[] {
+  /** 864.231/2017: decomposição alinhada ao recálculo SEI (GU vencida, alvará 2028). */
+  if (p.id === 'p_864231') {
+    return [
+      {
+        nome: 'Tempo sem despacho',
+        valor: 20,
+        texto:
+          '30 dias desde despacho 13/03/2026 (faixa 30–180d; ANM/SEI)',
+        fonte: 'ANM/SEI',
+      },
+      {
+        nome: 'Pendências',
+        valor: 30,
+        texto:
+          'GU vencida em 12/07/2025; pedido de renovação 10/05/2025 aguardando ANM (SEI)',
+        fonte: 'SEI-ANM',
+      },
+      {
+        nome: 'Alertas restritivos',
+        valor: 5,
+        texto: '0 alertas restritivos (neutro)',
+        fonte: 'Adoo',
+      },
+      {
+        nome: 'Proximidade de caducidade',
+        valor: 10,
+        texto:
+          'Alvará prorrogado até 24/11/2028; >365 dias restantes (ANM/SEI)',
+        fonte: 'ANM/SEI',
+      },
+    ]
+  }
+
   const dias = diasDesdeIso(p.ultimo_despacho_data)
   const tempoScore = Math.min(100, Math.round((dias / 360) * 55))
   const pendN =
@@ -732,7 +812,7 @@ function variaveisRegulatorias(p: Processo, alvo: number): RiskDimensaoVariavel[
   ]
 
   const cur = vars.reduce((a, v) => a + v.valor, 0) / vars.length
-  const factor = cur > 0 ? alvo / cur : 1
+  const factor = cur > 0 ? _alvo / cur : 1
   return vars.map((v) => ({
     ...v,
     valor: Math.min(100, Math.max(0, Math.round(v.valor * factor))),

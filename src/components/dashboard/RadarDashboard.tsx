@@ -604,7 +604,7 @@ export function RadarDashboard({
             alignItems: 'stretch',
           }}
         >
-          {/* Altura fixa (viewport): não estica com o bloco de alertas — evita “salto” do arco/SVG */}
+          {/* Altura fixa (viewport): não estica com o bloco de alertas; evita “salto” do arco/SVG */}
           <div
             style={{
               position: 'absolute',
