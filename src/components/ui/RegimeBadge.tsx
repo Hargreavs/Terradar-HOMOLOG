@@ -31,25 +31,41 @@ function estiloVariante(
   const dotted = { borderBottom: `1px dotted ${color}` }
   if (variant === 'popup' || variant === 'drawer') {
     const c = REGIME_COLORS_MAP[regime] ?? color
+    const baseDrawerExportAlign: CSSProperties =
+      variant === 'drawer'
+        ? {
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minHeight: 28,
+            padding: '4px 12px',
+            borderRadius: 6,
+            maxWidth: '100%',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap' as const,
+          }
+        : {}
     const spanStyle: CSSProperties = {
-      display: 'inline-block',
-      borderRadius: 4,
-      padding: '3px 10px',
+      display: variant === 'drawer' ? undefined : 'inline-block',
+      borderRadius: variant === 'drawer' ? undefined : 4,
+      padding: variant === 'drawer' ? undefined : '3px 10px',
       fontSize: 11,
       fontWeight: 600,
       letterSpacing: '0.5px',
       textTransform: 'uppercase' as const,
-      lineHeight: 1.25,
+      lineHeight: variant === 'drawer' ? 1.2 : 1.25,
       color: c,
       backgroundColor: 'transparent',
       border: `1.5px solid ${c}`,
       cursor: 'help',
       boxSizing: 'border-box' as const,
+      ...baseDrawerExportAlign,
     }
     return {
       wrapClassName:
         variant === 'drawer'
-          ? 'inline-flex max-w-full shrink-0'
+          ? 'inline-flex min-h-[28px] max-w-full min-w-0 flex-1 items-stretch'
           : 'inline-block',
       spanStyle,
     }
