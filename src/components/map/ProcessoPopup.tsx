@@ -7,7 +7,6 @@ import {
   Scan,
   type LucideIcon,
 } from 'lucide-react'
-import { relatoriosMock } from '../../data/relatorio.mock'
 import { corFaixaOS } from '../../lib/oportunidadeRelatorioUi'
 import { normalizeSubstanciaKey, SUBSTANCIA_DEFS } from '../../lib/substancias'
 import { useMapStore } from '../../store/useMapStore'
@@ -146,8 +145,7 @@ export function ProcessoPopupContent({
     relatorioDrawerAberto && processoSelId === processo.id
 
   const r = processo.risk_score
-  const relatorio = relatoriosMock[processo.id]
-  const osConservador = relatorio?.oportunidade?.perfis.conservador.valor
+  const osConservador = processo.os_conservador_persistido ?? null
   const { Icon: SubstIcon, color: substIconColor } = substanciaIconForPopup(
     processo.substancia,
   )

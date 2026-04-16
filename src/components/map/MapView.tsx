@@ -66,6 +66,11 @@ import {
   MOTION_MAP_INTRO_THEME_DELAY_MS,
   motionMs,
 } from '../../lib/motionDurations'
+import type { ReportData } from '../../lib/reportTypes'
+import {
+  fetchProcessoCompleto,
+  type ProcessoCompleto,
+} from '../../lib/processoApi'
 import type { AlertaLegislativo, Processo, Regime } from '../../types'
 import { radarFeedIdParaAlertaProcesso } from '../../lib/radarFeedIdFromProcessoAlerta'
 import {
@@ -89,6 +94,76 @@ import { RelatorioCompleto } from './RelatorioCompleto'
  * 2000 polígonos em zoom ≤ 5 não são utilizáveis no UI. Escalamos pra
  * preservar performance de backend e responsividade do Mapbox.
  */
+/**
+ * Enriquece o processo do store com RS + OS após `buildReportData` + `fetchProcessoCompleto`
+ * (ReportData: valores; row API: JSONB persistido quando existir).
+ */
+function buildEnrichmentPatch(
+  p: Processo,
+  rd: ReportData,
+  api: ProcessoCompleto,
+): Partial<Processo> {
+  const patch: Partial<Processo> = {
+    id: p.id,
+    risk_breakdown: {
+      geologico: rd.rs_geo.valor,
+      ambiental: rd.rs_amb.valor,
+      social: rd.rs_soc.valor,
+      regulatorio: rd.rs_reg.valor,
+    },
+  }
+  if (rd.os_conservador != null) {
+    patch.os_conservador_persistido = rd.os_conservador
+  }
+  if (rd.os_moderado != null) {
+    patch.os_moderado_persistido = rd.os_moderado
+  }
+  if (rd.os_arrojado != null) {
+    patch.os_arrojado_persistido = rd.os_arrojado
+  }
+  const osLabel = String(rd.os_classificacao ?? '').trim()
+  if (osLabel !== '') {
+    patch.os_label_persistido = osLabel
+  }
+
+  const proc = api.processo as Record<string, unknown> | undefined
+  const sp = proc?.scores_persistido as
+    | {
+        dimensoes_risco?: Processo['dimensoes_risco_persistido']
+        dimensoes_oportunidade?: Record<string, unknown> | null
+      }
+    | null
+    | undefined
+  const dim = sp?.dimensoes_risco
+  if (dim != null && typeof dim === 'object') {
+    const dg = dim as NonNullable<Processo['dimensoes_risco_persistido']>
+    const hasAny =
+      dg.geologico != null ||
+      dg.ambiental != null ||
+      dg.social != null ||
+      dg.regulatorio != null
+    if (hasAny) {
+      patch.dimensoes_risco_persistido = dim
+    }
+  }
+
+  const dOpo = sp?.dimensoes_oportunidade
+  if (dOpo != null && typeof dOpo === 'object') {
+    const keys = Object.keys(dOpo)
+    if (keys.length > 0) {
+      const hasDim =
+        dOpo.atratividade != null ||
+        dOpo.viabilidade != null ||
+        dOpo.seguranca != null ||
+        keys.some((k) => (dOpo as Record<string, unknown>)[k] != null)
+      if (hasDim) {
+        patch.dimensoes_oportunidade_persistido = dOpo
+      }
+    }
+  }
+  return patch
+}
+
 function getViewportProcessosLimit(zoom: number): number {
   if (zoom <= 4) return 250
   if (zoom === 5) return 400
@@ -1064,6 +1139,32 @@ export function MapView() {
     setRelatorioApiLoading(false)
   }, [processoSelecionado?.id])
 
+  useEffect(() => {
+    const p = processoSelecionado
+    if (!p) return
+    if (!p.fromApi) return
+    if (p.risk_breakdown && p.os_conservador_persistido != null) return
+
+    const controller = new AbortController()
+    void (async () => {
+      try {
+        const [rd, api] = await Promise.all([
+          buildReportData(p.numero),
+          fetchProcessoCompleto(p.numero),
+        ])
+        if (controller.signal.aborted) return
+        useMapStore.getState().mergeProcessoSelecionado(
+          buildEnrichmentPatch(p, rd, api),
+        )
+      } catch (e) {
+        if (!controller.signal.aborted) {
+          console.warn('[enrichment] fetch falhou:', e)
+        }
+      }
+    })()
+    return () => controller.abort()
+  }, [processoSelecionado?.id])
+
   const verRelatorioRef = useRef<() => void>(() => {})
   verRelatorioRef.current = () => {
     if (pendingFecharProcessoTimeoutRef.current) {
@@ -1084,8 +1185,14 @@ export function MapView() {
         setRelatorioApiLoading(true)
         void (async () => {
           try {
-            const rd = await buildReportData(p.numero)
+            const [rd, api] = await Promise.all([
+              buildReportData(p.numero),
+              fetchProcessoCompleto(p.numero),
+            ])
             setRelatorioDadosApi(relatorioDataFromReportData(rd, p))
+            useMapStore.getState().mergeProcessoSelecionado(
+              buildEnrichmentPatch(p, rd, api),
+            )
           } catch (e) {
             setRelatorioApiErro(
               e instanceof Error
@@ -1122,8 +1229,14 @@ export function MapView() {
       setRelatorioApiLoading(true)
       void (async () => {
         try {
-          const rd = await buildReportData(p.numero)
+          const [rd, api] = await Promise.all([
+            buildReportData(p.numero),
+            fetchProcessoCompleto(p.numero),
+          ])
           setRelatorioDadosApi(relatorioDataFromReportData(rd, p))
+          useMapStore.getState().mergeProcessoSelecionado(
+            buildEnrichmentPatch(p, rd, api),
+          )
         } catch (e) {
           setRelatorioApiErro(
             e instanceof Error

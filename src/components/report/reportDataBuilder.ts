@@ -25,20 +25,23 @@ import {
   normalizeCapagNotaDisplay,
 } from '../../lib/fiscalDisplay'
 import { piorIndicadorCapag } from '../../lib/capagPiorIndicador'
+import type { ReportLang } from '../../lib/reportLang'
+import { getReportStrings } from '../report/reportL10n'
 
 /** 1 t métrica = 32.151 oz troy (preço master em USD/t → exibição em oz). */
 const OZ_POR_TONELADA = 32_151
 /** Premissa TERRADAR: volume de massa por ha para val in-situ (30 m × 2,5 t/m³ × 10.000 m²). */
 const TONELADAS_POR_HA = 750_000
 
-function riskDimFromScore(score: number): RiskDimension {
+function riskDimFromScore(score: number, lang: ReportLang): RiskDimension {
   const color = corFaixaRiscoValor(score)
-  let label = 'Moderado'
-  if (score <= 10) label = 'Muito baixo'
-  else if (score <= 25) label = 'Baixo'
-  else if (score <= 50) label = 'Moderado'
-  else if (score <= 75) label = 'Alto'
-  else label = 'Muito alto'
+  const en = lang === 'en'
+  let label = en ? 'Moderate' : 'Moderado'
+  if (score <= 10) label = en ? 'Very low' : 'Muito baixo'
+  else if (score <= 25) label = en ? 'Low' : 'Baixo'
+  else if (score <= 50) label = en ? 'Moderate' : 'Moderado'
+  else if (score <= 75) label = en ? 'High' : 'Alto'
+  else label = en ? 'Very high' : 'Muito alto'
 
   return {
     valor: score,
@@ -48,13 +51,260 @@ function riskDimFromScore(score: number): RiskDimension {
   }
 }
 
-function osDimFromScore(valor: number): RiskDimension {
+/**
+ * Dicionário de substâncias minerais PT→EN. Usado para traduzir `substancia_anm`
+ * e os itens da coluna "Commodities" do histórico CFEM quando o relatório é emitido em EN.
+ *
+ * A chave é a grafia PT canônica (com acentos, capitalização natural); a função de tradução
+ * também normaliza versões UPPERCASE e sem acentos. Mantém o valor original quando desconhecido.
+ */
+const COMMODITY_PT_EN: Record<string, string> = {
+  'Minério de ouro': 'Gold ore',
+  'Ouro': 'Gold',
+  'Minério de ferro': 'Iron ore',
+  'Ferro': 'Iron',
+  'Minério de cobre': 'Copper ore',
+  'Cobre': 'Copper',
+  'Minério de zircônio': 'Zirconium ore',
+  'Minério de zirconio': 'Zirconium ore',
+  'Zircônio': 'Zirconium',
+  'Zirconio': 'Zirconium',
+  'Bauxita': 'Bauxite',
+  'Nióbio': 'Niobium',
+  'Niobio': 'Niobium',
+  'Lítio': 'Lithium',
+  'Litio': 'Lithium',
+  'Níquel': 'Nickel',
+  'Niquel': 'Nickel',
+  'Manganês': 'Manganese',
+  'Manganes': 'Manganese',
+  'Estanho': 'Tin',
+  'Chumbo': 'Lead',
+  'Zinco': 'Zinc',
+  'Alumínio': 'Aluminum',
+  'Aluminio': 'Aluminum',
+  'Prata': 'Silver',
+  'Terras Raras': 'Rare earth elements',
+  'Terras raras': 'Rare earth elements',
+  'Neodímio': 'Neodymium',
+  'Neodimio': 'Neodymium',
+  'Praseodímio': 'Praseodymium',
+  'Praseodimio': 'Praseodymium',
+  'Térbio': 'Terbium',
+  'Terbio': 'Terbium',
+  'Disprósio': 'Dysprosium',
+  'Disprosio': 'Dysprosium',
+  'Quartzo': 'Quartz',
+  'Areia': 'Sand',
+  'Granito': 'Granite',
+  'Argila': 'Clay',
+  'Calcário': 'Limestone',
+  'Calcario': 'Limestone',
+  'Fosfato': 'Phosphate',
+  'Gipsita': 'Gypsum',
+  'Dolomita': 'Dolomite',
+  'Mármore': 'Marble',
+  'Marmore': 'Marble',
+  'Ardósia': 'Slate',
+  'Ardosia': 'Slate',
+  'Caulim': 'Kaolin',
+  'Cromita': 'Chromite',
+  'Cassiterita': 'Cassiterite',
+  'Diamante': 'Diamond',
+  'Turmalina': 'Tourmaline',
+}
+
+/**
+ * Dicionário de regimes e fases minerárias (ANM) PT→EN.
+ * Cobre tanto o nome do regime quanto o valor bruto que às vezes vem na fase (ex.: "Autorização de Pesquisa").
+ */
+const TENURE_PT_EN: Record<string, string> = {
+  'Autorização de Pesquisa': 'Exploration authorization',
+  'Autorizacao de Pesquisa': 'Exploration authorization',
+  'Concessão de Lavra': 'Mining concession',
+  'Concessao de Lavra': 'Mining concession',
+  'Requerimento de Pesquisa': 'Exploration application',
+  'Requerimento de Lavra': 'Mining application',
+  'Requerimento de Licenciamento': 'Licensing application',
+  'Requerimento de Registro de Extração': 'Extraction registration application',
+  'Requerimento de Lavra Garimpeira': 'Garimpo permit application',
+  'Licenciamento': 'Licensing',
+  'Registro de Extração': 'Extraction registration',
+  'Registro de Extracao': 'Extraction registration',
+  'Disponibilidade': 'Availability',
+  'Grupamento Mineiro': 'Mining group',
+  'Permissão de Lavra Garimpeira': 'Garimpo mining permit',
+  'Permissao de Lavra Garimpeira': 'Garimpo mining permit',
+  'Pesquisa': 'Exploration',
+  'Lavra': 'Production',
+  'Requerimento': 'Application',
+  'Concessão': 'Concession',
+  'Concessao': 'Concession',
+  'Suspensão': 'Suspension',
+  'Suspensao': 'Suspension',
+  'Encerrado': 'Closed',
+  'Encerramento': 'Closure',
+}
+
+function ciLookup(dict: Record<string, string>, raw: string): string | null {
+  const norm = stripAccents(raw).toUpperCase().replace(/\s+/g, ' ').trim()
+  for (const k of Object.keys(dict)) {
+    const kn = stripAccents(k).toUpperCase().replace(/\s+/g, ' ').trim()
+    if (kn === norm) return dict[k]
+  }
+  return null
+}
+
+/**
+ * Traduz uma substância PT→EN preservando o case original (UPPERCASE / Title Case / lower).
+ * Suporta listas separadas por vírgula, ponto e vírgula ou barra.
+ */
+function translateCommodity(raw: string, lang: ReportLang): string {
+  if (lang !== 'en') return raw
+  const s = String(raw ?? '').trim()
+  if (!s) return raw
+  return s
+    .split(/[,;/]/)
+    .map((part) => {
+      const trimmed = part.trim()
+      if (!trimmed) return trimmed
+      const hit = ciLookup(COMMODITY_PT_EN, trimmed)
+      if (!hit) return trimmed
+      if (trimmed === trimmed.toUpperCase()) return hit.toUpperCase()
+      return hit
+    })
+    .filter((x) => x !== '')
+    .join(', ')
+}
+
+/**
+ * Traduz regime/fase minerária PT→EN; mantém o raw quando desconhecido.
+ */
+function translateTenure(raw: string, lang: ReportLang): string {
+  if (lang !== 'en') return raw
+  const s = String(raw ?? '').trim()
+  if (!s) return raw
+  const hit = ciLookup(TENURE_PT_EN, s)
+  return hit ?? raw
+}
+
+/**
+ * Dicionário de frases canônicas do `estrategia_nacional` PNM PT→EN. Muitos valores vêm do
+ * master de substâncias como texto livre, então fazemos substituição por frase inteira quando
+ * reconhecemos o texto (fallback: mantém o PT, que é menos ruim que uma tradução grosseira).
+ */
+const PNM_PHRASES_PT_EN: Array<[RegExp | string, string]> = [
+  [
+    /Rastreabilidade da cadeia produtiva \(LGPD e compliance LBMA\) e combate ao garimpo ilegal\. Formaliza[cç][aã]o de pequenos produtores via cooperativas \(PNM 2030 \/ Decreto 10\.966\/2022\)\./i,
+    'Supply-chain traceability (LGPD and LBMA compliance) and enforcement against illegal mining. Formalization of small-scale producers through cooperatives (PNM 2030 / Decree 10,966/2022).',
+  ],
+  [
+    /PNM 2030: rastreabilidade da cadeia produtiva e combate ao garimpo ilegal\. Certifica[cç][aã]o de origem para exporta[cç][aã]o \(compliance LBMA\)\. Formaliza[cç][aã]o e fortalecimento de MPEs e cooperativas garimpeiras\./i,
+    'PNM 2030: traceability of the mineral supply chain and enforcement against illegal mining. Origin certification for exports (LBMA compliance). Formalization and strengthening of small-scale miners and cooperatives.',
+  ],
+  [
+    /Brasil domina 94% das reservas e 88% da produ[cç][aã]o mundial\. CBMM refer[eê]ncia global\./i,
+    'Brazil holds 94% of world reserves and 88% of global production. CBMM is the global benchmark.',
+  ],
+  [
+    /Pol[ií]tica de valor agregado e log[ií]stica ferrovi[aá]ria\/portu[aá]ria; CPAs e desmatamento zero na mira regulat[oó]ria\./i,
+    'Value-added policy and rail/port logistics; CPAs and zero-deforestation targets under regulatory focus.',
+  ],
+  [
+    /Programas de mapeamento mineral e incentivo a estudos de viabilidade em prov[ií]ncias polimet[aá]licas\./i,
+    'Mineral mapping programs and incentives for feasibility studies in polymetallic provinces.',
+  ],
+  [
+    /Integra[cç][aã]o com parque solar e cer[aâ]mica; exig[eê]ncias de licenciamento ambiental municipal\./i,
+    'Integration with solar and ceramics clusters; municipal environmental licensing requirements.',
+  ],
+  [
+    /Expans[aã]o de refinarias costeiras e log[ií]stica mineral; aten[cç][aã]o a licen[cç]as de supress[aã]o em Cerrado\./i,
+    'Expansion of coastal refineries and mineral logistics; attention to vegetation-removal permits in the Cerrado.',
+  ],
+  [
+    /Inser[cç][aã]o em rota estrat[eé]gica de minerais cr[ií]ticos; prioridade a estudos de salar e pegmatitos com ESG refor[cç]ado\./i,
+    'Inclusion in the strategic critical-minerals route; priority on salar and pegmatite studies with reinforced ESG.',
+  ],
+  [
+    /Integra[cç][aã]o com polo de Goi[aá]s\/Tocantins e incentivos [aà] metalurgia de primeira transforma[cç][aã]o\./i,
+    'Integration with the Goiás/Tocantins hub and incentives for first-stage metallurgy.',
+  ],
+  [
+    /Acompanhamento setorial ANM e pol[ií]tica mineral\./i,
+    'Sectoral monitoring by ANM and mineral policy.',
+  ],
+]
+
+function translateEstrategiaPnm(raw: string, lang: ReportLang): string {
+  if (lang !== 'en') return raw
+  const s = String(raw ?? '').trim()
+  if (!s) return raw
+  for (const [needle, repl] of PNM_PHRASES_PT_EN) {
+    if (typeof needle === 'string') {
+      if (s === needle) return repl
+    } else if (needle.test(s)) {
+      return s.replace(needle, repl)
+    }
+  }
+  return raw
+}
+
+/**
+ * Traduz rótulos PT comuns do domínio (classificações, tendência de preço) para EN quando
+ * o relatório é emitido em inglês. Preserva valores desconhecidos inalterados.
+ */
+function translatePtLabel(raw: string, lang: ReportLang): string {
+  if (lang !== 'en') return raw
+  const s = String(raw ?? '').trim()
+  if (!s) return raw
+  const map: Record<string, string> = {
+    // Classificações de risco
+    'risco baixo': 'Low risk',
+    'risco médio': 'Medium risk',
+    'risco medio': 'Medium risk',
+    'risco alto': 'High risk',
+    // Classificações de oportunidade / genéricas
+    'muito favorável': 'Very favorable',
+    'muito favoravel': 'Very favorable',
+    'favorável': 'Favorable',
+    'favoravel': 'Favorable',
+    'moderada': 'Moderate',
+    'moderado': 'Moderate',
+    'desfavorável': 'Unfavorable',
+    'desfavoravel': 'Unfavorable',
+    // Tendências de mercado (master_substancias.tendencia)
+    'alta': 'Rising',
+    'em alta': 'Rising',
+    'estável': 'Stable',
+    'estavel': 'Stable',
+    'lateral': 'Sideways',
+    'baixa': 'Falling',
+    'em baixa': 'Falling',
+    'queda': 'Falling',
+    // Faixas
+    'muito baixo': 'Very low',
+    'muito baixa': 'Very low',
+    'baixo': 'Low',
+    'muito alto': 'Very high',
+    'muito alta': 'Very high',
+    'alto': 'High',
+    // Fases
+    'pesquisa': 'Exploration',
+    'lavra': 'Production',
+  }
+  const hit = map[s.toLowerCase()]
+  return hit ?? raw
+}
+
+function osDimFromScore(valor: number, lang: ReportLang): RiskDimension {
   const color = corFaixaOS(valor)
-  let label = 'Moderado'
-  if (valor >= 80) label = 'Muito favorável'
-  else if (valor >= 65) label = 'Favorável'
-  else if (valor >= 45) label = 'Moderado'
-  else label = 'Desfavorável'
+  const en = lang === 'en'
+  let label = en ? 'Moderate' : 'Moderado'
+  if (valor >= 80) label = en ? 'Very favorable' : 'Muito favorável'
+  else if (valor >= 65) label = en ? 'Favorable' : 'Favorável'
+  else if (valor >= 45) label = en ? 'Moderate' : 'Moderado'
+  else label = en ? 'Unfavorable' : 'Desfavorável'
 
   return {
     valor,
@@ -62,11 +312,6 @@ function osDimFromScore(valor: number): RiskDimension {
     width_pct: Math.min(100, Math.max(0, valor)),
     color,
   }
-}
-
-function nd(s: unknown): string {
-  const t = String(s ?? '').trim()
-  return t === '' ? 'Não disponível' : t
 }
 
 function stripAccents(s: string): string {
@@ -224,7 +469,12 @@ function normalizeTipoLayer(raw: unknown): string {
   }
 }
 
-function buildLayersFromApi(rows: Record<string, unknown>[]): LayerData[] {
+function buildLayersFromApi(
+  rows: Record<string, unknown>[],
+  nd: (s: unknown) => string,
+  tagSobre: string,
+  tagNao: string,
+): LayerData[] {
   if (!rows.length) return []
   return rows.map((row) => {
     const sobrePct = Number(row.sobreposicao_pct ?? 0)
@@ -236,12 +486,15 @@ function buildLayersFromApi(rows: Record<string, unknown>[]): LayerData[] {
       distancia_km: Number(row.distancia_km) || 0,
       sobreposto,
       tag_class: sobreposto ? 'ta' : 'tg',
-      tag_label: sobreposto ? 'Sobreposto' : 'Não',
+      tag_label: sobreposto ? tagSobre : tagNao,
     }
   })
 }
 
-function buildInfraFromApi(rows: Record<string, unknown>[]): InfraData[] {
+function buildInfraFromApi(
+  rows: Record<string, unknown>[],
+  nd: (s: unknown) => string,
+): InfraData[] {
   if (!rows.length) return []
   return rows.map((row) => ({
     tipo: nd(row.tipo),
@@ -275,7 +528,11 @@ function keepClosestPerKey<T extends { distancia_km: number }>(
  * Áreas protegidas: 1 mais próximo por subcategoria (TI, UC por categoria PI/US, Quilombola).
  * Aquíferos: todos (interseções).
  */
-function buildLayersFromPostGIS(analise: AnaliseTerritorial): LayerData[] {
+function buildLayersFromPostGIS(
+  analise: AnaliseTerritorial,
+  tagSobre: string,
+  tagNao: string,
+): LayerData[] {
   const fromAp: LayerData[] = []
 
   for (const ap of analise.areas_protegidas) {
@@ -287,7 +544,7 @@ function buildLayersFromPostGIS(analise: AnaliseTerritorial): LayerData[] {
       distancia_km: ap.distancia_km,
       sobreposto,
       tag_class: sobreposto ? 'ta' : 'tg',
-      tag_label: sobreposto ? 'Sobreposto' : 'Não',
+      tag_label: sobreposto ? tagSobre : tagNao,
     })
   }
 
@@ -304,7 +561,7 @@ function buildLayersFromPostGIS(analise: AnaliseTerritorial): LayerData[] {
       distancia_km: 0,
       sobreposto: true,
       tag_class: 'ta',
-      tag_label: 'Sobreposto',
+      tag_label: tagSobre,
     })
   }
 
@@ -368,27 +625,52 @@ function formatTipoInfra(tipo: string): string {
   }
 }
 
-function cfemHistoricoFromApi(cfem: Record<string, unknown>[]): CfemHistoricoItem[] {
-  return cfem.map((r) => {
+/**
+ * Número máximo de linhas exibidas no quadro «Arrecadação CFEM (histórico)».
+ * Mantemos os 5 anos mais recentes com arrecadação > 0 — descarta anos zerados e trunca a
+ * janela para evitar que a página 5 (Fiscal) estoure o layout impresso.
+ */
+const MAX_CFEM_YEARS = 5
+
+function cfemHistoricoFromApi(
+  cfem: Record<string, unknown>[],
+  nd: (s: unknown) => string,
+  lang: ReportLang,
+): CfemHistoricoItem[] {
+  const mapped = cfem.map((r) => {
     const v = Number(r.valor_brl) || 0
     const br = formatBrlNum(v)
+    const substanciasRaw = Array.isArray(r.substancias)
+      ? r.substancias.map((x) => String(x)).join(', ')
+      : r.substancias
     return {
       ano: Number(r.ano) || 0,
+      valor: v,
       processo_valor: br,
       municipio_valor: br,
-      substancias: nd(
-        Array.isArray(r.substancias)
-          ? r.substancias.map((x) => String(x)).join(', ')
-          : r.substancias,
-      ),
+      substancias: nd(translateCommodity(String(substanciasRaw ?? ''), lang)),
     }
   })
+
+  const topRecent = mapped
+    .filter((r) => r.ano > 0 && r.valor > 0)
+    .sort((a, b) => b.ano - a.ano)
+    .slice(0, MAX_CFEM_YEARS)
+    .sort((a, b) => a.ano - b.ano)
+
+  return topRecent.map((r) => ({
+    ano: r.ano,
+    processo_valor: r.processo_valor,
+    municipio_valor: r.municipio_valor,
+    substancias: r.substancias,
+  }))
 }
 
-function rsClassificacaoLabel(total: number): string {
-  if (total < 40) return 'Risco baixo'
-  if (total <= 69) return 'Risco médio'
-  return 'Risco alto'
+function rsClassificacaoLabel(total: number, lang: ReportLang): string {
+  const en = lang === 'en'
+  if (total < 40) return en ? 'Low risk' : 'Risco baixo'
+  if (total <= 69) return en ? 'Medium risk' : 'Risco médio'
+  return en ? 'High risk' : 'Risco alto'
 }
 
 /**
@@ -427,6 +709,8 @@ function numFiscalOuNull(
 function indicadoresMunicipaisParaTemplate(
   fm: Record<string, unknown> | null,
   processo: Record<string, unknown>,
+  nd: (s: unknown) => string,
+  locale: string,
 ): {
   receita_propria: string
   divida: string
@@ -440,28 +724,28 @@ function indicadoresMunicipaisParaTemplate(
 
   const receita_propria =
     receitaBrl != null && receitaBrl > 0
-      ? `R$ ${(receitaBrl / 1_000_000).toLocaleString('pt-BR', {
+      ? `R$ ${(receitaBrl / 1_000_000).toLocaleString(locale, {
           minimumFractionDigits: 2,
           maximumFractionDigits: 2,
         })} Mi`
-      : 'Não disponível'
+      : nd(null)
 
   const divida = formatDividaConsolidadaExibicao(fm)
 
   const depPct = numFiscalOuNull(fm, 'dep_transferencias_pct')
   const dependencia_transf =
     depPct != null
-      ? `${depPct.toLocaleString('pt-BR', {
+      ? `${depPct.toLocaleString(locale, {
           minimumFractionDigits: 1,
           maximumFractionDigits: 1,
         })}%`
-      : 'Não disponível'
+      : nd(null)
 
   let idh: string
   if (fm?.idh != null && String(fm.idh).trim() !== '') {
     const idhN = Number(fm.idh)
     idh = Number.isFinite(idhN)
-      ? idhN.toLocaleString('pt-BR', {
+      ? idhN.toLocaleString(locale, {
           minimumFractionDigits: 3,
           maximumFractionDigits: 3,
         })
@@ -473,7 +757,7 @@ function indicadoresMunicipaisParaTemplate(
   const pop = numFiscalOuNull(fm, 'populacao')
   const populacao =
     pop != null && pop > 0
-      ? `${pop.toLocaleString('pt-BR')} hab.`
+      ? `${pop.toLocaleString(locale)} hab.`
       : nd(processo.populacao)
 
   return {
@@ -491,7 +775,14 @@ function indicadoresMunicipaisParaTemplate(
  */
 export async function buildReportData(
   numeroProcesso: string,
+  lang: ReportLang = 'pt',
 ): Promise<ReportData> {
+  const t = getReportStrings(lang)
+  const nd = (s: unknown) => {
+    const x = String(s ?? '').trim()
+    return x === '' ? t.nd : x
+  }
+
   const api = await fetchProcessoCompleto(numeroProcesso)
   const p = api.processo as Record<string, unknown>
   const scores = (api.scores ?? null) as Record<string, unknown> | null
@@ -525,56 +816,64 @@ export async function buildReportData(
 
   if (scoresAuto) {
     riskScore = scoresAuto.risk_score
-    rs_classificacao_final = scoresAuto.risk_label
+    rs_classificacao_final = translatePtLabel(scoresAuto.risk_label, lang)
 
-    rsGeo = riskDimFromScore(scoresAuto.risk_breakdown.geologico)
-    rsAmb = riskDimFromScore(scoresAuto.risk_breakdown.ambiental)
-    rsSoc = riskDimFromScore(scoresAuto.risk_breakdown.social)
-    rsReg = riskDimFromScore(scoresAuto.risk_breakdown.regulatorio)
+    rsGeo = riskDimFromScore(scoresAuto.risk_breakdown.geologico, lang)
+    rsAmb = riskDimFromScore(scoresAuto.risk_breakdown.ambiental, lang)
+    rsSoc = riskDimFromScore(scoresAuto.risk_breakdown.social, lang)
+    rsReg = riskDimFromScore(scoresAuto.risk_breakdown.regulatorio, lang)
 
     osCons = scoresAuto.os_conservador
     osMod = scoresAuto.os_moderado
     osArr = scoresAuto.os_arrojado
-    osClass = scoresAuto.os_label_conservador
+    osClass = translatePtLabel(scoresAuto.os_label_conservador, lang)
 
-    osMerc = osDimFromScore(scoresAuto.os_breakdown.atratividade)
-    osViab = osDimFromScore(scoresAuto.os_breakdown.viabilidade)
-    osSeg = osDimFromScore(scoresAuto.os_breakdown.seguranca)
+    osMerc = osDimFromScore(scoresAuto.os_breakdown.atratividade, lang)
+    osViab = osDimFromScore(scoresAuto.os_breakdown.viabilidade, lang)
+    osSeg = osDimFromScore(scoresAuto.os_breakdown.seguranca, lang)
   } else {
     riskScore = Number(scores?.risk_score ?? 0) || 0
     const riskLabelRaw = String(scores?.risk_label ?? '').trim()
-    rs_classificacao_final = riskLabelRaw || rsClassificacaoLabel(riskScore)
+    rs_classificacao_final = riskLabelRaw
+      ? translatePtLabel(riskLabelRaw, lang)
+      : rsClassificacaoLabel(riskScore, lang)
 
     const dimsRisco = parseDimJson(scores?.dimensoes_risco)
     rsGeo = riskDimFromScore(
       scoreFromDimensao(dimsRisco, ['geologico', 'geológico']),
+      lang,
     )
     rsAmb = riskDimFromScore(
       scoreFromDimensao(dimsRisco, ['ambiental']),
+      lang,
     )
-    rsSoc = riskDimFromScore(scoreFromDimensao(dimsRisco, ['social']))
+    rsSoc = riskDimFromScore(scoreFromDimensao(dimsRisco, ['social']), lang)
     rsReg = riskDimFromScore(
       scoreFromDimensao(dimsRisco, ['regulatorio', 'regulatório']),
+      lang,
     )
 
     const dimsOport = parseDimJson(scores?.dimensoes_oportunidade)
     osMerc = osDimFromScore(
       scoreFromDimensao(dimsOport, ['mercado', 'atratividade']),
+      lang,
     )
     osViab = osDimFromScore(
       scoreFromDimensao(dimsOport, ['viabilidade']),
+      lang,
     )
     osSeg = osDimFromScore(
       scoreFromDimensao(dimsOport, ['seguranca', 'segurança']),
+      lang,
     )
 
     osCons = Number(scores?.os_conservador ?? 0) || 0
     osMod = Number(scores?.os_moderado ?? 0) || 0
     osArr = Number(scores?.os_arrojado ?? 0) || 0
-    osClass =
+    const osClassRaw =
       String(scores?.os_classificacao ?? '').trim() ||
-      String(scores?.os_label ?? '').trim() ||
-      'Não disponível'
+      String(scores?.os_label ?? '').trim()
+    osClass = osClassRaw ? translatePtLabel(osClassRaw, lang) : t.nd
   }
 
   const substanciaRaw = String(p.substancia ?? '')
@@ -641,7 +940,7 @@ export async function buildReportData(
   const var12 = Number(mercado?.var_1a_pct ?? 0) || 0
   const cagr5 = Number(mercado?.cagr_5a_pct ?? 0) || 0
 
-  let pibMunicipalStr = 'Não disponível'
+  let pibMunicipalStr = t.nd
   const pibMiFiscal = fiscalMun?.pib_municipal_mi
   if (
     typeof pibMiFiscal === 'number' &&
@@ -698,7 +997,12 @@ export async function buildReportData(
     .map((row) => String((row as { linha?: unknown }).linha ?? '').trim())
     .filter(Boolean)
 
-  const templateFiscal = indicadoresMunicipaisParaTemplate(fiscalMun, p)
+  const templateFiscal = indicadoresMunicipaisParaTemplate(
+    fiscalMun,
+    p,
+    nd,
+    t.locale,
+  )
 
   const faseFmt = fmtFaseFromApi(String(p.fase ?? ''))
   const regimeFmt = fmtRegimeFromApi(String(p.regime ?? ''))
@@ -718,11 +1022,14 @@ export async function buildReportData(
     processo: String(p.numero ?? numeroProcesso),
     titular: nd(p.titular),
     cnpj: nd(p.cnpj_titular ?? p.cnpj),
-    substancia_anm: labelSubstanciaParaExibicao(substanciaRaw),
-    regime: regimeFmt,
-    fase: faseFmt,
+    substancia_anm: translateCommodity(
+      labelSubstanciaParaExibicao(substanciaRaw),
+      lang,
+    ),
+    regime: translateTenure(regimeFmt, lang),
+    fase: translateTenure(faseFmt, lang),
     fase_processo: faseFmt,
-    regime_display: regimeFmt,
+    regime_display: translateTenure(regimeFmt, lang),
     area_ha: areaHa,
     municipio: municipioUf,
     bioma: analise?.bioma?.length
@@ -731,7 +1038,7 @@ export async function buildReportData(
 
     alvara_validade: alvaraRaw
       ? formatIsoToBr(String(alvaraRaw))
-      : 'Não disponível',
+      : nd(null),
     alvara_status: nd(p.alvara_status),
     ultimo_despacho: (() => {
       const ud = p.ultimo_evento_descricao
@@ -786,16 +1093,19 @@ export async function buildReportData(
     mercado_tendencia:
       mercado?.tendencia != null &&
       String(mercado.tendencia).trim() !== ''
-        ? String(mercado.tendencia).trim()
-        : 'Não disponível',
+        ? translatePtLabel(String(mercado.tendencia).trim(), lang)
+        : t.mercadoTendenciaNd,
     cagr_5a_pct: cagr5,
     /** Master: `demanda_projetada_2030` é texto; sem campo em ReportData até o redesenho do PDF. */
     demanda_global_t: 0,
     reservas_mundiais_pct: Number(mercado?.reservas_br_pct ?? 0) || 0,
     producao_mundial_pct: Number(mercado?.producao_br_pct ?? 0) || 0,
     estrategia_nacional: mercado?.estrategia_nacional
-      ? fixEstrategiaNacionalPnmAcentos(String(mercado.estrategia_nacional))
-      : 'Não disponível',
+      ? translateEstrategiaPnm(
+          fixEstrategiaNacionalPnmAcentos(String(mercado.estrategia_nacional)),
+          lang,
+        )
+      : t.nd,
     aplicacoes_substancia: (() => {
       const a = mercado?.aplicacoes
       const u = mercado?.aplicacoes_usgs
@@ -809,13 +1119,21 @@ export async function buildReportData(
     mapa_base64: '',
     layers:
       Array.isArray(api.territorial?.layers) && api.territorial.layers.length > 0
-        ? buildLayersFromApi(api.territorial.layers as Record<string, unknown>[])
+        ? buildLayersFromApi(
+            api.territorial.layers as Record<string, unknown>[],
+            nd,
+            t.tagSobreposto,
+            t.tagNao,
+          )
         : analise
-          ? buildLayersFromPostGIS(analise)
+          ? buildLayersFromPostGIS(analise, t.tagSobreposto, t.tagNao)
           : [],
     infraestrutura:
       Array.isArray(api.territorial?.infra) && api.territorial.infra.length > 0
-        ? buildInfraFromApi(api.territorial.infra as Record<string, unknown>[])
+        ? buildInfraFromApi(
+            api.territorial.infra as Record<string, unknown>[],
+            nd,
+          )
         : analise
           ? buildInfraFromPostGIS(analise)
           : [],
@@ -851,7 +1169,7 @@ export async function buildReportData(
     dependencia_transf: templateFiscal.dependencia_transf,
     populacao: templateFiscal.populacao,
     idh: templateFiscal.idh,
-    fiscal_contexto_referencia: `CAPAG ano-base ${anoBaseCapagStr} | Exercício fiscal ${exercicioFiscalStr}`,
+    fiscal_contexto_referencia: t.fiscalRefTpl(anoBaseCapagStr, exercicioFiscalStr),
     incentivos: {
       programa_estadual:
         incentivosUf != null &&
@@ -866,12 +1184,14 @@ export async function buildReportData(
         0,
       linhas_bndes_nomes: linhasBndesNomes,
     },
-    cfem_historico: cfemHistoricoFromApi(cfemRows),
+    cfem_historico: cfemHistoricoFromApi(cfemRows, nd, lang),
 
     estagio,
     estagio_index,
 
     data_relatorio: dataRelatorio,
     versao: 'R1',
+
+    lang,
   }
 }

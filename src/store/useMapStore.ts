@@ -144,6 +144,8 @@ export interface MapStore {
   ) => void
   toggleCamada: (regime: Regime) => void
   selecionarProcesso: (processo: Processo | null) => void
+  /** Merge shallow no processo selecionado (ex.: enriquecer RS após fetch). Ignora se `patch.id` ≠ atual. */
+  mergeProcessoSelecionado: (patch: Partial<Processo>) => void
   /** Adiciona processo vindo da API (evita duplicar por `numero`). */
   adicionarProcesso: (processo: Processo) => void
   mergeViewportProcessos: (lista: Processo[]) => void
@@ -289,6 +291,14 @@ export const useMapStore = create<MapStore>()(
       selecionarProcesso: (processo) =>
         set({
           processoSelecionado: processo,
+        }),
+
+      mergeProcessoSelecionado: (patch) =>
+        set((state) => {
+          const atual = state.processoSelecionado
+          if (!atual) return state
+          if (patch.id != null && patch.id !== atual.id) return state
+          return { processoSelecionado: { ...atual, ...patch } }
         }),
 
       adicionarProcesso: (processo) =>

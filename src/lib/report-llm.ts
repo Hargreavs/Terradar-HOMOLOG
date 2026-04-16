@@ -9,6 +9,7 @@ import type {
   OportunidadeLLM,
   ReportLLMResult,
 } from './reportTypes'
+import type { ReportLang } from './reportLang'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -43,14 +44,86 @@ REGRAS ABSOLUTAS:
     - No bloco SEGURANÇA DO INVESTIMENTO: citar os marcos regulatórios como evidência de conformidade.
     - NUNCA dizer "pendências regulatórias" se portaria, licença e certidão estão vigentes.`
 
-async function callClaude<T>(userPrompt: string, retries = 2): Promise<T | null> {
+/** Prompt paralelo em EN (US), tom mineração institucional — mesmas regras de PI que o PT. */
+const SYSTEM_PROMPT_EN = `You are a mining intelligence analyst writing for institutional investors at TERRADAR.
+Output ONLY the JSON requested, with no markdown, preamble, or explanation.
+
+LANGUAGE RULE (highest priority):
+- Respond in PROFESSIONAL ENGLISH (US). Use precise mining industry terminology.
+- Do NOT include any Portuguese text in your response, EXCEPT for:
+  - Proper nouns that are official in Portuguese (company names such as "Engegold Mineração Ltda";
+    municipality names such as "Jaú do Tocantins/TO"; state program names such as "Prospera Tocantins";
+    BNDES line names).
+  - Direct quotations from Brazilian regulation (append the English translation in parentheses).
+- All analytical prose, labels, ratings, and integrated readings MUST be in English.
+- The data blocks supplied below are labeled in Portuguese (fase, regime, CAPAG, etc.). Read them,
+  but produce English output only. Never echo Portuguese label keywords into the prose.
+- Classification label mapping:
+  - "Alta" / "Em alta"            → "Rising" (price trend) or "High" (risk/score level)
+  - "Baixa" / "Em baixa"          → "Falling" (trend) or "Low" (level)
+  - "Muito baixo(a)"              → "Very low"
+  - "Muito alto(a)"               → "Very high"
+  - "Moderado(a)"                 → "Moderate"
+  - "Favorável"                   → "Favorable"
+  - "Muito favorável"             → "Very favorable"
+  - "Desfavorável"                → "Unfavorable"
+  - "Conservador"                 → "Conservative"
+  - "Arrojado"                    → "Aggressive"
+  - "Pesquisa" (fase)             → "Exploration"
+  - "Lavra" / "Concessão de Lavra"→ "Production" (phase) / "Mining concession" (tenure)
+
+ABSOLUTE RULES:
+1. NEVER disclose weights, formulas, or score calculation logic.
+2. Use "developed and calibrated" and "intellectual property of TERRADAR".
+3. Never use em dashes; use commas or periods.
+4. NEVER invent data; use ONLY what is provided in context.
+5. Spelling and grammar: US English.
+6. Implications: always cross-reference data across sections (e.g., CAPAG vs logistics).
+7. At most 3 sentences per paragraph, direct and concise.
+8. PROCESS PHASE: If phase indicates Production (Lavra) or tenure includes mining concession,
+   geological viability is proven. Use operating language ("continuity of grades", "remaining reserves",
+   "mine life"). If phase is Exploration (Pesquisa), use field-validation language.
+9. PARTIAL CAPAG: When capag_nota is "n.d." but individual indicators exist, never say CAPAG is
+   unavailable; cite indicators with their values and letter grades, and infer the equivalent rating
+   from the worst letter.
+10. REGULATORY CROSS-REFERENCES: When dados_sei lists permits/licenses, cite the dates. If all are
+    current, say "full documentary regularity", not "pending regularization".`
+
+function systemPromptForLang(lang: ReportLang): string {
+  return lang === 'en' ? SYSTEM_PROMPT_EN : SYSTEM_PROMPT
+}
+
+/**
+ * Prefixo imperativo de idioma aplicado a cada user prompt. Reforça a instrução do system
+ * prompt mesmo quando o corpo do user prompt está em PT (labels de dados). Crítico para EN:
+ * sem este reforço o Claude tende a espelhar o idioma do user prompt.
+ */
+function langUserPrefix(lang: ReportLang): string {
+  if (lang === 'en') {
+    return `[LANGUAGE=EN-US] RESPOND EXCLUSIVELY IN US ENGLISH.
+The data labels below are in Portuguese for internal compatibility, but ALL prose, headlines,
+labels, ratings, and analysis you emit MUST be in professional English. Preserve only proper
+nouns (company, municipality, program, and BNDES line names) in Portuguese.
+
+`
+  }
+  return ''
+}
+
+async function callClaude<T>(
+  userPrompt: string,
+  system: string,
+  lang: ReportLang = 'pt',
+  retries = 2,
+): Promise<T | null> {
+  const finalUser = langUserPrefix(lang) + userPrompt
   for (let i = 0; i <= retries; i++) {
     try {
       const response = await anthropic.messages.create({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 1000,
-        system: SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: userPrompt }],
+        system,
+        messages: [{ role: 'user', content: finalUser }],
       })
 
       const textBlock = response.content.find((b) => b.type === 'text')
@@ -58,8 +131,9 @@ async function callClaude<T>(userPrompt: string, retries = 2): Promise<T | null>
 
       const clean = textBlock.text.replace(/```json|```/g, '').trim()
       return JSON.parse(clean) as T
-    } catch (e: any) {
-      console.error(`[CLAUDE ERROR] Tentativa ${i + 1}:`, e.message || e)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      console.error(`[CLAUDE ERROR] Tentativa ${i + 1}:`, msg)
       if (i >= retries) return null
       await new Promise((r) => setTimeout(r, 1000 * (i + 1)))
     }
@@ -294,6 +368,52 @@ Gere JSON:
 REGRA: Labels OS = "Favorável" (não "Moderada"). NUNCA mencionar pesos.`
 }
 
+const FALLBACKS_EN = {
+  sumario: {
+    headline: 'Mining asset summary',
+    lead: 'Process data under review.',
+    veredito_texto: 'Stage under assessment.',
+    ponto_atencao: null,
+  } satisfies SumarioLLM,
+  territorio: {
+    headline: 'Territorial integrity analysis',
+    lead: 'Geospatial overlay completed with official layers.',
+    logistica_texto: 'See infrastructure table.',
+    implicacao: 'See table above.',
+  } satisfies TerritorioLLM,
+  mercado: {
+    headline: 'Commodity market data',
+    lead: 'Price and demand indicators under review.',
+    implicacao: 'See indicators above.',
+  } satisfies MercadoLLM,
+  fiscal: {
+    headline: 'Municipal fiscal context',
+    lead: 'Municipal fiscal indicators under review.',
+    cfem_intro: 'Exploration phase; no CFEM accrual yet.',
+    implicacao: 'See indicators above.',
+    capag_classificacao_equiv: null,
+  } satisfies FiscalLLM,
+  risco: {
+    headline: 'Risk analysis',
+    lead: 'Risk score computed across four dimensions.',
+    dim_geo: 'Geological dimension under review.',
+    dim_amb: 'Environmental dimension under review.',
+    dim_soc: 'Social dimension under review.',
+    dim_reg: 'Regulatory dimension under review.',
+    leitura: 'Integrated read in progress.',
+  } satisfies RiscoLLM,
+  oportunidade: {
+    headline: 'Opportunity analysis',
+    lead: 'Opportunity score computed across three dimensions.',
+    dim_merc: 'Market dimension under review.',
+    dim_viab: 'Feasibility dimension under review.',
+    dim_seg: 'Security dimension under review.',
+    sintese_p1: 'Synthesis in progress.',
+    sintese_p2: '',
+    sintese_marcos: '',
+  } satisfies OportunidadeLLM,
+}
+
 const FALLBACKS = {
   sumario: {
     headline: 'Resumo do ativo minerário',
@@ -341,22 +461,26 @@ const FALLBACKS = {
 }
 
 export async function generateReportLLM(data: ReportData): Promise<ReportLLMResult> {
+  const lang: ReportLang = data.lang ?? 'pt'
+  const sys = systemPromptForLang(lang)
+  const fb = lang === 'en' ? FALLBACKS_EN : FALLBACKS
+
   const [sumario, territorio, mercado, fiscal, risco, oportunidade] =
     await Promise.all([
-      callClaude<SumarioLLM>(buildPromptSumario(data)),
-      callClaude<TerritorioLLM>(buildPromptTerritorio(data)),
-      callClaude<MercadoLLM>(buildPromptMercado(data)),
-      callClaude<FiscalLLM>(buildPromptFiscal(data)),
-      callClaude<RiscoLLM>(buildPromptRisco(data)),
-      callClaude<OportunidadeLLM>(buildPromptOportunidade(data)),
+      callClaude<SumarioLLM>(buildPromptSumario(data), sys, lang),
+      callClaude<TerritorioLLM>(buildPromptTerritorio(data), sys, lang),
+      callClaude<MercadoLLM>(buildPromptMercado(data), sys, lang),
+      callClaude<FiscalLLM>(buildPromptFiscal(data), sys, lang),
+      callClaude<RiscoLLM>(buildPromptRisco(data), sys, lang),
+      callClaude<OportunidadeLLM>(buildPromptOportunidade(data), sys, lang),
     ])
 
   return {
-    sumario: sumario ?? FALLBACKS.sumario,
-    territorio: territorio ?? FALLBACKS.territorio,
-    mercado: mercado ?? FALLBACKS.mercado,
-    fiscal: fiscal ?? FALLBACKS.fiscal,
-    risco: risco ?? FALLBACKS.risco,
-    oportunidade: oportunidade ?? FALLBACKS.oportunidade,
+    sumario: sumario ?? fb.sumario,
+    territorio: territorio ?? fb.territorio,
+    mercado: mercado ?? fb.mercado,
+    fiscal: fiscal ?? fb.fiscal,
+    risco: risco ?? fb.risco,
+    oportunidade: oportunidade ?? fb.oportunidade,
   }
 }

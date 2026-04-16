@@ -141,7 +141,13 @@ export function OportunidadeDecomposicaoRelatorioPanel({
   oportunidade: RelatorioOportunidadeData
   pesosPerfil: { atratividade: number; viabilidade: number; seguranca: number }
 }) {
-  const [aberto, setAberto] = useState<DimensaoOSKey | null>(null)
+  const [expandido, setExpandido] = useState<Record<DimensaoOSKey, boolean>>(
+    () => ({
+      atratividade: true,
+      viabilidade: true,
+      seguranca: true,
+    }),
+  )
 
   const dims = useMemo(() => {
     const pesos = pesosPerfil
@@ -191,7 +197,7 @@ export function OportunidadeDecomposicaoRelatorioPanel({
       </div>
 
       {dims.map((d, di) => {
-        const isExp = aberto === d.key
+        const isExp = expandido[d.key]
         const corDim = CORES_DIMENSAO_OS[d.key]
         const corBar = corFaixaOS(d.valorDim)
 
@@ -202,7 +208,9 @@ export function OportunidadeDecomposicaoRelatorioPanel({
           >
             <button
               type="button"
-              onClick={() => setAberto(isExp ? null : d.key)}
+              onClick={() =>
+                setExpandido((prev) => ({ ...prev, [d.key]: !prev[d.key] }))
+              }
               className="group outline-none ring-0 ring-offset-0 focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0"
               style={{
                 width: '100%',

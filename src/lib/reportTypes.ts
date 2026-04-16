@@ -1,3 +1,7 @@
+import type { ReportLang } from './reportLang'
+
+export type { ReportLang } from './reportLang'
+
 export interface RiskDimension {
   valor: number
   label: string
@@ -178,6 +182,9 @@ export interface ReportData {
   capag_pior_indicador_nome?: string
   /** Pior nota A-D entre indicadores quando a nota global é n.d. */
   capag_pior_indicador_letra?: string
+
+  /** Idioma do PDF exportado (template + LLM). */
+  lang: ReportLang
 }
 
 // Tipos de resposta do LLM
