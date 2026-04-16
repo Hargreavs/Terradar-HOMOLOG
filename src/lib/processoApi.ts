@@ -115,3 +115,36 @@ export async function fetchProcessoCompleto(
   }
   return json.data
 }
+
+// ── Histórico da busca no mapa (localStorage, UTF-8) ──
+const MAP_SEARCH_HISTORY_KEY = 'terrae-map-search-history'
+const MAP_SEARCH_HISTORY_MAX = 5
+
+export function readSearchHistory(): string[] {
+  try {
+    const raw = localStorage.getItem(MAP_SEARCH_HISTORY_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+      .slice(0, MAP_SEARCH_HISTORY_MAX)
+  } catch {
+    return []
+  }
+}
+
+export function pushSearchHistory(numero: string): void {
+  const canon = numero.trim()
+  if (!canon) return
+  const prev = readSearchHistory()
+  const next = [canon, ...prev.filter((n) => n !== canon)].slice(
+    0,
+    MAP_SEARCH_HISTORY_MAX,
+  )
+  try {
+    localStorage.setItem(MAP_SEARCH_HISTORY_KEY, JSON.stringify(next))
+  } catch {
+    /* quota / private mode */
+  }
+}

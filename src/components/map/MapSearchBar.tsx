@@ -1,4 +1,4 @@
-import { Loader2, Search, SlidersHorizontal } from 'lucide-react'
+import { Loader2, Search, SlidersHorizontal, X } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -7,6 +7,7 @@ import {
   useState,
 } from 'react'
 import { mapDbRowToMapProcesso } from '../../lib/mapProcessoFromDbRow'
+import { pushSearchHistory, readSearchHistory } from '../../lib/processoApi'
 import { buscarProcessoPorNumero } from '../../lib/processoApi'
 import { REGIME_COLORS, REGIME_LABELS } from '../../lib/regimes'
 import { useMapStore } from '../../store/useMapStore'
@@ -64,6 +65,9 @@ export function MapSearchBar({
   const [badgePulse, setBadgePulse] = useState(false)
   const [highlightIdx, setHighlightIdx] = useState(-1)
   const [buscandoRemoto, setBuscandoRemoto] = useState(false)
+  const [historico, setHistorico] = useState<string[]>(() =>
+    readSearchHistory(),
+  )
   const [feedbackErro, setFeedbackErro] = useState<string | null>(null)
   const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const prevFiltrosCountRef = useRef<number | null>(null)
@@ -86,16 +90,29 @@ export function MapSearchBar({
   const mostrarBuscaRemota =
     sugestoes.length === 0 && normalizarNumeroANM(local) !== null
 
+  const showHistorico =
+    inputFocado &&
+    local.trim() === '' &&
+    historico.length > 0 &&
+    !mostrarBuscaRemota
+
   const listaItemsCount = useMemo(() => {
+    if (showHistorico) return historico.length
     if (sugestoes.length > 0) return sugestoes.length
     if (mostrarBuscaRemota) return 1
     return 0
-  }, [sugestoes.length, mostrarBuscaRemota])
+  }, [showHistorico, historico.length, sugestoes.length, mostrarBuscaRemota])
 
   const listaVisivel =
     inputFocado &&
     ((sugestoes.length > 0 && digitos(local).length >= 1) ||
-      mostrarBuscaRemota)
+      mostrarBuscaRemota ||
+      showHistorico)
+
+  const recordSearch = useCallback((numero: string) => {
+    pushSearchHistory(numero)
+    setHistorico(readSearchHistory())
+  }, [])
 
   const showFeedback = useCallback((msg: string) => {
     if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current)
@@ -181,6 +198,7 @@ export function MapSearchBar({
         }
         selecionarProcesso(alvo)
         requestFlyTo(alvo.lat, alvo.lng, 10, alvo.id)
+        recordSearch(alvo.numero)
         setLocal('')
         setFiltro('searchQuery', '')
         setInputFocado(false)
@@ -198,6 +216,7 @@ export function MapSearchBar({
       selecionarProcesso,
       setFiltro,
       showFeedback,
+      recordSearch,
     ],
   )
 
@@ -212,10 +231,18 @@ export function MapSearchBar({
     if (alvo) {
       selecionarProcesso(alvo)
       requestFlyTo(alvo.lat, alvo.lng, 10, alvo.id)
+      recordSearch(alvo.numero)
       return
     }
     void buscarRemoto(local)
-  }, [local, processos, requestFlyTo, selecionarProcesso, buscarRemoto])
+  }, [
+    local,
+    processos,
+    requestFlyTo,
+    selecionarProcesso,
+    buscarRemoto,
+    recordSearch,
+  ])
 
   const escolherProcesso = useCallback(
     (p: Processo) => {
@@ -224,11 +251,42 @@ export function MapSearchBar({
       setFiltro('searchQuery', texto)
       selecionarProcesso(p)
       requestFlyTo(p.lat, p.lng, 10, p.id)
+      recordSearch(p.numero)
       setHighlightIdx(-1)
       inputRef.current?.blur()
     },
-    [setFiltro, requestFlyTo, selecionarProcesso],
+    [setFiltro, requestFlyTo, selecionarProcesso, recordSearch],
   )
+
+  const escolherPorNumeroHistorico = useCallback(
+    (texto: string) => {
+      const norm = normalizarNumeroANM(texto)
+      const alvo = processos.find((p) => {
+        if (
+          norm != null &&
+          p.numero.replace(/\s/g, '') === norm.replace(/\s/g, '')
+        )
+          return true
+        if (p.numero.replace(/\s/g, '') === texto.replace(/\s/g, ''))
+          return true
+        return digitos(p.numero) === digitos(texto)
+      })
+      if (alvo) {
+        escolherProcesso(alvo)
+        return
+      }
+      if (normalizarNumeroANM(texto)) void buscarRemoto(texto)
+    },
+    [processos, escolherProcesso, buscarRemoto],
+  )
+
+  const limparBusca = useCallback(() => {
+    setLocal('')
+    setFiltro('searchQuery', '')
+    setHighlightIdx(-1)
+    setFeedbackErro(null)
+    inputRef.current?.focus()
+  }, [setFiltro])
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (!listaVisivel) {
@@ -258,6 +316,14 @@ export function MapSearchBar({
     }
     if (e.key === 'Enter') {
       e.preventDefault()
+      if (showHistorico && historico.length > 0) {
+        const pick =
+          highlightIdx >= 0 && highlightIdx < historico.length
+            ? historico[highlightIdx]
+            : historico[0]
+        escolherPorNumeroHistorico(pick)
+        return
+      }
       if (mostrarBuscaRemota) {
         void buscarRemoto(local)
         return
@@ -343,6 +409,17 @@ export function MapSearchBar({
             spellCheck={false}
             className="min-w-0 flex-1 border-0 bg-transparent pl-3 text-[15px] text-[#F1EFE8] outline-none placeholder:text-[15px] placeholder:text-[#5F5E5A]"
           />
+          {local.trim().length > 0 ? (
+            <button
+              type="button"
+              aria-label="Limpar busca"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={limparBusca}
+              className="mr-2 shrink-0 rounded p-0.5 text-[#888780] transition-colors hover:bg-[#2C2C2A] hover:text-[#F1EFE8]"
+            >
+              <X size={18} strokeWidth={2} aria-hidden />
+            </button>
+          ) : null}
         </div>
         {listaVisivel ? (
           <ul
@@ -355,39 +432,75 @@ export function MapSearchBar({
               boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
             }}
           >
-            {sugestoes.map((p, i) => (
-              <li key={p.id} role="presentation">
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={i === highlightIdx}
-                  className={`flex w-full cursor-pointer items-center gap-2 border-0 px-3 py-2.5 text-left text-[14px] leading-normal transition-colors ${
-                    i === highlightIdx
-                      ? 'bg-[#2C2C2A] text-[#F1EFE8]'
-                      : 'bg-transparent text-[#D3D1C7] hover:bg-[#252523]'
-                  }`}
-                  onMouseDown={(e) => {
-                    e.preventDefault()
-                    escolherProcesso(p)
-                  }}
-                  onMouseEnter={() => setHighlightIdx(i)}
+            {showHistorico ? (
+              <>
+                <li
+                  role="presentation"
+                  className="pointer-events-none px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#5F5E5A]"
                 >
-                  <span className="shrink-0 font-semibold tabular-nums text-[#F1EFE8]">
-                    {p.numero}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-[13px] text-[#888780]">
-                    {p.municipio} · {p.uf}
-                  </span>
-                  <span
-                    className="max-w-[42%] shrink-0 truncate text-right text-[12px] font-medium"
-                    style={{ color: REGIME_COLORS[p.regime] ?? '#888780' }}
-                    title={REGIME_LABELS[p.regime]}
-                  >
-                    {REGIME_LABELS[p.regime]}
-                  </span>
-                </button>
-              </li>
-            ))}
+                  Recentes
+                </li>
+                {historico.map((num, i) => (
+                  <li key={`hist-${num}-${i}`} role="presentation">
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={i === highlightIdx}
+                      className={`flex w-full cursor-pointer items-center gap-2 border-0 px-3 py-2.5 text-left text-[14px] leading-normal transition-colors ${
+                        i === highlightIdx
+                          ? 'bg-[#2C2C2A] text-[#F1EFE8]'
+                          : 'bg-transparent text-[#D3D1C7] hover:bg-[#252523]'
+                      }`}
+                      onMouseDown={(e) => {
+                        e.preventDefault()
+                        escolherPorNumeroHistorico(num)
+                      }}
+                      onMouseEnter={() => setHighlightIdx(i)}
+                    >
+                      <span className="shrink-0 font-semibold tabular-nums text-[#F1EFE8]">
+                        {num}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </>
+            ) : (
+              <>
+                {sugestoes.map((p, i) => (
+                  <li key={p.id} role="presentation">
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={i === highlightIdx}
+                      className={`flex w-full cursor-pointer items-center gap-2 border-0 px-3 py-2.5 text-left text-[14px] leading-normal transition-colors ${
+                        i === highlightIdx
+                          ? 'bg-[#2C2C2A] text-[#F1EFE8]'
+                          : 'bg-transparent text-[#D3D1C7] hover:bg-[#252523]'
+                      }`}
+                      onMouseDown={(e) => {
+                        e.preventDefault()
+                        escolherProcesso(p)
+                      }}
+                      onMouseEnter={() => setHighlightIdx(i)}
+                    >
+                      <span className="shrink-0 font-semibold tabular-nums text-[#F1EFE8]">
+                        {p.numero}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-[13px] text-[#888780]">
+                        {p.municipio} · {p.uf}
+                      </span>
+                      <span
+                        className="max-w-[42%] shrink-0 truncate text-right text-[12px] font-medium"
+                        style={{ color: REGIME_COLORS[p.regime] ?? '#888780' }}
+                        title={REGIME_LABELS[p.regime]}
+                      >
+                        {REGIME_LABELS[p.regime]}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </>
+            )}
             {mostrarBuscaRemota ? (
               <li role="presentation">
                 <button
