@@ -1666,6 +1666,24 @@ export function MapView() {
     limit: 500,
   })
 
+  // Camada UC Proteção Integral (bbox-aware, mesmo toggle unidades_conservacao)
+  const ucPiData = useMapLayer({
+    tipo: 'uc_pi',
+    enabled: !!camadasGeo.unidades_conservacao && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 800,
+  })
+
+  // Camada UC Uso Sustentável (bbox-aware, mesmo toggle unidades_conservacao)
+  const ucUsData = useMapLayer({
+    tipo: 'uc_us',
+    enabled: !!camadasGeo.unidades_conservacao && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 800,
+  })
+
   // Sync Biomas no Mapbox
   useEffect(() => {
     const map = mapRef.current
@@ -1928,6 +1946,112 @@ export function MapView() {
     }
   }, [mapLoaded, quilombolaData, camadasGeo.quilombolas])
 
+  // Sync UC Proteção Integral no Mapbox (API)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const SRC_ID = 'api-uc-pi-src'
+    const FILL_ID = 'api-uc-pi-fill'
+    const LINE_ID = 'api-uc-pi-line'
+
+    const fc = ucPiData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+      map.addLayer(
+        {
+          id: FILL_ID,
+          type: 'fill',
+          source: SRC_ID,
+          paint: {
+            'fill-color': '#2F7A3E',
+            'fill-opacity': 0.32,
+          },
+        },
+        'processos-fill',
+      )
+      map.addLayer(
+        {
+          id: LINE_ID,
+          type: 'line',
+          source: SRC_ID,
+          paint: {
+            'line-color': '#2F7A3E',
+            'line-opacity': 0.9,
+            'line-width': 1.2,
+          },
+        },
+        'processos-fill',
+      )
+    } else {
+      const src = map.getSource(SRC_ID) as mapboxgl.GeoJSONSource | undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      src?.setData(fc as any)
+    }
+
+    const vis = camadasGeo.unidades_conservacao ? 'visible' : 'none'
+    if (map.getLayer(FILL_ID)) map.setLayoutProperty(FILL_ID, 'visibility', vis)
+    if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
+  }, [mapLoaded, ucPiData, camadasGeo.unidades_conservacao])
+
+  // Sync UC Uso Sustentável no Mapbox (API)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const SRC_ID = 'api-uc-us-src'
+    const FILL_ID = 'api-uc-us-fill'
+    const LINE_ID = 'api-uc-us-line'
+
+    const fc = ucUsData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+      map.addLayer(
+        {
+          id: FILL_ID,
+          type: 'fill',
+          source: SRC_ID,
+          paint: {
+            'fill-color': '#5FAE6C',
+            'fill-opacity': 0.24,
+          },
+        },
+        'processos-fill',
+      )
+      map.addLayer(
+        {
+          id: LINE_ID,
+          type: 'line',
+          source: SRC_ID,
+          paint: {
+            'line-color': '#5FAE6C',
+            'line-opacity': 0.85,
+            'line-width': 1,
+          },
+        },
+        'processos-fill',
+      )
+    } else {
+      const src = map.getSource(SRC_ID) as mapboxgl.GeoJSONSource | undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      src?.setData(fc as any)
+    }
+
+    const vis = camadasGeo.unidades_conservacao ? 'visible' : 'none'
+    if (map.getLayer(FILL_ID)) map.setLayoutProperty(FILL_ID, 'visibility', vis)
+    if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
+  }, [mapLoaded, ucUsData, camadasGeo.unidades_conservacao])
+
   // Força camadas estáticas dos tipos migrados para API a ficarem SEMPRE ocultas.
   // Roda a cada mudança em camadasGeo para sobrepor syncCamadasGeoVisibility.
   useEffect(() => {
@@ -1942,6 +2066,9 @@ export function MapView() {
       'geo-quilombolas-line',
       'geo-quilombolas-circle',
       'geo-quilombolas-label',
+      'geo-unidades_conservacao-fill',
+      'geo-unidades_conservacao-line',
+      'geo-unidades_conservacao-label',
     ]
 
     for (const id of STATIC_MIGRATED) {
