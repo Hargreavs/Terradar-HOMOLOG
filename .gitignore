@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Export PDF working docs (session 19)
+Docs/export-pdf/
