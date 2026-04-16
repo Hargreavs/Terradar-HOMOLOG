@@ -2,14 +2,12 @@ import { Loader2 } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { TerraeLogoLoading } from '../dashboard/animations/TerraeLogoLoading'
-import type { ReportLang } from '../../lib/reportLang'
 import { callGenerateReportAPI } from '../../lib/reportApi'
 import { buildReportData } from './reportDataBuilder'
 import { buildReportHTML } from './ReportTemplate'
 
 type ExportState =
   | 'idle'
-  | 'escolhendo-idioma'
   | 'coletando'
   | 'gerando'
   | 'montando'
@@ -27,13 +25,13 @@ export function ExportReportButton({
   const [erroMsg, setErroMsg] = useState<string | null>(null)
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
 
-  const runExport = useCallback(async (lang: ReportLang) => {
+  const handleExport = useCallback(async () => {
     setErroMsg(null)
 
     try {
       // 1. Coletar dados
       setState('coletando')
-      const reportData = await buildReportData(numeroProcesso, lang)
+      const reportData = await buildReportData(numeroProcesso)
 
       // 2. Chamar API (4-7s)
       setState('gerando')
@@ -42,7 +40,7 @@ export function ExportReportButton({
       // 3. Montar HTML (mesmo bundle/Vite que o app: buildReportHTML importa reportPages
       // diretamente; o iframe só exibe a string, não carrega outro JS nem outro HMR.)
       setState('montando')
-      const html = buildReportHTML(reportData, llmBlocks, lang)
+      const html = buildReportHTML(reportData, llmBlocks)
 
       // 4. Escrever HTML no iframe invisível
       const iframe = iframeRef.current
@@ -193,11 +191,8 @@ export function ExportReportButton({
       >
         <button
           type="button"
-          onClick={() => {
-            setErroMsg(null)
-            setState('escolhendo-idioma')
-          }}
-          disabled={isProcessing || state === 'escolhendo-idioma'}
+          onClick={() => void handleExport()}
+          disabled={isProcessing}
           className="cursor-pointer"
           style={{
             display: 'inline-flex',
@@ -238,7 +233,6 @@ export function ExportReportButton({
             />
           )}
           {state === 'idle' && 'Exportar Relatório PDF'}
-          {state === 'escolhendo-idioma' && 'Escolha o idioma…'}
           {state === 'coletando' && 'Coletando dados...'}
           {state === 'gerando' && 'Gerando análise via IA...'}
           {state === 'montando' && 'Montando relatório...'}
@@ -295,111 +289,6 @@ export function ExportReportButton({
       </div>
 
       {overlay}
-
-      {state === 'escolhendo-idioma' &&
-        createPortal(
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="export-lang-title"
-            style={{
-              position: 'fixed',
-              left: 0,
-              top: 0,
-              right: 0,
-              bottom: 0,
-              zIndex: OVERLAY_Z,
-              margin: 0,
-              padding: 24,
-              boxSizing: 'border-box',
-              background: 'rgba(13, 13, 12, 0.96)',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 20,
-            }}
-          >
-            <div
-              id="export-lang-title"
-              style={{
-                fontFamily: "'Manrope', sans-serif",
-                fontSize: 18,
-                fontWeight: 600,
-                color: 'rgba(255, 255, 255, 0.92)',
-                textAlign: 'center',
-              }}
-            >
-              Idioma do relatório
-            </div>
-            <div
-              style={{
-                fontFamily: "'Manrope', sans-serif",
-                fontSize: 14,
-                color: 'rgba(255, 255, 255, 0.45)',
-                textAlign: 'center',
-                maxWidth: 320,
-              }}
-            >
-              O texto analítico (IA) seguirá o idioma escolhido. Números e scores
-              vêm dos dados auditados.
-            </div>
-            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', justifyContent: 'center' }}>
-              <button
-                type="button"
-                onClick={() => void runExport('pt')}
-                style={{
-                  minWidth: 160,
-                  minHeight: 48,
-                  padding: '12px 24px',
-                  borderRadius: 8,
-                  border: '1px solid #5F5E5A',
-                  background: 'rgba(241, 239, 232, 0.08)',
-                  color: '#F1EFE8',
-                  fontFamily: "'Manrope', sans-serif",
-                  fontSize: 15,
-                  cursor: 'pointer',
-                }}
-              >
-                Português
-              </button>
-              <button
-                type="button"
-                onClick={() => void runExport('en')}
-                style={{
-                  minWidth: 160,
-                  minHeight: 48,
-                  padding: '12px 24px',
-                  borderRadius: 8,
-                  border: '1px solid #5F5E5A',
-                  background: 'rgba(241, 239, 232, 0.08)',
-                  color: '#F1EFE8',
-                  fontFamily: "'Manrope', sans-serif",
-                  fontSize: 15,
-                  cursor: 'pointer',
-                }}
-              >
-                English
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={() => setState('idle')}
-              style={{
-                marginTop: 8,
-                background: 'none',
-                border: 'none',
-                color: 'rgba(255,255,255,0.35)',
-                fontSize: 13,
-                cursor: 'pointer',
-                fontFamily: "'Manrope', sans-serif",
-              }}
-            >
-              Cancelar
-            </button>
-          </div>,
-          document.body,
-        )}
     </>
   )
 }

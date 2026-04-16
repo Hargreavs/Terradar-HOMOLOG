@@ -60,16 +60,9 @@ export function fmtCfemEstimadaBrlMiPerHa(n: number): string {
 }
 
 /** Logo TERRADAR inline (SVG) para capa, sem dependência de assets externos. */
-/**
- * URL da logomarca TERRADAR usada na capa do PDF. Retorna absoluta quando possível para
- * sobreviver à renderização em iframe (document.open/write apaga baseURI em alguns navegadores).
- */
 export function terradarLogoDataUri(): string {
-  const rel = '/terradar-navbar-dark.png'
-  if (typeof window !== 'undefined' && window.location?.origin) {
-    return `${window.location.origin}${rel}`
-  }
-  return rel
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="48" viewBox="0 0 200 48"><text x="0" y="34" font-family="Georgia,serif" font-size="28" font-weight="600" fill="#D4A843">TERRADAR</text></svg>`
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`
 }
 
 export function pageFooter(num: number, total: number): string {
