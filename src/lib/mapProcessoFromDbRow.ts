@@ -331,9 +331,8 @@ export function mapDbRowToMapProcesso(row: Record<string, unknown>): Processo | 
  * Features da viewport têm shape:
  *   { type: 'Feature', geometry: {...}, properties: { numero, titular, ... } }
  *
- * mapDbRowToMapProcesso espera uma "row" com campos diretos + geom.
- * Fazemos spread de properties + geom=geometry e deixamos a função
- * existente fazer todo o processamento (extractGeom, scores, etc).
+ * O SQL expõe scores como campos planos em `properties`; convertemos para
+ * `scores_persistido` aninhado antes de delegar a `mapDbRowToMapProcesso`.
  */
 export function mapViewportFeatureToProcesso(
   feature: unknown,
@@ -345,7 +344,33 @@ export function mapViewportFeatureToProcesso(
     f.properties && typeof f.properties === 'object'
       ? (f.properties as Record<string, unknown>)
       : {}
-  return mapDbRowToMapProcesso({ ...properties, geom: geometry })
+
+  // Viewport retorna scores como campos planos em `properties`
+  // (risk_score, risk_label, os_moderado), mas mapDbRowToMapProcesso
+  // espera `scores_persistido` como objeto aninhado. Adapta o shape
+  // aqui para manter compatibilidade entre ambos os endpoints.
+  const riskScore = properties.risk_score
+  const riskLabel = properties.risk_label
+  const osModerado = properties.os_moderado
+  const scoresPersistido =
+    typeof riskScore === 'number'
+      ? {
+          risk_score: riskScore,
+          risk_label: typeof riskLabel === 'string' ? riskLabel : null,
+          os_moderado: typeof osModerado === 'number' ? osModerado : null,
+          os_conservador: null, // não vem no viewport (só /api/processo)
+          os_arrojado: null,
+          os_label: null,
+          dimensoes_risco: null, // idem — breakdown só em /api/processo
+          dimensoes_oportunidade: null,
+        }
+      : null
+
+  return mapDbRowToMapProcesso({
+    ...properties,
+    geom: geometry,
+    scores_persistido: scoresPersistido,
+  })
 }
 
 /**
