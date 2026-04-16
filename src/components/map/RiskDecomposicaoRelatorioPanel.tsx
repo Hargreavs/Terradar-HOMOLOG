@@ -11,7 +11,6 @@ import {
   CORES_DIMENSAO_RISK,
   PESOS_RISK_DIMENSAO,
   corFaixaRiscoValor,
-  qualificadorRiscoVariavel,
 } from '../../lib/riskScoreDecomposicao'
 import { CamadaTooltipHover } from '../filters/CamadaTooltipHover'
 import { RiskDimensionCalcTooltipContent } from './RiskScoreCalcTooltipContent'
@@ -202,7 +201,7 @@ export function RiskDecomposicaoRelatorioPanel({
         const corBar = corFaixaRiscoValor(d.det.score)
         const varsMostrar =
           d.key === 'ambiental'
-            ? d.det.variaveis.filter((v) => v.valor > 0 || v.nome === 'Resumo')
+            ? d.det.variaveis.filter((v) => v.valor !== 0)
             : d.det.variaveis
 
         return (
@@ -343,7 +342,6 @@ export function RiskDecomposicaoRelatorioPanel({
 
             <PainelDetalheDimensaoAnimado isExp={isExp} corBar={corBar}>
               {varsMostrar.map((vrow, vi) => {
-                const q = qualificadorRiscoVariavel(vrow.valor)
                 const corV = corFaixaRiscoValor(vrow.valor)
                 const fonteTitle = `Fonte: ${vrow.fonte}`
                 return (
@@ -390,7 +388,6 @@ export function RiskDecomposicaoRelatorioPanel({
                         >
                           {vrow.valor}
                         </span>
-                        <span style={{ fontSize: FS.md, color: q.color }}>{q.label}</span>
                       </span>
                     </div>
                     <div

@@ -209,6 +209,24 @@ export function mapDbRowToMapProcesso(row: Record<string, unknown>): Processo | 
   const area_ha = Number(row.area_ha)
   const areaSafe = Number.isFinite(area_ha) ? area_ha : 0
 
+  const sp = row.scores_persistido as
+    | {
+        risk_score?: number | null
+        os_conservador?: number | null
+        os_moderado?: number | null
+        os_arrojado?: number | null
+        os_label?: string | null
+        dimensoes_risco?: {
+          geologico?: { valor: number; subfatores: unknown[] }
+          ambiental?: { valor: number; subfatores: unknown[] }
+          social?: { valor: number; subfatores: unknown[] }
+          regulatorio?: { valor: number; subfatores: unknown[] }
+        } | null
+        dimensoes_oportunidade?: Record<string, unknown> | null
+      }
+    | null
+    | undefined
+
   const sa = row.scores_auto as
     | {
         risk_score: number
@@ -224,7 +242,18 @@ export function mapDbRowToMapProcesso(row: Record<string, unknown>): Processo | 
 
   let risk_score: number | null = null
   let risk_breakdown: RiskBreakdown | null = null
-  if (sa && typeof sa.risk_score === 'number' && sa.risk_breakdown) {
+  if (sp && typeof sp.risk_score === 'number') {
+    risk_score = sp.risk_score
+    if (sp.dimensoes_risco) {
+      const dr = sp.dimensoes_risco
+      risk_breakdown = {
+        geologico: Number(dr.geologico?.valor ?? 0),
+        ambiental: Number(dr.ambiental?.valor ?? 0),
+        social: Number(dr.social?.valor ?? 0),
+        regulatorio: Number(dr.regulatorio?.valor ?? 0),
+      }
+    }
+  } else if (sa && typeof sa.risk_score === 'number' && sa.risk_breakdown) {
     risk_score = sa.risk_score
     risk_breakdown = {
       geologico: sa.risk_breakdown.geologico,
@@ -284,5 +313,13 @@ export function mapDbRowToMapProcesso(row: Record<string, unknown>): Processo | 
     fiscal: EMPTY_FISCAL,
     geojson: buildGeojson(id, polyCoords),
     fromApi: true,
+    dimensoes_risco_persistido:
+      (sp?.dimensoes_risco as Processo['dimensoes_risco_persistido']) ?? null,
+    dimensoes_oportunidade_persistido:
+      (sp?.dimensoes_oportunidade as Record<string, unknown> | null) ?? null,
+    os_conservador_persistido: sp?.os_conservador ?? null,
+    os_moderado_persistido: sp?.os_moderado ?? null,
+    os_arrojado_persistido: sp?.os_arrojado ?? null,
+    os_label_persistido: sp?.os_label ?? null,
   }
 }

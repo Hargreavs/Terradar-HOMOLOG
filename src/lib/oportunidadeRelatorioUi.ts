@@ -32,6 +32,14 @@ export function corFaixaOS(v: number): string {
   return '#E24B4A'
 }
 
+/** Escala de cor para subfatores de OS: alto = bom (inverso do Risk Score). */
+export function corFaixaOportunidadeValor(valorBruto: number): string {
+  if (valorBruto >= 75) return '#1D9E75'
+  if (valorBruto >= 50) return '#E8A830'
+  if (valorBruto >= 25) return '#888780'
+  return '#E24B4A'
+}
+
 export function labelFaixaOS(v: number): string {
   return getOpportunityLabel(v)
 }

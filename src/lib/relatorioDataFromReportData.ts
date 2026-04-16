@@ -14,6 +14,7 @@ import type {
   RelatorioData,
   RelatorioOportunidadeData,
   Timestamps,
+  VariavelOportunidadeMock,
 } from '../data/relatorio.mock'
 import type { ReportData } from './reportTypes'
 import type { Processo } from '../types'
@@ -429,14 +430,57 @@ function fiscalFromReport(rd: ReportData): DadosFiscaisRicos {
   }
 }
 
-function oportunidadeFromReport(rd: ReportData): RelatorioOportunidadeData {
-  const mkVar = (nome: string, texto: string) => ({
+function oportunidadeFromReport(
+  rd: ReportData,
+  dimOportunidadePersistida?: Processo['dimensoes_oportunidade_persistido'],
+): RelatorioOportunidadeData {
+  const mkVar = (nome: string, texto: string): VariavelOportunidadeMock => ({
     nome,
     valor: 0,
     peso: 0,
     texto,
     impacto_neutro: true as const,
   })
+
+  const mapSub = (s: Record<string, unknown>): VariavelOportunidadeMock => ({
+    nome: String(s.nome ?? ''),
+    valor: Number(s.valor ?? 0),
+    peso: Number(s.peso_pct ?? s.peso ?? 0),
+    texto: String(s.texto ?? ''),
+    valor_bruto:
+      s.valor_bruto != null && Number.isFinite(Number(s.valor_bruto))
+        ? Number(s.valor_bruto)
+        : undefined,
+    impacto_neutro: false,
+  })
+
+  const detalhesRoot =
+    dimOportunidadePersistida != null &&
+    typeof dimOportunidadePersistida === 'object'
+      ? ((dimOportunidadePersistida as Record<string, unknown>).detalhes ??
+        dimOportunidadePersistida)
+      : null
+
+  const decompFromPersistida = (
+    dimKey: 'atratividade' | 'viabilidade' | 'seguranca',
+  ): VariavelOportunidadeMock[] => {
+    if (detalhesRoot != null && typeof detalhesRoot === 'object') {
+      const d = (detalhesRoot as Record<string, unknown>)[dimKey] as
+        | { subfatores?: unknown[] }
+        | undefined
+      if (d != null && Array.isArray(d.subfatores) && d.subfatores.length > 0) {
+        return d.subfatores.map((x) =>
+          mapSub(x as Record<string, unknown>),
+        )
+      }
+    }
+    const labelMap = {
+      atratividade: 'Atratividade',
+      viabilidade: 'Viabilidade',
+      seguranca: 'Segurança',
+    } as const
+    return [mkVar(labelMap[dimKey], 'Dimensão calculada automaticamente.')]
+  }
 
   return {
     perfis: {
@@ -474,9 +518,9 @@ function oportunidadeFromReport(rd: ReportData): RelatorioOportunidadeData {
       },
     },
     decomposicao: {
-      atratividade: [mkVar('Atratividade', 'Dimensão calculada automaticamente.')],
-      viabilidade: [mkVar('Viabilidade', 'Dimensão calculada automaticamente.')],
-      seguranca: [mkVar('Segurança', 'Dimensão calculada automaticamente.')],
+      atratividade: decompFromPersistida('atratividade'),
+      viabilidade: decompFromPersistida('viabilidade'),
+      seguranca: decompFromPersistida('seguranca'),
     },
     cruzamento: {
       tipo: 'analise',
@@ -665,6 +709,9 @@ export function relatorioDataFromReportData(
       cambio: rd.ptax,
       calculado_em: ts,
     },
-    oportunidade: oportunidadeFromReport(rd),
+    oportunidade: oportunidadeFromReport(
+      rd,
+      processo.dimensoes_oportunidade_persistido,
+    ),
   }
 }

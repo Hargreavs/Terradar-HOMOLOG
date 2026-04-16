@@ -308,6 +308,8 @@ export interface VariavelOportunidadeMock {
   peso: number
   dado?: string
   texto: string
+  /** Bruto antes do peso; define faixa de cor na decomposição (alto = bom). */
+  valor_bruto?: number
   /** Valor baixo com leitura neutra (ex.: ausência de alertas favoráveis com peso pequeno). */
   impacto_neutro?: boolean
 }

@@ -168,8 +168,17 @@ export function MapSearchBar({
         const existente = useMapStore
           .getState()
           .processos.find((p) => p.numero === novo.numero)
-        const alvo = existente ?? novo
-        if (!existente) adicionarProcesso(novo)
+        const alvo = novo // API tem prioridade sobre mock
+        if (existente) {
+          // substitui entrada mock pela versão da API
+          useMapStore.setState((s) => ({
+            processos: s.processos.map((p) =>
+              p.numero === novo.numero ? novo : p,
+            ),
+          }))
+        } else {
+          adicionarProcesso(novo)
+        }
         selecionarProcesso(alvo)
         requestFlyTo(alvo.lat, alvo.lng, 10, alvo.id)
         setLocal('')

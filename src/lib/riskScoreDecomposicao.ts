@@ -819,11 +819,80 @@ function variaveisRegulatorias(p: Processo, _alvo: number): RiskDimensaoVariavel
   }))
 }
 
+function mapSubfatorPersistidoToVariavel(
+  s: Record<string, unknown>,
+): RiskDimensaoVariavel {
+  return {
+    nome: String(s.nome ?? ''),
+    valor: Number(s.valor ?? 0),
+    texto: String(s.texto ?? ''),
+    fonte: String(s.fonte ?? 'scores'),
+  }
+}
+
+function converterDimPersistidaParaDetalhe(
+  d: Record<string, unknown> | undefined,
+): RiskDimensaoDetalhe {
+  if (!d) return { score: 0, variaveis: [] }
+  const subfatores = Array.isArray(d.subfatores)
+    ? (d.subfatores as Record<string, unknown>[])
+    : []
+  return {
+    score: Number(d.valor ?? 0),
+    variaveis: subfatores.map(mapSubfatorPersistidoToVariavel),
+  }
+}
+
+/**
+ * Converte `scores.dimensoes_risco` (JSONB) para `RiskScoreDecomposicao` da UI.
+ * `fonte: 'scores'` permite ao painel exibir subfatores ambientais com valor 0.
+ */
+function converterDimensoesPersistidasParaDecomposicao(
+  p: Processo,
+  dim: NonNullable<Processo['dimensoes_risco_persistido']>,
+): RiskScoreDecomposicao | null {
+  if (p.risk_score == null) return null
+  const dg = dim as Record<string, unknown>
+  return {
+    total: p.risk_score,
+    geologico: converterDimPersistidaParaDetalhe(
+      dg.geologico as Record<string, unknown>,
+    ),
+    ambiental: converterDimPersistidaParaDetalhe(
+      dg.ambiental as Record<string, unknown>,
+    ),
+    social: converterDimPersistidaParaDetalhe(
+      dg.social as Record<string, unknown>,
+    ),
+    regulatorio: converterDimPersistidaParaDetalhe(
+      dg.regulatorio as Record<string, unknown>,
+    ),
+  }
+}
+
 /** Constrói a decomposição mock alinhada ao `risk_breakdown` do processo. */
 export function gerarRiskDecomposicaoParaProcesso(
   p: Processo,
 ): RiskScoreDecomposicao | null {
-  if (p.risk_score === null || !p.risk_breakdown) return null
+  if (p.risk_score === null) return null
+
+  if (p.dimensoes_risco_persistido) {
+    const dg = p.dimensoes_risco_persistido
+    const hasAny =
+      dg.geologico != null ||
+      dg.ambiental != null ||
+      dg.social != null ||
+      dg.regulatorio != null
+    if (hasAny) {
+      const converted = converterDimensoesPersistidasParaDecomposicao(
+        p,
+        p.dimensoes_risco_persistido,
+      )
+      if (converted) return converted
+    }
+  }
+
+  if (!p.risk_breakdown) return null
 
   const rb = p.risk_breakdown
   const geo = variaveisGeologicas(p, rb.geologico)

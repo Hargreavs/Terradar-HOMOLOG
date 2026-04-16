@@ -24,6 +24,22 @@ export interface RiskBreakdown {
   regulatorio: number
 }
 
+/** Subfator de dimensão (persistido em scores.dimensoes_risco no banco). */
+export interface SubfatorPersistido {
+  nome: string
+  label: string
+  texto: string
+  valor: number
+  peso_pct: number
+  valor_bruto: number
+  dias_sem_movimento?: number
+}
+
+export interface DimensaoPersistida {
+  valor: number
+  subfatores: SubfatorPersistido[]
+}
+
 /** Variável que compõe uma dimensão do Risk Score (popover + relatório). */
 export interface RiskDimensaoVariavel {
   nome: string
@@ -120,6 +136,21 @@ export interface Processo {
   alertas: AlertaLegislativo[]
   fiscal: DadosFiscais
   geojson: GeoJSONPolygon
+
+  /** Subfatores persistidos (batch 15.01/15.02-fix); fonte canônica quando presentes. */
+  dimensoes_risco_persistido?: {
+    geologico?: DimensaoPersistida
+    ambiental?: DimensaoPersistida
+    social?: DimensaoPersistida
+    regulatorio?: DimensaoPersistida
+  } | null
+
+  dimensoes_oportunidade_persistido?: Record<string, unknown> | null
+
+  os_conservador_persistido?: number | null
+  os_moderado_persistido?: number | null
+  os_arrojado_persistido?: number | null
+  os_label_persistido?: string | null
 }
 
 export interface GeoJSONPolygon {

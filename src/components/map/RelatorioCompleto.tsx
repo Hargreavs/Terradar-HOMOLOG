@@ -643,6 +643,17 @@ const CFEM_BAR_TOOLTIP = {
 
 const CFEM_BAR_TOOLTIP_OPACITY_MS = 150
 
+const REGIMES_SEM_CFEM = ['autorizacao_pesquisa', 'req_lavra'] as const
+
+function fraseFaseSemCfem(regime: Processo['regime']): string {
+  const mapa: Partial<Record<Processo['regime'], string>> = {
+    autorizacao_pesquisa: 'Autorização de Pesquisa',
+    req_lavra: 'Requerimento de Lavra',
+  }
+  const fase = mapa[regime] ?? 'Regime não arrecadador'
+  return `Processos em fase de ${fase} não geram CFEM. A compensação financeira só é devida a partir da Concessão de Lavra.`
+}
+
 type CfemBarTooltipAnchor = {
   ano: number
   vp: number
@@ -1507,6 +1518,10 @@ export function RelatorioCompleto({
   const mostrarContextoCfemComparativo =
     fiscal.cfem_estimada_ha > 0 &&
     (mostrarCfemLinha1 || mostrarCfemLinha2 || mostrarCfemLinha3)
+
+  const cfemSemRecolhimento = REGIMES_SEM_CFEM.includes(
+    processo.regime as (typeof REGIMES_SEM_CFEM)[number],
+  )
 
   const fontePrecoTendenciaCard =
     metadata?.fonte_demanda ??
@@ -4435,25 +4450,41 @@ export function RelatorioCompleto({
                     fontWeight: 400,
                   }}
                 >
-                  Arrecadação deste processo comparada ao total do município
+                  {cfemSemRecolhimento
+                    ? 'Arrecadação CFEM do município nos últimos 5 anos'
+                    : 'Arrecadação deste processo comparada ao total do município'}
                 </p>
                 {(() => {
-                  const cfemProc =
+                  const ANO_ATUAL = new Date().getFullYear()
+                  const ANO_MIN_CFEM = ANO_ATUAL - 4
+                  const cfemProcRaw =
                     fiscal.cfem_processo.length > 0
                       ? fiscal.cfem_processo
                       : fiscal.cfem_historico
-                  const cfemMun =
+                  const cfemMunRaw =
                     fiscal.cfem_municipio.length > 0
                       ? fiscal.cfem_municipio
                       : fiscal.cfem_municipal_historico.map((h) => ({
                           ano: h.ano,
                           valor_recolhido_brl: h.valor_total_municipio_brl,
                         }))
-                  const processoTemCfem = cfemProc.some(
+                  const cfemProc = cfemProcRaw.filter(
+                    (h) => h.ano >= ANO_MIN_CFEM,
+                  )
+                  const cfemMun = cfemMunRaw.filter(
+                    (h) => h.ano >= ANO_MIN_CFEM,
+                  )
+                  const cfemProcEffetivo = cfemSemRecolhimento
+                    ? cfemProc.map((h) => ({
+                        ...h,
+                        valor_recolhido_brl: 0,
+                      }))
+                    : cfemProc
+                  const processoTemCfem = cfemProcEffetivo.some(
                     (h) => h.valor_recolhido_brl > 0,
                   )
                   const procPorAno = new Map(
-                    cfemProc.map((h) => [h.ano, h.valor_recolhido_brl]),
+                    cfemProcEffetivo.map((h) => [h.ano, h.valor_recolhido_brl]),
                   )
                   const munPorAno = new Map(
                     cfemMun.map((h) => [
@@ -4463,7 +4494,7 @@ export function RelatorioCompleto({
                   )
                   const anos = [
                     ...new Set([
-                      ...cfemProc.map((h) => h.ano),
+                      ...cfemProcEffetivo.map((h) => h.ano),
                       ...cfemMun.map((h) => h.ano),
                     ]),
                   ].sort((a, b) => a - b)
@@ -4476,7 +4507,7 @@ export function RelatorioCompleto({
                     1,
                   )
                   const trackH = 80
-                  const totalProc = cfemProc.reduce(
+                  const totalProc = cfemProcEffetivo.reduce(
                     (s, h) => s + h.valor_recolhido_brl,
                     0,
                   )
@@ -4485,61 +4516,63 @@ export function RelatorioCompleto({
                     0,
                   )
                   let linhaPct: ReactNode = null
-                  if (totalProc === 0) {
-                    linhaPct = (
-                      <p
-                        style={{
-                          fontSize: FS.sm,
-                          color: '#888780',
-                          margin: '10px 0 0 0',
-                          lineHeight: 1.45,
-                        }}
-                      >
-                        Este processo não gerou CFEM no período 2022-2025
-                      </p>
-                    )
-                  } else if (totalMun > 0) {
-                    const pct = (totalProc / totalMun) * 100
-                    const muitoBaixa = pct > 0 && pct < 1
-                    const pctTexto = muitoBaixa
-                      ? '< 1%'
-                      : `${pct.toLocaleString('pt-BR', {
-                          maximumFractionDigits: 1,
-                          minimumFractionDigits: 0,
-                        })}%`
-                    linhaPct = (
-                      <p
-                        style={{
-                          ...CFEM_CARD_SUBTITLE_STYLE,
-                          color: '#D3D1C7',
-                          margin: '10px 0 0 0',
-                        }}
-                      >
-                        Este processo representa{' '}
-                        <strong
+                  if (!cfemSemRecolhimento) {
+                    if (totalProc === 0) {
+                      linhaPct = (
+                        <p
                           style={{
-                            fontWeight: 700,
-                            color: '#EF9F27',
+                            fontSize: FS.sm,
+                            color: '#888780',
+                            margin: '10px 0 0 0',
+                            lineHeight: 1.45,
                           }}
                         >
-                          {pctTexto}
-                        </strong>{' '}
-                        da CFEM municipal
-                      </p>
-                    )
-                  } else {
-                    linhaPct = (
-                      <p
-                        style={{
-                          fontSize: FS.min,
-                          color: '#5F5E5A',
-                          margin: '10px 0 0 0',
-                          lineHeight: 1.5,
-                        }}
-                      >
-                        Dados municipais indisponíveis
-                      </p>
-                    )
+                          Este processo não gerou CFEM no período 2022-2025
+                        </p>
+                      )
+                    } else if (totalMun > 0) {
+                      const pct = (totalProc / totalMun) * 100
+                      const muitoBaixa = pct > 0 && pct < 1
+                      const pctTexto = muitoBaixa
+                        ? '< 1%'
+                        : `${pct.toLocaleString('pt-BR', {
+                            maximumFractionDigits: 1,
+                            minimumFractionDigits: 0,
+                          })}%`
+                      linhaPct = (
+                        <p
+                          style={{
+                            ...CFEM_CARD_SUBTITLE_STYLE,
+                            color: '#D3D1C7',
+                            margin: '10px 0 0 0',
+                          }}
+                        >
+                          Este processo representa{' '}
+                          <strong
+                            style={{
+                              fontWeight: 700,
+                              color: '#EF9F27',
+                            }}
+                          >
+                            {pctTexto}
+                          </strong>{' '}
+                          da CFEM municipal
+                        </p>
+                      )
+                    } else {
+                      linhaPct = (
+                        <p
+                          style={{
+                            fontSize: FS.min,
+                            color: '#5F5E5A',
+                            margin: '10px 0 0 0',
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          Dados municipais indisponíveis
+                        </p>
+                      )
+                    }
                   }
                   const dataIsoCfem = [
                     timestamps.cfem,
@@ -4547,7 +4580,7 @@ export function RelatorioCompleto({
                   ].reduce((a, b) => (a > b ? a : b))
                   return (
                     <>
-                      {processoTemCfem ? (
+                      {cfemMun.length > 0 || processoTemCfem ? (
                         <div
                           style={{
                             display: 'flex',
@@ -4557,48 +4590,52 @@ export function RelatorioCompleto({
                             marginBottom: 18,
                           }}
                         >
-                          <div
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 8,
-                            }}
-                          >
-                            <span
+                          {processoTemCfem ? (
+                            <div
                               style={{
-                                width: 12,
-                                height: 12,
-                                borderRadius: 2,
-                                backgroundColor: '#4A90B8',
-                                flexShrink: 0,
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 8,
                               }}
-                              aria-hidden
-                            />
-                            <span style={{ fontSize: FS.sm, color: '#D3D1C7' }}>
-                              Este processo
-                            </span>
-                          </div>
-                          <div
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 8,
-                            }}
-                          >
-                            <span
+                            >
+                              <span
+                                style={{
+                                  width: 12,
+                                  height: 12,
+                                  borderRadius: 2,
+                                  backgroundColor: '#4A90B8',
+                                  flexShrink: 0,
+                                }}
+                                aria-hidden
+                              />
+                              <span style={{ fontSize: FS.sm, color: '#D3D1C7' }}>
+                                Este processo
+                              </span>
+                            </div>
+                          ) : null}
+                          {cfemMun.length > 0 ? (
+                            <div
                               style={{
-                                width: 12,
-                                height: 12,
-                                borderRadius: 2,
-                                backgroundColor: '#EF9F27',
-                                flexShrink: 0,
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 8,
                               }}
-                              aria-hidden
-                            />
-                            <span style={{ fontSize: FS.sm, color: '#D3D1C7' }}>
-                              Município
-                            </span>
-                          </div>
+                            >
+                              <span
+                                style={{
+                                  width: 12,
+                                  height: 12,
+                                  borderRadius: 2,
+                                  backgroundColor: '#EF9F27',
+                                  flexShrink: 0,
+                                }}
+                                aria-hidden
+                              />
+                              <span style={{ fontSize: FS.sm, color: '#D3D1C7' }}>
+                                Município
+                              </span>
+                            </div>
+                          ) : null}
                         </div>
                       ) : null}
                       <RelatorioCfemBarrasComTooltip
@@ -4610,6 +4647,41 @@ export function RelatorioCompleto({
                         maxMun={maxMun}
                         trackH={trackH}
                       />
+                      {cfemSemRecolhimento ? (
+                        <div
+                          style={{
+                            marginTop: 16,
+                            padding: '12px 14px',
+                            borderRadius: 8,
+                            background: 'rgba(234, 179, 8, 0.08)',
+                            border: '1px solid rgba(234, 179, 8, 0.24)',
+                            display: 'flex',
+                            flexDirection: 'row',
+                            alignItems: 'flex-start',
+                            gap: 10,
+                          }}
+                        >
+                          <Info
+                            size={18}
+                            strokeWidth={2}
+                            aria-hidden
+                            style={{
+                              flexShrink: 0,
+                              marginTop: 2,
+                              color: 'rgba(234, 179, 8, 0.95)',
+                            }}
+                          />
+                          <span
+                            style={{
+                              fontSize: FS.sm,
+                              color: 'rgba(234, 179, 8, 0.95)',
+                              lineHeight: 1.5,
+                            }}
+                          >
+                            {fraseFaseSemCfem(processo.regime)}
+                          </span>
+                        </div>
+                      ) : null}
                       <div
                         style={{
                           display: 'flex',
@@ -4632,7 +4704,7 @@ export function RelatorioCompleto({
                           >
                             Este processo 5 anos
                           </p>
-                          {processoTemCfem ? (
+                          {cfemSemRecolhimento || processoTemCfem ? (
                             <p
                               style={{
                                 fontSize: 20,

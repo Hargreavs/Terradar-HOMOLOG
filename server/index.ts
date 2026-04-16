@@ -3,6 +3,8 @@ import './env'
 import cors from 'cors'
 import express from 'express'
 
+import mapRouter from './routes/map'
+import processosViewportRouter from './routes/processos-viewport'
 import { POST } from '../app/api/generate-report/route'
 import {
   computeScoresAuto,
@@ -23,6 +25,8 @@ import {
 const app = express()
 app.use(cors())
 app.use(express.json({ limit: '50mb' }))
+app.use(mapRouter)
+app.use(processosViewportRouter)
 
 function hasManualRiskScore(
   scores: Record<string, unknown> | null,
@@ -50,9 +54,19 @@ app.get('/api/processo/busca', async (req, res) => {
   try {
     const processo = await getProcesso(numero)
     const proc = processo as Record<string, unknown>
-    const processoId = String(proc.id ?? '')
     const municipioIbge = String(proc.municipio_ibge ?? '')
     const substanciaAnm = String(proc.substancia ?? '')
+
+    let scores_persistido: Record<string, unknown> | null = null
+    try {
+      const processoId = proc.id
+      if (processoId != null && String(processoId).trim() !== '') {
+        const row = await getScores(String(processoId))
+        if (row) scores_persistido = row as Record<string, unknown>
+      }
+    } catch (spErr) {
+      console.error('[api/processo/busca] scores_persistido:', spErr)
+    }
 
     let scores_auto: ScoreResult | null = null
     try {
@@ -91,6 +105,7 @@ app.get('/api/processo/busca', async (req, res) => {
       data: {
         ...(processo as Record<string, unknown>),
         scores_auto,
+        scores_persistido,
       },
     })
   } catch (err: unknown) {

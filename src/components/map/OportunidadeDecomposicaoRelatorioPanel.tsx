@@ -11,7 +11,7 @@ import { CamadaTooltipHover } from '../filters/CamadaTooltipHover'
 import {
   CORES_DIMENSAO_OS,
   corFaixaOS,
-  qualificadorOS,
+  corFaixaOportunidadeValor,
   type DimensaoOSKey,
 } from '../../lib/oportunidadeRelatorioUi'
 import { OportunidadeDimensionCalcTooltipContent } from './OportunidadeDimensionCalcTooltipContent'
@@ -336,11 +336,14 @@ export function OportunidadeDecomposicaoRelatorioPanel({
             <PainelDetalheDimensaoAnimado isExp={isExp} corBar={corDim}>
               {d.variaveis.map((vrow, vi) => {
                 const impactoNeutro = vrow.impacto_neutro === true
-                const q = impactoNeutro
-                  ? { texto: 'Impacto neutro', cor: '#888780' }
-                  : qualificadorOS(vrow.valor)
-                const corV = impactoNeutro ? '#888780' : corFaixaOS(vrow.valor)
-                const corBarra = impactoNeutro ? '#888780' : corFaixaOS(vrow.valor)
+                const brutoParaCor =
+                  vrow.valor_bruto != null && Number.isFinite(vrow.valor_bruto)
+                    ? vrow.valor_bruto
+                    : vrow.valor
+                const corV = impactoNeutro
+                  ? '#888780'
+                  : corFaixaOportunidadeValor(brutoParaCor)
+                const corBarra = corV
                 const opacidadeBarra = impactoNeutro ? 0.5 : 0.85
                 const tituloLinha = vrow.nome
                 return (
@@ -386,7 +389,6 @@ export function OportunidadeDecomposicaoRelatorioPanel({
                         >
                           {vrow.valor}
                         </span>
-                        <span style={{ fontSize: FS.md, color: q.cor }}>{q.texto}</span>
                       </span>
                     </div>
                     <div

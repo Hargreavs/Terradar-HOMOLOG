@@ -9,7 +9,6 @@ import type {
   Processo,
   RiskBreakdown,
 } from '../types'
-import { POLIGONO_864231_RING } from './processo864231Geo'
 
 type RawProcesso = Omit<Processo, 'geojson' | 'risk_decomposicao'>
 type ProcessoSeed = Omit<
@@ -268,18 +267,6 @@ function makePolygon(lat: number, lng: number, id: string): GeoJSONPolygon {
   } as GeoJSONPolygon
 }
 
-/** Polígono SIGMINE REST API (864.231/2017, Jaú do Tocantins/TO), EPSG:4674: [lng, lat]. */
-function geojsonSigmine864231(): GeoJSONPolygon {
-  const id = 'p_864231'
-  const ring = POLIGONO_864231_RING
-  return {
-    type: 'Feature' as const,
-    id,
-    properties: { id },
-    geometry: { type: 'Polygon' as const, coordinates: [ring] },
-  } as GeoJSONPolygon
-}
-
 const CATALOGO_ALERTAS: Record<string, AlertaLegislativo> = {
   anm412: {
     id: 'anm-412-2025',
@@ -452,8 +439,6 @@ const RISK_BY_ID: Record<string, RiskBreakdown> = {
   p28: { geologico: 56, ambiental: 83, social: 66, regulatorio: 73 },
   p29: { geologico: 56, ambiental: 85, social: 66, regulatorio: 74 },
   p30: { geologico: 58, ambiental: 85, social: 67, regulatorio: 76 },
-  /** SIGMINE 864.231/2017: média ponderada TERRADAR = 25 (regulatório: tempo + GU vencida SEI). */
-  p_864231: { geologico: 52, ambiental: 10, social: 22, regulatorio: 17 },
 }
 
 function pontuacaoRiscoMedia(b: RiskBreakdown): number {
@@ -528,24 +513,6 @@ function fiscalPara(p: ProcessoSeed): DadosFiscais {
   const m = p.municipio
   const mineralEstrategico =
     p.regime === 'mineral_estrategico' || p.is_mineral_estrategico
-
-  if (p.id === 'p_864231') {
-    return {
-      capag: 'C',
-      receita_propria_mi: 2.19,
-      divida_consolidada_mi: 1.75,
-      incentivos_estaduais: ['Prospera Tocantins (score 2/3)'],
-      linhas_bndes: [
-        'BNDES Finem: Mineração',
-        'BNDES Finame',
-        'BNDES Crédito PME',
-        'BNDES Finem Meio Ambiente',
-        'Chamada Minerais Estratégicos',
-      ],
-      observacao:
-        'Indicadores fiscais SICONFI DCA (exercício 2024) e CAPAG STN (ano base 2023). Dívida consolidada R$ 1,75 Mi (2024). Receita própria alinhada ao relatório verificado 12/04/2026.',
-    }
-  }
 
   const base = (
     capag: DadosFiscais['capag'],
@@ -1295,31 +1262,9 @@ const processosSeed: ProcessoSeed[] = [
     situacao: 'ativo',
     risk_score: 15,
   },
-  {
-    id: 'p_864231',
-    numero: '864.231/2017',
-    regime: 'autorizacao_pesquisa',
-    fase: 'pesquisa',
-    substancia: 'MINÉRIO DE OURO',
-    is_mineral_estrategico: false,
-    titular: 'M P Lanca Mineradora',
-    cnpj_titular: '21.515.445/0001-84',
-    nup_sei: '48417.864231/2017-35',
-    area_ha: 1600,
-    uf: 'TO',
-    municipio: 'Jaú do Tocantins',
-    lat: -12.845,
-    lng: -48.816,
-    data_protocolo: '2017-12-01',
-    ano_protocolo: 2017,
-    mes_protocolo: null,
-    situacao: 'ativo',
-    risk_score: 25,
-  },
 ]
 
 function valorEstimadoUsdMiPara(p: ProcessoSeed): number {
-  if (p.id === 'p_864231') return 938_047
   const u = hashUnit(p.id, 77)
   switch (p.regime) {
     case 'concessao_lavra':
@@ -1352,8 +1297,6 @@ function ultimoDespachoDataPara(p: ProcessoSeed): string {
   const u = hashUnit(p.id, 99)
   const d = (salt: number, mx: number) =>
     1 + Math.floor(hashUnit(p.id, salt) * mx)
-
-  if (p.id === 'p_864231') return '2026-03-13'
 
   if (p.regime === 'bloqueio_permanente' || p.regime === 'bloqueio_provisorio') {
     const y = u < 0.55 ? 2023 : 2024
@@ -1406,10 +1349,7 @@ const rawProcessos: RawProcesso[] = processosSeed.map((p) => {
 export const processosMock: Processo[] = rawProcessos.map((p) => {
   const base: Processo = {
     ...p,
-    geojson:
-      p.id === 'p_864231'
-        ? geojsonSigmine864231()
-        : makePolygon(p.lat, p.lng, p.id),
+    geojson: makePolygon(p.lat, p.lng, p.id),
     risk_decomposicao: null,
   }
   return {
