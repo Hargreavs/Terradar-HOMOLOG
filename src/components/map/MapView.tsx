@@ -57,6 +57,8 @@ import {
 } from '../../store/useMapStore'
 import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion'
 import { useMapLayer, type BBox } from '../../hooks/useMapLayer'
+import { useProcessosViewport } from '../../hooks/useProcessosViewport'
+import { mapViewportFeaturesToProcessos } from '../../lib/mapProcessoFromDbRow'
 import {
   MOTION_MAP_INTRO_DURATION_MS,
   MOTION_MAP_INTRO_LEGEND_DELAY_MS,
@@ -78,6 +80,34 @@ import { relatorioDataFromReportData } from '../../lib/relatorioDataFromReportDa
 import { buildReportData } from '../report/reportDataBuilder'
 import { ProcessoPopupContent } from './ProcessoPopup'
 import { RelatorioCompleto } from './RelatorioCompleto'
+
+/**
+ * Limit dinâmico para `useProcessosViewport` baseado no zoom.
+ *
+ * Em zoom baixo o bbox cobre grande fração da tabela e o planner do
+ * Postgres ignora o GIST (Seq Scan paralelo + sort em disco). Além disso,
+ * 2000 polígonos em zoom ≤ 5 não são utilizáveis no UI. Escalamos pra
+ * preservar performance de backend e responsividade do Mapbox.
+ */
+function getViewportProcessosLimit(zoom: number): number {
+  if (zoom <= 4) return 250
+  if (zoom === 5) return 400
+  if (zoom === 6) return 700
+  if (zoom === 7) return 1100
+  if (zoom === 8) return 1500
+  return 2000
+}
+
+/**
+ * Zoom mínimo para ativar busca de processos por viewport.
+ *
+ * Abaixo deste threshold o bbox cobre grande fração da tabela e o
+ * Postgres faz Seq Scan + sort em disco (9-22s), independentemente do
+ * limit aplicado. Sort top-N em 123k rows persiste mesmo com limit=1.
+ * Nesses zooms o mapa mostra apenas MOCKs/demos; o usuário aproxima
+ * para ver densidade real.
+ */
+const VIEWPORT_ZOOM_MIN = 7
 
 type ModoVisualizacao = 'regime' | 'risco' | 'substancia'
 
@@ -864,6 +894,7 @@ export function MapView() {
   }, [substanciasFiltro])
 
   const camadasGeo = useMapStore((s) => s.camadasGeo)
+  const processos = useMapStore((s) => s.processos)
   const territorioSimuladoVisivel = useMapStore((s) => s.territorioSimuladoVisivel)
   const filtrosAlteradosCount = useMemo(
     () => countFiltrosAlterados(filtros),
@@ -1531,7 +1562,7 @@ export function MapView() {
       tearDownProcessoPopupRef.current?.()
       useMapStore.getState().selecionarProcesso(null)
     }
-  }, [mapLoaded, filtros, modoVisualizacao, intelTitularFilter])
+  }, [mapLoaded, filtros, modoVisualizacao, intelTitularFilter, processos])
 
   /**
    * `requestFlyTo` atualiza o store; o `useEffect` nem sempre disparava a tempo (Strict Mode / ordem).
@@ -1710,6 +1741,27 @@ export function MapView() {
     zoom: viewportZoom,
     limit: 500,
   })
+
+  // Processos por viewport (2c) — fetch bbox-aware, merge no store
+  const viewportProcessosData = useProcessosViewport({
+    enabled: mapLoaded && (viewportZoom ?? 0) >= VIEWPORT_ZOOM_MIN,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: getViewportProcessosLimit(viewportZoom ?? 5),
+    debounceMs: 300,
+  })
+
+  const mergeViewportProcessos = useMapStore((s) => s.mergeViewportProcessos)
+
+  useEffect(() => {
+    if (!viewportProcessosData) return
+    const features = viewportProcessosData.features
+    if (!features.length) return
+    const processos = mapViewportFeaturesToProcessos(features)
+    if (processos.length) {
+      mergeViewportProcessos(processos)
+    }
+  }, [viewportProcessosData, mergeViewportProcessos])
 
   // Sync Biomas no Mapbox
   useEffect(() => {

@@ -145,6 +145,7 @@ export interface MapStore {
   selecionarProcesso: (processo: Processo | null) => void
   /** Adiciona processo vindo da API (evita duplicar por `numero`). */
   adicionarProcesso: (processo: Processo) => void
+  mergeViewportProcessos: (lista: Processo[]) => void
   setHoveredProcessoId: (id: string | null) => void
   getProcessosFiltrados: () => Processo[]
   requestFlyTo: (
@@ -293,6 +294,15 @@ export const useMapStore = create<MapStore>()(
           const existe = state.processos.some((p) => p.numero === processo.numero)
           if (existe) return state
           return { processos: [...state.processos, processo] }
+        }),
+
+      mergeViewportProcessos: (lista) =>
+        set((state) => {
+          if (!lista.length) return state
+          const existentes = new Set(state.processos.map((p) => p.numero))
+          const novos = lista.filter((p) => !existentes.has(p.numero))
+          if (!novos.length) return state
+          return { processos: [...state.processos, ...novos] }
         }),
 
       setHoveredProcessoId: (id) => set({ hoveredProcessoId: id }),
