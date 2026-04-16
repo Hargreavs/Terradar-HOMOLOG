@@ -1,3 +1,7 @@
+import type { ReportLang } from './reportLang'
+
+export type { ReportLang } from './reportLang'
+
 export interface RiskDimension {
   valor: number
   label: string
@@ -111,6 +115,8 @@ export interface ReportData {
   producao_mundial_pct: number
   /** PNM e políticas setoriais (master_substâncias). */
   estrategia_nacional: string
+  /** Lista ou texto da master_substâncias (separadores `;` ou quebra de linha). */
+  aplicacoes_substancia?: string | null
   cfem_aliquota_pct: number
   valor_insitu_usd_ha: number
   cfem_estimada_ha: number
@@ -151,6 +157,34 @@ export interface ReportData {
   // Meta
   data_relatorio: string
   versao: string
+
+  /** v2.1 — contexto explícito para prompts LLM (espelha fase/regime formatados). */
+  fase_processo?: string
+  regime_display?: string
+  capag_nota_final?: string
+  capag_indicadores?: {
+    endividamento?: { valor: string; nota: string }
+    poupanca_corrente?: { valor: string; nota: string }
+    liquidez?: { valor: string; nota: string }
+  }
+  /** Resumo regulatório para cruzamento SEI nos blocos risco/oportunidade. */
+  dados_sei?: {
+    nup?: string
+    portaria_dou?: string
+    licenca_ambiental?: string
+    tah_pago?: string
+    certidao?: string
+    plano_lavra?: string
+    plano_fechamento?: string
+    ultimo_despacho?: string
+  }
+  /** Indicador cujo nota define o pior patamar (CAPAG parcial). */
+  capag_pior_indicador_nome?: string
+  /** Pior nota A-D entre indicadores quando a nota global é n.d. */
+  capag_pior_indicador_letra?: string
+
+  /** Idioma do PDF exportado (template + LLM). */
+  lang: ReportLang
 }
 
 // Tipos de resposta do LLM
@@ -179,6 +213,8 @@ export interface FiscalLLM {
   lead: string
   cfem_intro: string
   implicacao: string
+  /** Uma linha, exibida em destaque âmbar sob o badge CAPAG quando houver nota equivalente. */
+  capag_classificacao_equiv?: string | null
 }
 
 export interface RiscoLLM {

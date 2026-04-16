@@ -30,12 +30,6 @@ import {
   syncTerritorioSimuladoVisibility,
   territorioSimuladoLayersPresent,
 } from '../../lib/mapTerritorioSimulado'
-import {
-  addTerritorioSimulado860232Layers,
-  refreshTerritorioSimulado860232FromProcessos,
-  syncTerritorioSimulado860232Visibility,
-  territorioSimulado860232LayersPresent,
-} from '../../lib/mapTerritorioSimulado860232'
 import { countFiltrosAlterados } from '../../lib/mapFiltrosCount'
 import {
   REGIME_BADGE_TOOLTIP,
@@ -62,6 +56,9 @@ import {
   type PendingNavigation,
 } from '../../store/useMapStore'
 import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion'
+import { useMapLayer, type BBox } from '../../hooks/useMapLayer'
+import { useProcessosViewport } from '../../hooks/useProcessosViewport'
+import { mapViewportFeaturesToProcessos } from '../../lib/mapProcessoFromDbRow'
 import {
   MOTION_MAP_INTRO_DURATION_MS,
   MOTION_MAP_INTRO_LEGEND_DELAY_MS,
@@ -69,6 +66,11 @@ import {
   MOTION_MAP_INTRO_THEME_DELAY_MS,
   motionMs,
 } from '../../lib/motionDurations'
+import type { ReportData } from '../../lib/reportTypes'
+import {
+  fetchProcessoCompleto,
+  type ProcessoCompleto,
+} from '../../lib/processoApi'
 import type { AlertaLegislativo, Processo, Regime } from '../../types'
 import { radarFeedIdParaAlertaProcesso } from '../../lib/radarFeedIdFromProcessoAlerta'
 import {
@@ -83,6 +85,115 @@ import { relatorioDataFromReportData } from '../../lib/relatorioDataFromReportDa
 import { buildReportData } from '../report/reportDataBuilder'
 import { ProcessoPopupContent } from './ProcessoPopup'
 import { RelatorioCompleto } from './RelatorioCompleto'
+
+/**
+ * Limit dinâmico para `useProcessosViewport` baseado no zoom.
+ *
+ * Em zoom baixo o bbox cobre grande fração da tabela e o planner do
+ * Postgres ignora o GIST (Seq Scan paralelo + sort em disco). Além disso,
+ * 2000 polígonos em zoom ≤ 5 não são utilizáveis no UI. Escalamos pra
+ * preservar performance de backend e responsividade do Mapbox.
+ */
+/**
+ * Enriquece o processo do store com RS + OS após `buildReportData` + `fetchProcessoCompleto`
+ * (ReportData: valores; row API: JSONB persistido quando existir).
+ */
+function buildEnrichmentPatch(
+  p: Processo,
+  rd: ReportData,
+  api: ProcessoCompleto,
+): Partial<Processo> {
+  const patch: Partial<Processo> = {
+    id: p.id,
+    risk_breakdown: {
+      geologico: rd.rs_geo.valor,
+      ambiental: rd.rs_amb.valor,
+      social: rd.rs_soc.valor,
+      regulatorio: rd.rs_reg.valor,
+    },
+  }
+  if (rd.os_conservador != null) {
+    patch.os_conservador_persistido = rd.os_conservador
+  }
+  if (rd.os_moderado != null) {
+    patch.os_moderado_persistido = rd.os_moderado
+  }
+  if (rd.os_arrojado != null) {
+    patch.os_arrojado_persistido = rd.os_arrojado
+  }
+  const osLabel = String(rd.os_classificacao ?? '').trim()
+  if (osLabel !== '') {
+    patch.os_label_persistido = osLabel
+  }
+
+  const proc = api.processo as Record<string, unknown> | undefined
+  const sp = proc?.scores_persistido as
+    | {
+        dimensoes_risco?: Processo['dimensoes_risco_persistido']
+        dimensoes_oportunidade?: Record<string, unknown> | null
+      }
+    | null
+    | undefined
+  const dim = sp?.dimensoes_risco
+  if (dim != null && typeof dim === 'object') {
+    const dg = dim as NonNullable<Processo['dimensoes_risco_persistido']>
+    const hasAny =
+      dg.geologico != null ||
+      dg.ambiental != null ||
+      dg.social != null ||
+      dg.regulatorio != null
+    if (hasAny) {
+      patch.dimensoes_risco_persistido = dim
+    }
+  }
+
+  const dOpo = sp?.dimensoes_oportunidade
+  if (dOpo != null && typeof dOpo === 'object') {
+    const keys = Object.keys(dOpo)
+    if (keys.length > 0) {
+      const hasDim =
+        dOpo.atratividade != null ||
+        dOpo.viabilidade != null ||
+        dOpo.seguranca != null ||
+        keys.some((k) => (dOpo as Record<string, unknown>)[k] != null)
+      if (hasDim) {
+        patch.dimensoes_oportunidade_persistido = dOpo
+      }
+    }
+  }
+  return patch
+}
+
+function getViewportProcessosLimit(zoom: number): number {
+  if (zoom <= 4) return 250
+  if (zoom === 5) return 400
+  if (zoom === 6) return 700
+  if (zoom === 7) return 1100
+  if (zoom === 8) return 1500
+  return 2000
+}
+
+/**
+ * Zoom mínimo para ativar busca de processos por viewport.
+ *
+ * Abaixo deste threshold o bbox cobre grande fração da tabela e o
+ * Postgres faz Seq Scan + sort em disco (9-22s), independentemente do
+ * limit aplicado. Sort top-N em 123k rows persiste mesmo com limit=1.
+ * Nesses zooms o mapa mostra apenas MOCKs/demos; o usuário aproxima
+ * para ver densidade real.
+ */
+const VIEWPORT_ZOOM_MIN = 7
+
+/**
+ * Processos de referência carregados do banco real no mount do mapa.
+ * Garantem que demos de apresentação (Tocantins) apareçam em qualquer
+ * zoom, independentemente do viewport gate (z >= 7). Se editar esta
+ * lista, confirmar que os números existem na tabela `processos`.
+ */
+const DEMO_NUMEROS: readonly string[] = [
+  '864.231/2017',
+  '860.232/1990',
+] as const
 
 type ModoVisualizacao = 'regime' | 'risco' | 'substancia'
 
@@ -827,6 +938,9 @@ export function MapView() {
   })
   const applyingIntelDrillRef = useRef(false)
   const [mapLoaded, setMapLoaded] = useState(false)
+  const BRASIL_BBOX: BBox = [-74.0, -34.0, -34.0, 5.5]
+  const [viewportBbox, setViewportBbox] = useState<BBox | null>(null)
+  const [viewportZoom, setViewportZoom] = useState<number>(4)
   const [introSearch, setIntroSearch] = useState(false)
   const [introLegend, setIntroLegend] = useState(false)
   const [introTheme, setIntroTheme] = useState(false)
@@ -866,6 +980,7 @@ export function MapView() {
   }, [substanciasFiltro])
 
   const camadasGeo = useMapStore((s) => s.camadasGeo)
+  const processos = useMapStore((s) => s.processos)
   const territorioSimuladoVisivel = useMapStore((s) => s.territorioSimuladoVisivel)
   const filtrosAlteradosCount = useMemo(
     () => countFiltrosAlterados(filtros),
@@ -1024,6 +1139,32 @@ export function MapView() {
     setRelatorioApiLoading(false)
   }, [processoSelecionado?.id])
 
+  useEffect(() => {
+    const p = processoSelecionado
+    if (!p) return
+    if (!p.fromApi) return
+    if (p.risk_breakdown && p.os_conservador_persistido != null) return
+
+    const controller = new AbortController()
+    void (async () => {
+      try {
+        const [rd, api] = await Promise.all([
+          buildReportData(p.numero),
+          fetchProcessoCompleto(p.numero),
+        ])
+        if (controller.signal.aborted) return
+        useMapStore.getState().mergeProcessoSelecionado(
+          buildEnrichmentPatch(p, rd, api),
+        )
+      } catch (e) {
+        if (!controller.signal.aborted) {
+          console.warn('[enrichment] fetch falhou:', e)
+        }
+      }
+    })()
+    return () => controller.abort()
+  }, [processoSelecionado?.id])
+
   const verRelatorioRef = useRef<() => void>(() => {})
   verRelatorioRef.current = () => {
     if (pendingFecharProcessoTimeoutRef.current) {
@@ -1044,8 +1185,14 @@ export function MapView() {
         setRelatorioApiLoading(true)
         void (async () => {
           try {
-            const rd = await buildReportData(p.numero)
+            const [rd, api] = await Promise.all([
+              buildReportData(p.numero),
+              fetchProcessoCompleto(p.numero),
+            ])
             setRelatorioDadosApi(relatorioDataFromReportData(rd, p))
+            useMapStore.getState().mergeProcessoSelecionado(
+              buildEnrichmentPatch(p, rd, api),
+            )
           } catch (e) {
             setRelatorioApiErro(
               e instanceof Error
@@ -1082,8 +1229,14 @@ export function MapView() {
       setRelatorioApiLoading(true)
       void (async () => {
         try {
-          const rd = await buildReportData(p.numero)
+          const [rd, api] = await Promise.all([
+            buildReportData(p.numero),
+            fetchProcessoCompleto(p.numero),
+          ])
           setRelatorioDadosApi(relatorioDataFromReportData(rd, p))
+          useMapStore.getState().mergeProcessoSelecionado(
+            buildEnrichmentPatch(p, rd, api),
+          )
         } catch (e) {
           setRelatorioApiErro(
             e instanceof Error
@@ -1499,14 +1652,6 @@ export function MapView() {
         map,
         useMapStore.getState().territorioSimuladoVisivel,
       )
-      if (!territorioSimulado860232LayersPresent(map)) {
-        addTerritorioSimulado860232Layers(map, 'processos-fill')
-      }
-      syncTerritorioSimulado860232Visibility(
-        map,
-        useMapStore.getState().territorioSimuladoVisivel,
-      )
-      refreshTerritorioSimulado860232FromProcessos(map)
       const td = tearDownProcessoPopupRef.current
       if (td) {
         attachProcessosLayerHandlers(
@@ -1535,14 +1680,13 @@ export function MapView() {
 
     const filtrados = useMapStore.getState().getProcessosFiltrados()
     src.setData(buildGeoJSON(filtrados, modoVisualizacao))
-    refreshTerritorioSimulado860232FromProcessos(map)
 
     const sel = useMapStore.getState().processoSelecionado
     if (sel && !filtrados.some((p) => p.id === sel.id)) {
       tearDownProcessoPopupRef.current?.()
       useMapStore.getState().selecionarProcesso(null)
     }
-  }, [mapLoaded, filtros, modoVisualizacao, intelTitularFilter])
+  }, [mapLoaded, filtros, modoVisualizacao, intelTitularFilter, processos])
 
   /**
    * `requestFlyTo` atualiza o store; o `useEffect` nem sempre disparava a tempo (Strict Mode / ordem).
@@ -1562,26 +1706,46 @@ export function MapView() {
         st.processoSelecionado
 
       const bounds = proc ? boundsFromSingleProcesso(proc) : null
-      const duration = reducedMotion ? 0 : 1200
 
       try {
         if (bounds && !bounds.isEmpty()) {
-          map.fitBounds(bounds, {
-            padding: {
-              top: 72,
-              bottom: 72,
-              left: getIntelLeftReservePx() + 40,
-              right: 40,
-            },
-            duration,
-            maxZoom: 16,
-            essential: true,
+          const padding = {
+            top: 120,
+            bottom: 120,
+            left: getIntelLeftReservePx() + 40,
+            right: 40,
+          }
+          const camera = map.cameraForBounds(bounds, {
+            padding,
+            maxZoom: 14,
           })
+          if (camera && 'center' in camera && 'zoom' in camera) {
+            // Navegação intencional por busca: animação direcional de ~3s.
+            // prefers-reduced-motion projetado para animações decorativas
+            // (parallax, spin, flash), não para navegação funcional.
+            map.flyTo({
+              center: camera.center,
+              zoom: camera.zoom,
+              speed: 1.0,
+              curve: 1.8,
+              essential: true,
+            })
+          } else {
+            // Fallback raro: cameraForBounds falhou.
+            console.warn('[flyto] cameraForBounds retornou inválido', camera)
+            map.fitBounds(bounds, {
+              padding,
+              duration: 2500,
+              maxZoom: 14,
+              essential: true,
+            })
+          }
         } else {
           map.flyTo({
             center: [ft.lng, ft.lat],
             zoom: Math.max(ft.zoom, 12),
-            duration,
+            speed: 1.0,
+            curve: 1.8,
             essential: true,
           })
         }
@@ -1599,12 +1763,707 @@ export function MapView() {
     })
 
     return unsub
-  }, [mapLoaded, reducedMotion])
+  }, [mapLoaded])
 
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapLoaded || !map.isStyleLoaded()) return
     syncCamadasGeoVisibility(map, camadasGeo)
+  }, [mapLoaded, camadasGeo])
+
+  // Viewport tracking para camadas API (bioma/rodovia/hidrovia)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const updateViewport = () => {
+      try {
+        const b = map.getBounds()
+        if (!b) return
+        const sw = b.getSouthWest()
+        const ne = b.getNorthEast()
+        setViewportBbox([sw.lng, sw.lat, ne.lng, ne.lat])
+        setViewportZoom(map.getZoom())
+      } catch {
+        // silently ignore
+      }
+    }
+
+    updateViewport()
+    map.on('moveend', updateViewport)
+    map.on('zoomend', updateViewport)
+
+    return () => {
+      map.off('moveend', updateViewport)
+      map.off('zoomend', updateViewport)
+    }
+  }, [mapLoaded])
+
+  const biomasData = useMapLayer({
+    tipo: 'bioma',
+    enabled: !!camadasGeo.biomas && mapLoaded,
+    bbox: BRASIL_BBOX,
+    zoom: 4,
+    limit: 50,
+  })
+
+  const rodoviasData = useMapLayer({
+    tipo: 'rodovia',
+    enabled: !!camadasGeo.rodovias && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 500,
+  })
+
+  const hidroviasData = useMapLayer({
+    tipo: 'hidrovia',
+    enabled: !!camadasGeo.hidrovias && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 500,
+  })
+
+  // Camada TI (bbox-aware)
+  const tiData = useMapLayer({
+    tipo: 'ti',
+    enabled: !!camadasGeo.terras_indigenas && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 800,
+  })
+
+  // Camada Quilombola (bbox-aware)
+  const quilombolaData = useMapLayer({
+    tipo: 'quilombola',
+    enabled: !!camadasGeo.quilombolas && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 500,
+  })
+
+  // Camada UC Proteção Integral (bbox-aware, mesmo toggle unidades_conservacao)
+  const ucPiData = useMapLayer({
+    tipo: 'uc_pi',
+    enabled: !!camadasGeo.unidades_conservacao && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 800,
+  })
+
+  // Camada UC Uso Sustentável (bbox-aware, mesmo toggle unidades_conservacao)
+  const ucUsData = useMapLayer({
+    tipo: 'uc_us',
+    enabled: !!camadasGeo.unidades_conservacao && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 800,
+  })
+
+  // Camada Aquífero (bbox-aware)
+  const aquiferoData = useMapLayer({
+    tipo: 'aquifero',
+    enabled: !!camadasGeo.aquiferos && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 800,
+  })
+
+  // Camada Ferrovia (bbox-aware)
+  const ferroviaData = useMapLayer({
+    tipo: 'ferrovia',
+    enabled: !!camadasGeo.ferrovias && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 500,
+  })
+
+  // Camada Porto (bbox-aware)
+  const portoData = useMapLayer({
+    tipo: 'porto',
+    enabled: !!camadasGeo.portos && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 500,
+  })
+
+  // Processos por viewport (2c) — fetch bbox-aware, merge no store
+  const viewportProcessosData = useProcessosViewport({
+    enabled: mapLoaded && (viewportZoom ?? 0) >= VIEWPORT_ZOOM_MIN,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: getViewportProcessosLimit(viewportZoom ?? 5),
+    debounceMs: 800,
+  })
+
+  const mergeViewportProcessos = useMapStore((s) => s.mergeViewportProcessos)
+  const seedDemoProcessos = useMapStore((s) => s.seedDemoProcessos)
+
+  // Seed de processos-demo do banco real.
+  // Dispara 1x quando o mapa termina de carregar. Dedup via store.
+  useEffect(() => {
+    if (!mapLoaded) return
+    void seedDemoProcessos([...DEMO_NUMEROS])
+  }, [mapLoaded, seedDemoProcessos])
+
+  useEffect(() => {
+    if (!viewportProcessosData) return
+    const features = viewportProcessosData.features
+    if (!features.length) return
+    const processos = mapViewportFeaturesToProcessos(features)
+    if (processos.length) {
+      mergeViewportProcessos(processos)
+    }
+  }, [viewportProcessosData, mergeViewportProcessos])
+
+  // Sync Biomas no Mapbox
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const SRC_ID = 'api-biomas-src'
+    const FILL_ID = 'api-biomas-fill'
+    const LINE_ID = 'api-biomas-line'
+
+    const fc = biomasData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+      map.addLayer(
+        {
+          id: FILL_ID,
+          type: 'fill',
+          source: SRC_ID,
+          paint: {
+            'fill-color': '#8FA668',
+            'fill-opacity': 0.18,
+          },
+        },
+        'processos-fill',
+      )
+      map.addLayer(
+        {
+          id: LINE_ID,
+          type: 'line',
+          source: SRC_ID,
+          paint: {
+            'line-color': '#8FA668',
+            'line-opacity': 0.6,
+            'line-width': 1,
+          },
+        },
+        'processos-fill',
+      )
+    } else {
+      const src = map.getSource(SRC_ID) as mapboxgl.GeoJSONSource | undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      src?.setData(fc as any)
+    }
+
+    const vis = camadasGeo.biomas ? 'visible' : 'none'
+    if (map.getLayer(FILL_ID)) map.setLayoutProperty(FILL_ID, 'visibility', vis)
+    if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
+  }, [mapLoaded, biomasData, camadasGeo.biomas])
+
+  // Sync Rodovias no Mapbox
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const SRC_ID = 'api-rodovias-src'
+    const LINE_ID = 'api-rodovias-line'
+
+    const fc =
+      rodoviasData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+      map.addLayer(
+        {
+          id: LINE_ID,
+          type: 'line',
+          source: SRC_ID,
+          paint: {
+            'line-color': '#D9A55B',
+            'line-opacity': 0.85,
+            'line-width': ['interpolate', ['linear'], ['zoom'], 4, 0.5, 12, 2.5],
+          },
+        },
+        'processos-fill',
+      )
+    } else {
+      const src = map.getSource(SRC_ID) as mapboxgl.GeoJSONSource | undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      src?.setData(fc as any)
+    }
+
+    const vis = camadasGeo.rodovias ? 'visible' : 'none'
+    if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
+  }, [mapLoaded, rodoviasData, camadasGeo.rodovias])
+
+  // Sync Hidrovias no Mapbox
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const SRC_ID = 'api-hidrovias-src'
+    const LINE_ID = 'api-hidrovias-line'
+
+    const fc =
+      hidroviasData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+      map.addLayer(
+        {
+          id: LINE_ID,
+          type: 'line',
+          source: SRC_ID,
+          paint: {
+            'line-color': '#5FA8B8',
+            'line-opacity': 0.85,
+            'line-width': ['interpolate', ['linear'], ['zoom'], 4, 0.6, 12, 3],
+            'line-dasharray': [2, 1.5],
+          },
+        },
+        'processos-fill',
+      )
+    } else {
+      const src = map.getSource(SRC_ID) as mapboxgl.GeoJSONSource | undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      src?.setData(fc as any)
+    }
+
+    const vis = camadasGeo.hidrovias ? 'visible' : 'none'
+    if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
+  }, [mapLoaded, hidroviasData, camadasGeo.hidrovias])
+
+  // Sync TI no Mapbox (API)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const SRC_ID = 'api-ti-src'
+    const FILL_ID = 'api-ti-fill'
+    const LINE_ID = 'api-ti-line'
+
+    const fc = tiData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+      map.addLayer(
+        {
+          id: FILL_ID,
+          type: 'fill',
+          source: SRC_ID,
+          paint: {
+            'fill-color': '#E07A5F',
+            'fill-opacity': 0.28,
+          },
+        },
+        'processos-fill',
+      )
+      map.addLayer(
+        {
+          id: LINE_ID,
+          type: 'line',
+          source: SRC_ID,
+          paint: {
+            'line-color': '#E07A5F',
+            'line-opacity': 0.9,
+            'line-width': 1.2,
+          },
+        },
+        'processos-fill',
+      )
+    } else {
+      const src = map.getSource(SRC_ID) as mapboxgl.GeoJSONSource | undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      src?.setData(fc as any)
+    }
+
+    const on = !!camadasGeo.terras_indigenas
+    const vis = on ? 'visible' : 'none'
+    if (map.getLayer(FILL_ID)) map.setLayoutProperty(FILL_ID, 'visibility', vis)
+    if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
+
+    const STATIC_IDS = [
+      'geo-terras_indigenas-fill',
+      'geo-terras_indigenas-line',
+      'geo-terras_indigenas-label',
+    ]
+    const staticVis = 'none'
+    for (const sid of STATIC_IDS) {
+      if (map.getLayer(sid)) map.setLayoutProperty(sid, 'visibility', staticVis)
+    }
+  }, [mapLoaded, tiData, camadasGeo.terras_indigenas])
+
+  // Sync Quilombola no Mapbox (API)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const SRC_ID = 'api-quilombola-src'
+    const FILL_ID = 'api-quilombola-fill'
+    const LINE_ID = 'api-quilombola-line'
+
+    const fc =
+      quilombolaData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+      map.addLayer(
+        {
+          id: FILL_ID,
+          type: 'fill',
+          source: SRC_ID,
+          paint: {
+            'fill-color': '#C4915A',
+            'fill-opacity': 0.3,
+          },
+        },
+        'processos-fill',
+      )
+      map.addLayer(
+        {
+          id: LINE_ID,
+          type: 'line',
+          source: SRC_ID,
+          paint: {
+            'line-color': '#C4915A',
+            'line-opacity': 0.9,
+            'line-width': 1.2,
+          },
+        },
+        'processos-fill',
+      )
+    } else {
+      const src = map.getSource(SRC_ID) as mapboxgl.GeoJSONSource | undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      src?.setData(fc as any)
+    }
+
+    const vis = camadasGeo.quilombolas ? 'visible' : 'none'
+    if (map.getLayer(FILL_ID)) map.setLayoutProperty(FILL_ID, 'visibility', vis)
+    if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
+
+    const STATIC_IDS = [
+      'geo-quilombolas-fill',
+      'geo-quilombolas-line',
+      'geo-quilombolas-circle',
+      'geo-quilombolas-label',
+    ]
+    for (const sid of STATIC_IDS) {
+      if (map.getLayer(sid)) map.setLayoutProperty(sid, 'visibility', 'none')
+    }
+  }, [mapLoaded, quilombolaData, camadasGeo.quilombolas])
+
+  // Sync UC Proteção Integral no Mapbox (API)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const SRC_ID = 'api-uc-pi-src'
+    const FILL_ID = 'api-uc-pi-fill'
+    const LINE_ID = 'api-uc-pi-line'
+
+    const fc = ucPiData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+      map.addLayer(
+        {
+          id: FILL_ID,
+          type: 'fill',
+          source: SRC_ID,
+          paint: {
+            'fill-color': '#2F7A3E',
+            'fill-opacity': 0.32,
+          },
+        },
+        'processos-fill',
+      )
+      map.addLayer(
+        {
+          id: LINE_ID,
+          type: 'line',
+          source: SRC_ID,
+          paint: {
+            'line-color': '#2F7A3E',
+            'line-opacity': 0.9,
+            'line-width': 1.2,
+          },
+        },
+        'processos-fill',
+      )
+    } else {
+      const src = map.getSource(SRC_ID) as mapboxgl.GeoJSONSource | undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      src?.setData(fc as any)
+    }
+
+    const vis = camadasGeo.unidades_conservacao ? 'visible' : 'none'
+    if (map.getLayer(FILL_ID)) map.setLayoutProperty(FILL_ID, 'visibility', vis)
+    if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
+  }, [mapLoaded, ucPiData, camadasGeo.unidades_conservacao])
+
+  // Sync UC Uso Sustentável no Mapbox (API)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const SRC_ID = 'api-uc-us-src'
+    const FILL_ID = 'api-uc-us-fill'
+    const LINE_ID = 'api-uc-us-line'
+
+    const fc = ucUsData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+      map.addLayer(
+        {
+          id: FILL_ID,
+          type: 'fill',
+          source: SRC_ID,
+          paint: {
+            'fill-color': '#5FAE6C',
+            'fill-opacity': 0.24,
+          },
+        },
+        'processos-fill',
+      )
+      map.addLayer(
+        {
+          id: LINE_ID,
+          type: 'line',
+          source: SRC_ID,
+          paint: {
+            'line-color': '#5FAE6C',
+            'line-opacity': 0.85,
+            'line-width': 1,
+          },
+        },
+        'processos-fill',
+      )
+    } else {
+      const src = map.getSource(SRC_ID) as mapboxgl.GeoJSONSource | undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      src?.setData(fc as any)
+    }
+
+    const vis = camadasGeo.unidades_conservacao ? 'visible' : 'none'
+    if (map.getLayer(FILL_ID)) map.setLayoutProperty(FILL_ID, 'visibility', vis)
+    if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
+  }, [mapLoaded, ucUsData, camadasGeo.unidades_conservacao])
+
+  // Sync Aquífero no Mapbox (API) - polígono
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const SRC_ID = 'api-aquifero-src'
+    const FILL_ID = 'api-aquifero-fill'
+    const LINE_ID = 'api-aquifero-line'
+
+    const fc =
+      aquiferoData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+      map.addLayer(
+        {
+          id: FILL_ID,
+          type: 'fill',
+          source: SRC_ID,
+          paint: {
+            'fill-color': '#4A90B8',
+            'fill-opacity': 0.22,
+          },
+        },
+        'processos-fill',
+      )
+      map.addLayer(
+        {
+          id: LINE_ID,
+          type: 'line',
+          source: SRC_ID,
+          paint: {
+            'line-color': '#4A90B8',
+            'line-opacity': 0.75,
+            'line-width': 0.8,
+          },
+        },
+        'processos-fill',
+      )
+    } else {
+      const src = map.getSource(SRC_ID) as mapboxgl.GeoJSONSource | undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      src?.setData(fc as any)
+    }
+
+    const vis = camadasGeo.aquiferos ? 'visible' : 'none'
+    if (map.getLayer(FILL_ID)) map.setLayoutProperty(FILL_ID, 'visibility', vis)
+    if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
+  }, [mapLoaded, aquiferoData, camadasGeo.aquiferos])
+
+  // Sync Ferrovia no Mapbox (API) - linha
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const SRC_ID = 'api-ferrovia-src'
+    const HALO_ID = 'api-ferrovia-halo'
+    const LINE_ID = 'api-ferrovia-line'
+
+    const fc =
+      ferroviaData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+      // Halo branco atrás da linha para contraste
+      map.addLayer(
+        {
+          id: HALO_ID,
+          type: 'line',
+          source: SRC_ID,
+          paint: {
+            'line-color': '#FFFFFF',
+            'line-opacity': 0.4,
+            'line-width': ['interpolate', ['linear'], ['zoom'], 4, 1.5, 12, 4],
+          },
+        },
+        'processos-fill',
+      )
+      map.addLayer(
+        {
+          id: LINE_ID,
+          type: 'line',
+          source: SRC_ID,
+          paint: {
+            'line-color': '#B8B8B8',
+            'line-opacity': 0.95,
+            'line-width': ['interpolate', ['linear'], ['zoom'], 4, 0.6, 12, 2],
+          },
+        },
+        'processos-fill',
+      )
+    } else {
+      const src = map.getSource(SRC_ID) as mapboxgl.GeoJSONSource | undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      src?.setData(fc as any)
+    }
+
+    const vis = camadasGeo.ferrovias ? 'visible' : 'none'
+    if (map.getLayer(HALO_ID)) map.setLayoutProperty(HALO_ID, 'visibility', vis)
+    if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
+  }, [mapLoaded, ferroviaData, camadasGeo.ferrovias])
+
+  // Sync Porto no Mapbox (API) - ponto
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const SRC_ID = 'api-porto-src'
+    const CIRCLE_ID = 'api-porto-circle'
+
+    const fc = portoData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+      map.addLayer({
+        id: CIRCLE_ID,
+        type: 'circle',
+        source: SRC_ID,
+        paint: {
+          'circle-color': '#7EADD4',
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 3, 12, 8],
+          'circle-stroke-color': '#FFFFFF',
+          'circle-stroke-width': 1.5,
+          'circle-opacity': 0.95,
+        },
+      })
+    } else {
+      const src = map.getSource(SRC_ID) as mapboxgl.GeoJSONSource | undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      src?.setData(fc as any)
+    }
+
+    const vis = camadasGeo.portos ? 'visible' : 'none'
+    if (map.getLayer(CIRCLE_ID))
+      map.setLayoutProperty(CIRCLE_ID, 'visibility', vis)
+  }, [mapLoaded, portoData, camadasGeo.portos])
+
+  // Força camadas estáticas dos tipos migrados para API a ficarem SEMPRE ocultas.
+  // Roda a cada mudança em camadasGeo para sobrepor syncCamadasGeoVisibility.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const STATIC_MIGRATED: string[] = [
+      'geo-terras_indigenas-fill',
+      'geo-terras_indigenas-line',
+      'geo-terras_indigenas-label',
+      'geo-quilombolas-fill',
+      'geo-quilombolas-line',
+      'geo-quilombolas-circle',
+      'geo-quilombolas-label',
+      'geo-unidades_conservacao-fill',
+      'geo-unidades_conservacao-line',
+      'geo-unidades_conservacao-label',
+      'geo-aquiferos-fill',
+      'geo-aquiferos-line',
+      'geo-aquiferos-label',
+      'geo-ferrovias-halo',
+      'geo-ferrovias-line',
+      'geo-ferrovias-label',
+      'geo-portos-circle',
+      'geo-portos-label',
+    ]
+
+    for (const id of STATIC_MIGRATED) {
+      if (map.getLayer(id)) {
+        map.setLayoutProperty(id, 'visibility', 'none')
+      }
+    }
   }, [mapLoaded, camadasGeo])
 
   useEffect(() => {
@@ -1614,11 +2473,6 @@ export function MapView() {
       addTerritorioSimuladoLayers(map, 'processos-fill')
     }
     syncTerritorioSimuladoVisibility(map, territorioSimuladoVisivel)
-    if (!territorioSimulado860232LayersPresent(map)) {
-      addTerritorioSimulado860232Layers(map, 'processos-fill')
-    }
-    syncTerritorioSimulado860232Visibility(map, territorioSimuladoVisivel)
-    refreshTerritorioSimulado860232FromProcessos(map)
   }, [mapLoaded, territorioSimuladoVisivel])
 
   useEffect(() => {
@@ -1786,12 +2640,6 @@ export function MapView() {
 
         addTerritorioSimuladoLayers(map, 'processos-fill')
         syncTerritorioSimuladoVisibility(
-          map,
-          useMapStore.getState().territorioSimuladoVisivel,
-        )
-
-        addTerritorioSimulado860232Layers(map, 'processos-fill')
-        syncTerritorioSimulado860232Visibility(
           map,
           useMapStore.getState().territorioSimuladoVisivel,
         )

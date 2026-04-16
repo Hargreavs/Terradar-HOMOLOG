@@ -9,6 +9,7 @@ import type {
   OportunidadeLLM,
   ReportLLMResult,
 } from './reportTypes'
+import type { ReportLang } from './reportLang'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -24,22 +25,105 @@ REGRAS ABSOLUTAS:
 5. NUNCA inventar dados, usar APENAS os fornecidos no contexto
 6. Acentos: português brasileiro correto
 7. Implicações: sempre cruzar dados entre páginas (ex: CAPAG vs logística)
-8. Máximo 3 frases por parágrafo, diretas e sem floreios`
+8. Máximo 3 frases por parágrafo, diretas e sem floreios
+9. FASE DO PROCESSO: O campo fase indica se o processo está em Pesquisa, Lavra, ou outra fase.
+   - Se fase = "Lavra" ou regime contém "Concessão de Lavra": a viabilidade geológica já foi comprovada.
+     NUNCA usar linguagem de validação inicial ("demandam validação em campo", "confirmar parâmetros preliminares", "estudos complementares").
+     USAR linguagem de operação ("continuidade de teores", "reservas remanescentes", "vida útil da reserva", "variabilidade natural").
+   - Se fase = "Pesquisa" ou regime contém "Autorização de Pesquisa": a viabilidade ainda não foi comprovada.
+     USAR linguagem de validação ("validação em campo", "parâmetros geológicos preliminares", "estudos complementares").
+10. CAPAG PARCIAL: Quando capag_nota = "n.d." MAS existem indicadores individuais (capag_endiv, capag_poupcorr, capag_liquidez com valores numéricos e notas A/B/C):
+    - NUNCA dizer "CAPAG não disponível impede análise" ou "ausência de dados CAPAG".
+    - SEMPRE citar os indicadores que existem com seus valores e notas.
+    - Inferir a classificação equivalente: nota final = pior nota entre os indicadores disponíveis.
+    - Exemplo correto: "Os indicadores CAPAG parciais revelam endividamento controlado (16,13%, nota A), embora a poupança corrente (99,92%, nota C) sinalize fragilidade na capacidade de investimento municipal."
+    - Exemplo ERRADO: "Ausência de dados CAPAG impede análise completa da capacidade de gestão municipal."
+11. REFERÊNCIAS CRUZADAS REGULATÓRIAS: Quando dados_sei contém informações regulatórias (portaria, licença ambiental, certidão, TAH, plano de lavra, plano de fechamento de mina):
+    - No bloco RISCO REGULATÓRIO: citar documentos específicos com datas (ex: "portaria de lavra publicada no DOU em 09/01/2017", "licença ambiental apresentada em 17/04/2025").
+    - No bloco LEITURA INTEGRADA: se todos os documentos estão em dia, usar "regularidade documental completa" em vez de "condicionada à regularização".
+    - No bloco SEGURANÇA DO INVESTIMENTO: citar os marcos regulatórios como evidência de conformidade.
+    - NUNCA dizer "pendências regulatórias" se portaria, licença e certidão estão vigentes.`
 
-async function callClaude<T>(userPrompt: string, retries = 2): Promise<T | null> {
-  console.log('[CLAUDE] API Key presente:', !!process.env.ANTHROPIC_API_KEY)
-  console.log(
-    '[CLAUDE] API Key começa com:',
-    `${process.env.ANTHROPIC_API_KEY?.substring(0, 10)}...`,
-  )
+/** Prompt paralelo em EN (US), tom mineração institucional — mesmas regras de PI que o PT. */
+const SYSTEM_PROMPT_EN = `You are a mining intelligence analyst writing for institutional investors at TERRADAR.
+Output ONLY the JSON requested, with no markdown, preamble, or explanation.
 
+LANGUAGE RULE (highest priority):
+- Respond in PROFESSIONAL ENGLISH (US). Use precise mining industry terminology.
+- Do NOT include any Portuguese text in your response, EXCEPT for:
+  - Proper nouns that are official in Portuguese (company names such as "Engegold Mineração Ltda";
+    municipality names such as "Jaú do Tocantins/TO"; state program names such as "Prospera Tocantins";
+    BNDES line names).
+  - Direct quotations from Brazilian regulation (append the English translation in parentheses).
+- All analytical prose, labels, ratings, and integrated readings MUST be in English.
+- The data blocks supplied below are labeled in Portuguese (fase, regime, CAPAG, etc.). Read them,
+  but produce English output only. Never echo Portuguese label keywords into the prose.
+- Classification label mapping:
+  - "Alta" / "Em alta"            → "Rising" (price trend) or "High" (risk/score level)
+  - "Baixa" / "Em baixa"          → "Falling" (trend) or "Low" (level)
+  - "Muito baixo(a)"              → "Very low"
+  - "Muito alto(a)"               → "Very high"
+  - "Moderado(a)"                 → "Moderate"
+  - "Favorável"                   → "Favorable"
+  - "Muito favorável"             → "Very favorable"
+  - "Desfavorável"                → "Unfavorable"
+  - "Conservador"                 → "Conservative"
+  - "Arrojado"                    → "Aggressive"
+  - "Pesquisa" (fase)             → "Exploration"
+  - "Lavra" / "Concessão de Lavra"→ "Production" (phase) / "Mining concession" (tenure)
+
+ABSOLUTE RULES:
+1. NEVER disclose weights, formulas, or score calculation logic.
+2. Use "developed and calibrated" and "intellectual property of TERRADAR".
+3. Never use em dashes; use commas or periods.
+4. NEVER invent data; use ONLY what is provided in context.
+5. Spelling and grammar: US English.
+6. Implications: always cross-reference data across sections (e.g., CAPAG vs logistics).
+7. At most 3 sentences per paragraph, direct and concise.
+8. PROCESS PHASE: If phase indicates Production (Lavra) or tenure includes mining concession,
+   geological viability is proven. Use operating language ("continuity of grades", "remaining reserves",
+   "mine life"). If phase is Exploration (Pesquisa), use field-validation language.
+9. PARTIAL CAPAG: When capag_nota is "n.d." but individual indicators exist, never say CAPAG is
+   unavailable; cite indicators with their values and letter grades, and infer the equivalent rating
+   from the worst letter.
+10. REGULATORY CROSS-REFERENCES: When dados_sei lists permits/licenses, cite the dates. If all are
+    current, say "full documentary regularity", not "pending regularization".`
+
+function systemPromptForLang(lang: ReportLang): string {
+  return lang === 'en' ? SYSTEM_PROMPT_EN : SYSTEM_PROMPT
+}
+
+/**
+ * Prefixo imperativo de idioma aplicado a cada user prompt. Reforça a instrução do system
+ * prompt mesmo quando o corpo do user prompt está em PT (labels de dados). Crítico para EN:
+ * sem este reforço o Claude tende a espelhar o idioma do user prompt.
+ */
+function langUserPrefix(lang: ReportLang): string {
+  if (lang === 'en') {
+    return `[LANGUAGE=EN-US] RESPOND EXCLUSIVELY IN US ENGLISH.
+The data labels below are in Portuguese for internal compatibility, but ALL prose, headlines,
+labels, ratings, and analysis you emit MUST be in professional English. Preserve only proper
+nouns (company, municipality, program, and BNDES line names) in Portuguese.
+
+`
+  }
+  return ''
+}
+
+async function callClaude<T>(
+  userPrompt: string,
+  system: string,
+  lang: ReportLang = 'pt',
+  retries = 2,
+): Promise<T | null> {
+  const finalUser = langUserPrefix(lang) + userPrompt
   for (let i = 0; i <= retries; i++) {
     try {
       const response = await anthropic.messages.create({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 1000,
-        system: SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: userPrompt }],
+        system,
+        messages: [{ role: 'user', content: finalUser }],
       })
 
       const textBlock = response.content.find((b) => b.type === 'text')
@@ -47,13 +131,38 @@ async function callClaude<T>(userPrompt: string, retries = 2): Promise<T | null>
 
       const clean = textBlock.text.replace(/```json|```/g, '').trim()
       return JSON.parse(clean) as T
-    } catch (e: any) {
-      console.error(`[CLAUDE ERROR] Tentativa ${i + 1}:`, e.message || e)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      console.error(`[CLAUDE ERROR] Tentativa ${i + 1}:`, msg)
       if (i >= retries) return null
       await new Promise((r) => setTimeout(r, 1000 * (i + 1)))
     }
   }
   return null
+}
+
+/** Subconjunto estruturado para cruzamento fase, CAPAG parcial e SEI nos prompts v2.1. */
+function jsonContextoLLM(d: ReportData): string {
+  return JSON.stringify(
+    {
+      fase: d.fase_processo ?? d.fase,
+      regime: d.regime_display ?? d.regime,
+      capag_nota: d.capag_nota,
+      capag_nota_final: d.capag_nota_final ?? d.capag_nota,
+      capag_endiv: d.capag_endiv,
+      capag_endiv_nota: d.capag_endiv_nota,
+      capag_poupcorr: d.capag_poupcorr,
+      capag_poupcorr_nota: d.capag_poupcorr_nota,
+      capag_liquidez: d.capag_liquidez,
+      capag_liquidez_nota: d.capag_liquidez_nota,
+      idh: d.idh,
+      capag_indicadores: d.capag_indicadores ?? null,
+      capag_pior_indicador: d.capag_pior_indicador_nome ?? null,
+      dados_sei: d.dados_sei ?? null,
+    },
+    null,
+    2,
+  )
 }
 
 function buildPromptSumario(d: ReportData): string {
@@ -124,11 +233,24 @@ Gere JSON:
 }
 
 function buildPromptFiscal(d: ReportData): string {
-  return `Dados fiscais do município ${d.municipio}:
+  return `REGRAS ESPECÍFICAS PARA FISCAL:
+
+- CAPAG com indicadores parciais: Se capag_nota = "n.d." mas indicadores existem, exibir no campo capag_classificacao_equiv:
+  "Indicadores sugerem classificação equivalente a [pior_nota] (determinada pela [nome_do_pior_indicador])"
+  em destaque narrativo coerente com os dados (o PDF aplica cor âmbar a esse campo).
+
+- Ano-base: Sempre mencionar o ano-base dos dados CAPAG e o exercício fiscal no lead ou cfem_intro quando fizer sentido.
+  Formato de referência: "${d.fiscal_contexto_referencia}"
+
+Contexto JSON (use apenas dados fornecidos):
+${jsonContextoLLM(d)}
+
+Dados fiscais do município ${d.municipio}:
 - CAPAG: ${d.capag_nota}
 - Poupança corrente: ${d.capag_poupcorr} (nota ${d.capag_poupcorr_nota})
 - Endividamento: ${d.capag_endiv} (nota ${d.capag_endiv_nota})
 - Liquidez: ${d.capag_liquidez} (nota ${d.capag_liquidez_nota})
+- Pior indicador (metodologia TERRADAR): ${d.capag_pior_indicador_nome ?? 'n/d'}
 - População: ${d.populacao}
 - IDH: ${d.idh}
 - Receita própria: ${d.receita_propria}
@@ -142,7 +264,8 @@ Gere JSON:
   "headline": "frase sobre capacidade fiscal, max 10 palavras",
   "lead": "parágrafo: CAPAG nota, determinante, dívida, dependência",
   "cfem_intro": "1 frase: processo ainda não gera CFEM",
-  "implicacao": "3 frases: fiscal não impede, infraestrutura pode ser limitada, CFEM projetada"
+  "implicacao": "3 frases: fiscal não impede, infraestrutura pode ser limitada, CFEM projetada",
+  "capag_classificacao_equiv": "se capag parcial com nota n.d., uma linha com classificação equivalente e indicador determinante, senão null"
 }`
 }
 
@@ -151,13 +274,36 @@ function buildPromptRisco(d: ReportData): string {
     .map((l) => `${l.tipo}: ${l.nome}, ${l.distancia_km} km, sobreposto: ${l.sobreposto}`)
     .join('\n')
 
-  return `Dados de risco do processo ${d.processo}:
+  return `REGRAS ESPECÍFICAS PARA RISCO:
+
+- RISCO GEOLÓGICO: Verificar data.fase antes de redigir.
+  Se fase = "Lavra": "viabilidade geológica comprovada, risco concentrado na continuidade de teores em profundidade" + mencionar ausência de NI 43-101/JORC se aplicável.
+  Se fase = "Pesquisa": "validação em campo pendente, parâmetros geológicos preliminares".
+
+- RISCO SOCIAL: Verificar data.capag_endiv e data.capag_poupcorr.
+  Se existirem valores numéricos: citar valores exatos + notas + implicação (ex: "endividamento controlado mas margem fiscal limitada").
+  Se TODOS forem null/n.d.: aí sim dizer "dados CAPAG indisponíveis".
+  SEMPRE incluir IDH (data.idh) e distância a comunidades tradicionais se disponíveis nas camadas.
+
+- RISCO REGULATÓRIO: Verificar data.dados_sei.
+  Se portaria + licença + certidão existem e estão vigentes: "arcabouço regulatório completo".
+  Citar datas específicas dos documentos.
+  Mencionar plano de fechamento de mina se existir.
+
+- LEITURA INTEGRADA:
+  Se fase = "Lavra" E documentação completa: "regularidade documental completa" (nunca "condicionada à resolução de questões pendentes").
+  Se fase = "Pesquisa": "condicionada à confirmação dos parâmetros geológicos".
+
+Contexto JSON (cruzamento fase, CAPAG, SEI):
+${jsonContextoLLM(d)}
+
+Dados de risco do processo ${d.processo}:
 - Risk Score total: ${d.risk_score}/100 (${d.rs_classificacao})
 - Geológico: ${d.rs_geo.valor} (${d.rs_geo.label})
 - Ambiental: ${d.rs_amb.valor} (${d.rs_amb.label})
 - Social: ${d.rs_soc.valor} (${d.rs_soc.label})
 - Regulatório: ${d.rs_reg.valor} (${d.rs_reg.label})
-- Fase: ${d.fase}, Alvará: ${d.alvara_status} até ${d.alvara_validade}
+- Fase: ${d.fase}, Regime: ${d.regime}, Alvará: ${d.alvara_status} até ${d.alvara_validade}
 - GU: ${d.gu_status}
 - CAPAG: ${d.capag_nota}
 - Camadas territoriais:
@@ -180,7 +326,21 @@ function buildPromptOportunidade(d: ReportData): string {
   const ferroviaKm =
     d.infraestrutura.find((i) => i.tipo === 'Ferrovia')?.distancia_km ?? 'N/A'
 
-  return `Dados de oportunidade do processo ${d.processo}:
+  return `REGRAS ESPECÍFICAS PARA OPORTUNIDADE:
+
+- SEGURANÇA DO INVESTIMENTO: Verificar data.capag_endiv e data.capag_poupcorr.
+  Se existirem indicadores parciais: "indicadores CAPAG parciais (endividamento nota X, poupança corrente nota Y) indicam município com dívida controlada mas margem fiscal limitada para investimentos em infraestrutura de apoio."
+  Se portaria/licença/certidão vigentes em dados_sei: citar como "confirmação de conformidade plena com o marco regulatório ANM".
+  NUNCA "ausência de dados CAPAG" se indicadores parciais existirem.
+
+- SÍNTESE RS×OS:
+  Se indicadores CAPAG parciais existirem: "classificação CAPAG equivalente a [pior_nota], com endividamento controlado mas capacidade de investimento municipal restrita."
+  NUNCA repetir "ausência de dados CAPAG" se já citou indicadores na segurança.
+
+Contexto JSON:
+${jsonContextoLLM(d)}
+
+Dados de oportunidade do processo ${d.processo}:
 - OS Conservador: ${d.os_conservador}/100
 - OS Moderado: ${d.os_moderado}/100
 - OS Arrojado: ${d.os_arrojado}/100
@@ -192,7 +352,7 @@ function buildPromptOportunidade(d: ReportData): string {
 - Variação preço 12m: ${d.var_12m_pct}%
 - Ferrovia mais próxima: ${ferroviaKm} km
 - CAPAG: ${d.capag_nota}
-- Fase: ${d.fase}
+- Fase: ${d.fase}, Regime: ${d.regime}
 
 Gere JSON:
 {
@@ -206,6 +366,52 @@ Gere JSON:
   "sintese_marcos": "1 frase: próximos marcos de valorização"
 }
 REGRA: Labels OS = "Favorável" (não "Moderada"). NUNCA mencionar pesos.`
+}
+
+const FALLBACKS_EN = {
+  sumario: {
+    headline: 'Mining asset summary',
+    lead: 'Process data under review.',
+    veredito_texto: 'Stage under assessment.',
+    ponto_atencao: null,
+  } satisfies SumarioLLM,
+  territorio: {
+    headline: 'Territorial integrity analysis',
+    lead: 'Geospatial overlay completed with official layers.',
+    logistica_texto: 'See infrastructure table.',
+    implicacao: 'See table above.',
+  } satisfies TerritorioLLM,
+  mercado: {
+    headline: 'Commodity market data',
+    lead: 'Price and demand indicators under review.',
+    implicacao: 'See indicators above.',
+  } satisfies MercadoLLM,
+  fiscal: {
+    headline: 'Municipal fiscal context',
+    lead: 'Municipal fiscal indicators under review.',
+    cfem_intro: 'Exploration phase; no CFEM accrual yet.',
+    implicacao: 'See indicators above.',
+    capag_classificacao_equiv: null,
+  } satisfies FiscalLLM,
+  risco: {
+    headline: 'Risk analysis',
+    lead: 'Risk score computed across four dimensions.',
+    dim_geo: 'Geological dimension under review.',
+    dim_amb: 'Environmental dimension under review.',
+    dim_soc: 'Social dimension under review.',
+    dim_reg: 'Regulatory dimension under review.',
+    leitura: 'Integrated read in progress.',
+  } satisfies RiscoLLM,
+  oportunidade: {
+    headline: 'Opportunity analysis',
+    lead: 'Opportunity score computed across three dimensions.',
+    dim_merc: 'Market dimension under review.',
+    dim_viab: 'Feasibility dimension under review.',
+    dim_seg: 'Security dimension under review.',
+    sintese_p1: 'Synthesis in progress.',
+    sintese_p2: '',
+    sintese_marcos: '',
+  } satisfies OportunidadeLLM,
 }
 
 const FALLBACKS = {
@@ -231,6 +437,7 @@ const FALLBACKS = {
     lead: 'Indicadores fiscais municipais em análise.',
     cfem_intro: 'Processo em fase de pesquisa, sem arrecadação de CFEM.',
     implicacao: 'Ver indicadores acima.',
+    capag_classificacao_equiv: null,
   } satisfies FiscalLLM,
   risco: {
     headline: 'Análise de risco do processo',
@@ -254,22 +461,26 @@ const FALLBACKS = {
 }
 
 export async function generateReportLLM(data: ReportData): Promise<ReportLLMResult> {
+  const lang: ReportLang = data.lang ?? 'pt'
+  const sys = systemPromptForLang(lang)
+  const fb = lang === 'en' ? FALLBACKS_EN : FALLBACKS
+
   const [sumario, territorio, mercado, fiscal, risco, oportunidade] =
     await Promise.all([
-      callClaude<SumarioLLM>(buildPromptSumario(data)),
-      callClaude<TerritorioLLM>(buildPromptTerritorio(data)),
-      callClaude<MercadoLLM>(buildPromptMercado(data)),
-      callClaude<FiscalLLM>(buildPromptFiscal(data)),
-      callClaude<RiscoLLM>(buildPromptRisco(data)),
-      callClaude<OportunidadeLLM>(buildPromptOportunidade(data)),
+      callClaude<SumarioLLM>(buildPromptSumario(data), sys, lang),
+      callClaude<TerritorioLLM>(buildPromptTerritorio(data), sys, lang),
+      callClaude<MercadoLLM>(buildPromptMercado(data), sys, lang),
+      callClaude<FiscalLLM>(buildPromptFiscal(data), sys, lang),
+      callClaude<RiscoLLM>(buildPromptRisco(data), sys, lang),
+      callClaude<OportunidadeLLM>(buildPromptOportunidade(data), sys, lang),
     ])
 
   return {
-    sumario: sumario ?? FALLBACKS.sumario,
-    territorio: territorio ?? FALLBACKS.territorio,
-    mercado: mercado ?? FALLBACKS.mercado,
-    fiscal: fiscal ?? FALLBACKS.fiscal,
-    risco: risco ?? FALLBACKS.risco,
-    oportunidade: oportunidade ?? FALLBACKS.oportunidade,
+    sumario: sumario ?? fb.sumario,
+    territorio: territorio ?? fb.territorio,
+    mercado: mercado ?? fb.mercado,
+    fiscal: fiscal ?? fb.fiscal,
+    risco: risco ?? fb.risco,
+    oportunidade: oportunidade ?? fb.oportunidade,
   }
 }
