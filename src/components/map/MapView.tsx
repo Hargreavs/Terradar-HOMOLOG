@@ -1684,6 +1684,33 @@ export function MapView() {
     limit: 800,
   })
 
+  // Camada Aquífero (bbox-aware)
+  const aquiferoData = useMapLayer({
+    tipo: 'aquifero',
+    enabled: !!camadasGeo.aquiferos && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 800,
+  })
+
+  // Camada Ferrovia (bbox-aware)
+  const ferroviaData = useMapLayer({
+    tipo: 'ferrovia',
+    enabled: !!camadasGeo.ferrovias && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 500,
+  })
+
+  // Camada Porto (bbox-aware)
+  const portoData = useMapLayer({
+    tipo: 'porto',
+    enabled: !!camadasGeo.portos && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 500,
+  })
+
   // Sync Biomas no Mapbox
   useEffect(() => {
     const map = mapRef.current
@@ -2052,6 +2079,155 @@ export function MapView() {
     if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
   }, [mapLoaded, ucUsData, camadasGeo.unidades_conservacao])
 
+  // Sync Aquífero no Mapbox (API) - polígono
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const SRC_ID = 'api-aquifero-src'
+    const FILL_ID = 'api-aquifero-fill'
+    const LINE_ID = 'api-aquifero-line'
+
+    const fc =
+      aquiferoData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+      map.addLayer(
+        {
+          id: FILL_ID,
+          type: 'fill',
+          source: SRC_ID,
+          paint: {
+            'fill-color': '#4A90B8',
+            'fill-opacity': 0.22,
+          },
+        },
+        'processos-fill',
+      )
+      map.addLayer(
+        {
+          id: LINE_ID,
+          type: 'line',
+          source: SRC_ID,
+          paint: {
+            'line-color': '#4A90B8',
+            'line-opacity': 0.75,
+            'line-width': 0.8,
+          },
+        },
+        'processos-fill',
+      )
+    } else {
+      const src = map.getSource(SRC_ID) as mapboxgl.GeoJSONSource | undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      src?.setData(fc as any)
+    }
+
+    const vis = camadasGeo.aquiferos ? 'visible' : 'none'
+    if (map.getLayer(FILL_ID)) map.setLayoutProperty(FILL_ID, 'visibility', vis)
+    if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
+  }, [mapLoaded, aquiferoData, camadasGeo.aquiferos])
+
+  // Sync Ferrovia no Mapbox (API) - linha
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const SRC_ID = 'api-ferrovia-src'
+    const HALO_ID = 'api-ferrovia-halo'
+    const LINE_ID = 'api-ferrovia-line'
+
+    const fc =
+      ferroviaData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+      // Halo branco atrás da linha para contraste
+      map.addLayer(
+        {
+          id: HALO_ID,
+          type: 'line',
+          source: SRC_ID,
+          paint: {
+            'line-color': '#FFFFFF',
+            'line-opacity': 0.4,
+            'line-width': ['interpolate', ['linear'], ['zoom'], 4, 1.5, 12, 4],
+          },
+        },
+        'processos-fill',
+      )
+      map.addLayer(
+        {
+          id: LINE_ID,
+          type: 'line',
+          source: SRC_ID,
+          paint: {
+            'line-color': '#B8B8B8',
+            'line-opacity': 0.95,
+            'line-width': ['interpolate', ['linear'], ['zoom'], 4, 0.6, 12, 2],
+          },
+        },
+        'processos-fill',
+      )
+    } else {
+      const src = map.getSource(SRC_ID) as mapboxgl.GeoJSONSource | undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      src?.setData(fc as any)
+    }
+
+    const vis = camadasGeo.ferrovias ? 'visible' : 'none'
+    if (map.getLayer(HALO_ID)) map.setLayoutProperty(HALO_ID, 'visibility', vis)
+    if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
+  }, [mapLoaded, ferroviaData, camadasGeo.ferrovias])
+
+  // Sync Porto no Mapbox (API) - ponto
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const SRC_ID = 'api-porto-src'
+    const CIRCLE_ID = 'api-porto-circle'
+
+    const fc = portoData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+      map.addLayer({
+        id: CIRCLE_ID,
+        type: 'circle',
+        source: SRC_ID,
+        paint: {
+          'circle-color': '#7EADD4',
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 3, 12, 8],
+          'circle-stroke-color': '#FFFFFF',
+          'circle-stroke-width': 1.5,
+          'circle-opacity': 0.95,
+        },
+      })
+    } else {
+      const src = map.getSource(SRC_ID) as mapboxgl.GeoJSONSource | undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      src?.setData(fc as any)
+    }
+
+    const vis = camadasGeo.portos ? 'visible' : 'none'
+    if (map.getLayer(CIRCLE_ID))
+      map.setLayoutProperty(CIRCLE_ID, 'visibility', vis)
+  }, [mapLoaded, portoData, camadasGeo.portos])
+
   // Força camadas estáticas dos tipos migrados para API a ficarem SEMPRE ocultas.
   // Roda a cada mudança em camadasGeo para sobrepor syncCamadasGeoVisibility.
   useEffect(() => {
@@ -2069,6 +2245,14 @@ export function MapView() {
       'geo-unidades_conservacao-fill',
       'geo-unidades_conservacao-line',
       'geo-unidades_conservacao-label',
+      'geo-aquiferos-fill',
+      'geo-aquiferos-line',
+      'geo-aquiferos-label',
+      'geo-ferrovias-halo',
+      'geo-ferrovias-line',
+      'geo-ferrovias-label',
+      'geo-portos-circle',
+      'geo-portos-label',
     ]
 
     for (const id of STATIC_MIGRATED) {
