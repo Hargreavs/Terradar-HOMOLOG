@@ -1648,6 +1648,24 @@ export function MapView() {
     limit: 500,
   })
 
+  // Camada TI (bbox-aware)
+  const tiData = useMapLayer({
+    tipo: 'ti',
+    enabled: !!camadasGeo.terras_indigenas && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 800,
+  })
+
+  // Camada Quilombola (bbox-aware)
+  const quilombolaData = useMapLayer({
+    tipo: 'quilombola',
+    enabled: !!camadasGeo.quilombolas && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 500,
+  })
+
   // Sync Biomas no Mapbox
   useEffect(() => {
     const map = mapRef.current
@@ -1781,6 +1799,157 @@ export function MapView() {
     const vis = camadasGeo.hidrovias ? 'visible' : 'none'
     if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
   }, [mapLoaded, hidroviasData, camadasGeo.hidrovias])
+
+  // Sync TI no Mapbox (API)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const SRC_ID = 'api-ti-src'
+    const FILL_ID = 'api-ti-fill'
+    const LINE_ID = 'api-ti-line'
+
+    const fc = tiData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+      map.addLayer(
+        {
+          id: FILL_ID,
+          type: 'fill',
+          source: SRC_ID,
+          paint: {
+            'fill-color': '#E07A5F',
+            'fill-opacity': 0.28,
+          },
+        },
+        'processos-fill',
+      )
+      map.addLayer(
+        {
+          id: LINE_ID,
+          type: 'line',
+          source: SRC_ID,
+          paint: {
+            'line-color': '#E07A5F',
+            'line-opacity': 0.9,
+            'line-width': 1.2,
+          },
+        },
+        'processos-fill',
+      )
+    } else {
+      const src = map.getSource(SRC_ID) as mapboxgl.GeoJSONSource | undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      src?.setData(fc as any)
+    }
+
+    const on = !!camadasGeo.terras_indigenas
+    const vis = on ? 'visible' : 'none'
+    if (map.getLayer(FILL_ID)) map.setLayoutProperty(FILL_ID, 'visibility', vis)
+    if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
+
+    const STATIC_IDS = [
+      'geo-terras_indigenas-fill',
+      'geo-terras_indigenas-line',
+      'geo-terras_indigenas-label',
+    ]
+    const staticVis = 'none'
+    for (const sid of STATIC_IDS) {
+      if (map.getLayer(sid)) map.setLayoutProperty(sid, 'visibility', staticVis)
+    }
+  }, [mapLoaded, tiData, camadasGeo.terras_indigenas])
+
+  // Sync Quilombola no Mapbox (API)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const SRC_ID = 'api-quilombola-src'
+    const FILL_ID = 'api-quilombola-fill'
+    const LINE_ID = 'api-quilombola-line'
+
+    const fc =
+      quilombolaData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+      map.addLayer(
+        {
+          id: FILL_ID,
+          type: 'fill',
+          source: SRC_ID,
+          paint: {
+            'fill-color': '#C4915A',
+            'fill-opacity': 0.3,
+          },
+        },
+        'processos-fill',
+      )
+      map.addLayer(
+        {
+          id: LINE_ID,
+          type: 'line',
+          source: SRC_ID,
+          paint: {
+            'line-color': '#C4915A',
+            'line-opacity': 0.9,
+            'line-width': 1.2,
+          },
+        },
+        'processos-fill',
+      )
+    } else {
+      const src = map.getSource(SRC_ID) as mapboxgl.GeoJSONSource | undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      src?.setData(fc as any)
+    }
+
+    const vis = camadasGeo.quilombolas ? 'visible' : 'none'
+    if (map.getLayer(FILL_ID)) map.setLayoutProperty(FILL_ID, 'visibility', vis)
+    if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
+
+    const STATIC_IDS = [
+      'geo-quilombolas-fill',
+      'geo-quilombolas-line',
+      'geo-quilombolas-circle',
+      'geo-quilombolas-label',
+    ]
+    for (const sid of STATIC_IDS) {
+      if (map.getLayer(sid)) map.setLayoutProperty(sid, 'visibility', 'none')
+    }
+  }, [mapLoaded, quilombolaData, camadasGeo.quilombolas])
+
+  // Força camadas estáticas dos tipos migrados para API a ficarem SEMPRE ocultas.
+  // Roda a cada mudança em camadasGeo para sobrepor syncCamadasGeoVisibility.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const STATIC_MIGRATED: string[] = [
+      'geo-terras_indigenas-fill',
+      'geo-terras_indigenas-line',
+      'geo-terras_indigenas-label',
+      'geo-quilombolas-fill',
+      'geo-quilombolas-line',
+      'geo-quilombolas-circle',
+      'geo-quilombolas-label',
+    ]
+
+    for (const id of STATIC_MIGRATED) {
+      if (map.getLayer(id)) {
+        map.setLayoutProperty(id, 'visibility', 'none')
+      }
+    }
+  }, [mapLoaded, camadasGeo])
 
   useEffect(() => {
     const map = mapRef.current
