@@ -1383,17 +1383,7 @@ export function RelatorioCompleto({
             gap: 12,
           }}
         >
-          <TextoTruncadoComTooltip
-            text={processo.numero}
-            placement="above"
-            className="block min-w-0"
-            style={{
-              fontSize: FS.base,
-              fontWeight: 500,
-              color: '#F1EFE8',
-              flexShrink: 1,
-            }}
-          />
+          <RegimeBadge regime={processo.regime} variant="drawer" />
           <button
             type="button"
             onClick={onFechar}
@@ -1642,17 +1632,6 @@ export function RelatorioCompleto({
             flex: 1,
           }}
         >
-          <TextoTruncadoComTooltip
-            text={processo.numero}
-            placement="above"
-            className="block min-w-0"
-            style={{
-              fontSize: FS.base,
-              fontWeight: 500,
-              color: '#F1EFE8',
-              flexShrink: 1,
-            }}
-          />
           <RegimeBadge regime={processo.regime} variant="drawer" />
         </div>
         <div
@@ -1948,9 +1927,6 @@ export function RelatorioCompleto({
               {mostrarDisclaimerSEI(processo) ? (
                 <div
                   style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: 8,
                     fontSize: FS.sm,
                     color: '#888780',
                     lineHeight: 1.5,
@@ -1960,18 +1936,7 @@ export function RelatorioCompleto({
                     borderTop: '1px solid #2C2C2A',
                   }}
                 >
-                  <Info
-                    size={14}
-                    aria-hidden
-                    style={{
-                      color: '#888780',
-                      flexShrink: 0,
-                      marginTop: 2,
-                    }}
-                  />
-                  <span>
-                    {TEXTO_DISCLAIMER_SEI_ANM.replace(/!/g, '')}
-                  </span>
+                  {TEXTO_DISCLAIMER_SEI_ANM.replace(/!/g, '')}
                 </div>
               ) : null}
               <FonteLabel
@@ -2068,7 +2033,7 @@ export function RelatorioCompleto({
                               >
                                 <span
                                   style={{
-                                    fontSize: FS.sm,
+                                    fontSize: FS.md,
                                     color: '#888780',
                                     fontWeight: 400,
                                     lineHeight: 1.45,
@@ -4651,6 +4616,7 @@ export function RelatorioCompleto({
                         <div
                           style={{
                             marginTop: 16,
+                            marginBottom: 22,
                             padding: '12px 14px',
                             borderRadius: 8,
                             background: 'rgba(234, 179, 8, 0.08)',
@@ -4686,7 +4652,7 @@ export function RelatorioCompleto({
                         style={{
                           display: 'flex',
                           alignItems: 'stretch',
-                          marginTop: 4,
+                          marginTop: cfemSemRecolhimento ? 0 : 4,
                           marginBottom: 28,
                         }}
                       >

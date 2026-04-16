@@ -205,13 +205,32 @@ function formatBrlNum(n: number): string {
   return `R$ ${n.toLocaleString('pt-BR')}`
 }
 
+function normalizeTipoLayer(raw: unknown): string {
+  const k = (typeof raw === 'string' ? raw : String(raw ?? '')).trim()
+  switch (k) {
+    case 'Terra Indigena':
+    case 'TI':
+      return 'Terra Indígena'
+    case 'UC Protecao Integral':
+    case 'UC PI':
+      return 'UC (PI) Proteção integral'
+    case 'UC Uso Sustentavel':
+    case 'UC US':
+      return 'UC (US) Uso sustentável'
+    case 'Aquifero':
+      return 'Aquífero'
+    default:
+      return k
+  }
+}
+
 function buildLayersFromApi(rows: Record<string, unknown>[]): LayerData[] {
   if (!rows.length) return []
   return rows.map((row) => {
     const sobrePct = Number(row.sobreposicao_pct ?? 0)
     const sobreposto = sobrePct > 0
     return {
-      tipo: nd(row.tipo),
+      tipo: normalizeTipoLayer(row.tipo),
       nome: nd(row.nome),
       detalhes: nd(row.detalhes),
       distancia_km: Number(row.distancia_km) || 0,
@@ -788,12 +807,18 @@ export async function buildReportData(
     cfem_estimada_ha: cfemEstimadaHaFinal,
 
     mapa_base64: '',
-    layers: analise
-      ? buildLayersFromPostGIS(analise)
-      : buildLayersFromApi(api.territorial.layers as Record<string, unknown>[]),
-    infraestrutura: analise
-      ? buildInfraFromPostGIS(analise)
-      : buildInfraFromApi(api.territorial.infra as Record<string, unknown>[]),
+    layers:
+      Array.isArray(api.territorial?.layers) && api.territorial.layers.length > 0
+        ? buildLayersFromApi(api.territorial.layers as Record<string, unknown>[])
+        : analise
+          ? buildLayersFromPostGIS(analise)
+          : [],
+    infraestrutura:
+      Array.isArray(api.territorial?.infra) && api.territorial.infra.length > 0
+        ? buildInfraFromApi(api.territorial.infra as Record<string, unknown>[])
+        : analise
+          ? buildInfraFromPostGIS(analise)
+          : [],
 
     capag_nota: capagNota,
     capag_endiv: endiv.texto,
