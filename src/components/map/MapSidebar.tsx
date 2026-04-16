@@ -100,10 +100,10 @@ const CAMADAS_SUB_LABEL: CSSProperties = {
 const CAMADAS_GEO_GROUPS: { title: string; ids: CamadaGeoId[] }[] = [
   {
     title: 'ÁREAS PROTEGIDAS',
-    ids: ['terras_indigenas', 'unidades_conservacao', 'quilombolas', 'app_car'],
+    ids: ['terras_indigenas', 'unidades_conservacao', 'quilombolas', 'app_car', 'biomas'],
   },
   { title: 'RECURSOS HÍDRICOS', ids: ['aquiferos'] },
-  { title: 'INFRAESTRUTURA', ids: ['ferrovias', 'portos'] },
+  { title: 'INFRAESTRUTURA', ids: ['rodovias', 'ferrovias', 'hidrovias', 'portos'] },
 ]
 
 const CAMADAS_GEO_ITEM: Record<
@@ -119,7 +119,10 @@ const CAMADAS_GEO_ITEM: Record<
   quilombolas: { label: 'Quilombolas', color: '#C4915A', Icon: Home },
   app_car: { label: 'Áreas de Preservação', color: '#5B9A6F', Icon: Leaf },
   aquiferos: { label: 'Aquíferos', color: '#4A90B8', Icon: Droplets },
+  biomas: { label: 'Biomas', color: '#8FA668', Icon: Leaf },
+  rodovias: { label: 'Rodovias', color: '#D9A55B', Icon: TrainTrack },
   ferrovias: { label: 'Ferrovias', color: '#B8B8B8', Icon: TrainTrack },
+  hidrovias: { label: 'Hidrovias', color: '#5FA8B8', Icon: Droplets },
   portos: { label: 'Portos', color: '#7EADD4', Icon: Anchor },
 }
 
@@ -1093,7 +1096,7 @@ export function MapSidebar({
               </span>
             </button>
             <p style={{ ...s3, marginTop: 8 }}>
-              {camadasGeoAtivasCount} de 7 camadas ativas
+              {camadasGeoAtivasCount} de {CAMADAS_GEO_ORDER.length} camadas ativas
             </p>
           </div>
         ) : null}

@@ -9,14 +9,20 @@ export type CamadaGeoId =
   | 'aquiferos'
   | 'ferrovias'
   | 'portos'
+  | 'biomas'
+  | 'rodovias'
+  | 'hidrovias'
 
 export const CAMADAS_GEO_ORDER: CamadaGeoId[] = [
+  'biomas',
   'aquiferos',
   'terras_indigenas',
   'unidades_conservacao',
   'quilombolas',
   'app_car',
+  'rodovias',
   'ferrovias',
+  'hidrovias',
   'portos',
 ]
 
@@ -27,7 +33,10 @@ export const CAMADAS_GEO_LEGEND_ORDER: CamadaGeoId[] = [
   'quilombolas',
   'app_car',
   'aquiferos',
+  'biomas',
+  'rodovias',
   'ferrovias',
+  'hidrovias',
   'portos',
 ]
 
@@ -39,6 +48,9 @@ export const CAMADAS_GEO_LABEL: Record<CamadaGeoId, string> = {
   aquiferos: 'Aquíferos',
   ferrovias: 'Ferrovias',
   portos: 'Portos',
+  biomas: 'Biomas',
+  rodovias: 'Rodovias',
+  hidrovias: 'Hidrovias',
 }
 
 export const CAMADAS_GEO_COLOR: Record<CamadaGeoId, string> = {
@@ -49,6 +61,9 @@ export const CAMADAS_GEO_COLOR: Record<CamadaGeoId, string> = {
   aquiferos: '#4A90B8',
   ferrovias: '#B8B8B8',
   portos: '#7EADD4',
+  biomas: '#8FA668',
+  rodovias: '#D9A55B',
+  hidrovias: '#5FA8B8',
 }
 
 const TEXT_FONT = ['Open Sans Semibold', 'Arial Unicode MS Bold'] as string[]
@@ -113,6 +128,9 @@ const LAYERS_BY_CAMADA: Record<CamadaGeoId, string[]> = {
   app_car: ['geo-app_car-fill', 'geo-app_car-line', 'geo-app_car-label'],
   ferrovias: ['geo-ferrovias-halo', 'geo-ferrovias-line', 'geo-ferrovias-label'],
   portos: ['geo-portos-circle', 'geo-portos-label'],
+  biomas: [],
+  rodovias: [],
+  hidrovias: [],
 }
 
 export function camadasGeoLayersPresent(map: mapboxgl.Map): boolean {
@@ -624,6 +642,9 @@ export function defaultCamadasGeo(): Record<CamadaGeoId, boolean> {
     aquiferos: false,
     ferrovias: false,
     portos: false,
+    biomas: false,
+    rodovias: false,
+    hidrovias: false,
   }
 }
 

@@ -19,7 +19,12 @@ export type CamadasGeoJSONData = {
   app_car: FeatureCollectionJson
   ferrovias: FeatureCollectionJson
   portos: FeatureCollectionJson
+  biomas: FeatureCollectionJson
+  rodovias: FeatureCollectionJson
+  hidrovias: FeatureCollectionJson
 }
+
+const EMPTY_FC: FeatureCollectionJson = { type: 'FeatureCollection', features: [] }
 
 function parse(raw: string): FeatureCollectionJson {
   return JSON.parse(raw) as FeatureCollectionJson
@@ -33,4 +38,7 @@ export const CAMADAS_GEO_JSON: CamadasGeoJSONData = {
   app_car: parse(rawAppCar),
   ferrovias: parse(rawFerrovias),
   portos: parse(rawPortos),
+  biomas: EMPTY_FC,
+  rodovias: EMPTY_FC,
+  hidrovias: EMPTY_FC,
 }
