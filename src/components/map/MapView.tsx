@@ -56,6 +56,7 @@ import {
   type PendingNavigation,
 } from '../../store/useMapStore'
 import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion'
+import { useMapLayer, type BBox } from '../../hooks/useMapLayer'
 import {
   MOTION_MAP_INTRO_DURATION_MS,
   MOTION_MAP_INTRO_LEGEND_DELAY_MS,
@@ -821,6 +822,9 @@ export function MapView() {
   })
   const applyingIntelDrillRef = useRef(false)
   const [mapLoaded, setMapLoaded] = useState(false)
+  const BRASIL_BBOX: BBox = [-74.0, -34.0, -34.0, 5.5]
+  const [viewportBbox, setViewportBbox] = useState<BBox | null>(null)
+  const [viewportZoom, setViewportZoom] = useState<number>(4)
   const [introSearch, setIntroSearch] = useState(false)
   const [introLegend, setIntroLegend] = useState(false)
   const [introTheme, setIntroTheme] = useState(false)
@@ -1591,6 +1595,192 @@ export function MapView() {
     if (!map || !mapLoaded || !map.isStyleLoaded()) return
     syncCamadasGeoVisibility(map, camadasGeo)
   }, [mapLoaded, camadasGeo])
+
+  // Viewport tracking para camadas API (bioma/rodovia/hidrovia)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const updateViewport = () => {
+      try {
+        const b = map.getBounds()
+        if (!b) return
+        const sw = b.getSouthWest()
+        const ne = b.getNorthEast()
+        setViewportBbox([sw.lng, sw.lat, ne.lng, ne.lat])
+        setViewportZoom(map.getZoom())
+      } catch {
+        // silently ignore
+      }
+    }
+
+    updateViewport()
+    map.on('moveend', updateViewport)
+    map.on('zoomend', updateViewport)
+
+    return () => {
+      map.off('moveend', updateViewport)
+      map.off('zoomend', updateViewport)
+    }
+  }, [mapLoaded])
+
+  const biomasData = useMapLayer({
+    tipo: 'bioma',
+    enabled: !!camadasGeo.biomas && mapLoaded,
+    bbox: BRASIL_BBOX,
+    zoom: 4,
+    limit: 50,
+  })
+
+  const rodoviasData = useMapLayer({
+    tipo: 'rodovia',
+    enabled: !!camadasGeo.rodovias && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 500,
+  })
+
+  const hidroviasData = useMapLayer({
+    tipo: 'hidrovia',
+    enabled: !!camadasGeo.hidrovias && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 500,
+  })
+
+  // Sync Biomas no Mapbox
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const SRC_ID = 'api-biomas-src'
+    const FILL_ID = 'api-biomas-fill'
+    const LINE_ID = 'api-biomas-line'
+
+    const fc = biomasData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+      map.addLayer(
+        {
+          id: FILL_ID,
+          type: 'fill',
+          source: SRC_ID,
+          paint: {
+            'fill-color': '#8FA668',
+            'fill-opacity': 0.18,
+          },
+        },
+        'processos-fill',
+      )
+      map.addLayer(
+        {
+          id: LINE_ID,
+          type: 'line',
+          source: SRC_ID,
+          paint: {
+            'line-color': '#8FA668',
+            'line-opacity': 0.6,
+            'line-width': 1,
+          },
+        },
+        'processos-fill',
+      )
+    } else {
+      const src = map.getSource(SRC_ID) as mapboxgl.GeoJSONSource | undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      src?.setData(fc as any)
+    }
+
+    const vis = camadasGeo.biomas ? 'visible' : 'none'
+    if (map.getLayer(FILL_ID)) map.setLayoutProperty(FILL_ID, 'visibility', vis)
+    if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
+  }, [mapLoaded, biomasData, camadasGeo.biomas])
+
+  // Sync Rodovias no Mapbox
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const SRC_ID = 'api-rodovias-src'
+    const LINE_ID = 'api-rodovias-line'
+
+    const fc =
+      rodoviasData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+      map.addLayer(
+        {
+          id: LINE_ID,
+          type: 'line',
+          source: SRC_ID,
+          paint: {
+            'line-color': '#D9A55B',
+            'line-opacity': 0.85,
+            'line-width': ['interpolate', ['linear'], ['zoom'], 4, 0.5, 12, 2.5],
+          },
+        },
+        'processos-fill',
+      )
+    } else {
+      const src = map.getSource(SRC_ID) as mapboxgl.GeoJSONSource | undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      src?.setData(fc as any)
+    }
+
+    const vis = camadasGeo.rodovias ? 'visible' : 'none'
+    if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
+  }, [mapLoaded, rodoviasData, camadasGeo.rodovias])
+
+  // Sync Hidrovias no Mapbox
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const SRC_ID = 'api-hidrovias-src'
+    const LINE_ID = 'api-hidrovias-line'
+
+    const fc =
+      hidroviasData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+      map.addLayer(
+        {
+          id: LINE_ID,
+          type: 'line',
+          source: SRC_ID,
+          paint: {
+            'line-color': '#5FA8B8',
+            'line-opacity': 0.85,
+            'line-width': ['interpolate', ['linear'], ['zoom'], 4, 0.6, 12, 3],
+            'line-dasharray': [2, 1.5],
+          },
+        },
+        'processos-fill',
+      )
+    } else {
+      const src = map.getSource(SRC_ID) as mapboxgl.GeoJSONSource | undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      src?.setData(fc as any)
+    }
+
+    const vis = camadasGeo.hidrovias ? 'visible' : 'none'
+    if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
+  }, [mapLoaded, hidroviasData, camadasGeo.hidrovias])
 
   useEffect(() => {
     const map = mapRef.current
