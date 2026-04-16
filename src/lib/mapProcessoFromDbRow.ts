@@ -323,3 +323,42 @@ export function mapDbRowToMapProcesso(row: Record<string, unknown>): Processo | 
     os_label_persistido: sp?.os_label ?? null,
   }
 }
+
+/**
+ * Adaptador: converte uma feature do GeoJSON retornado por
+ * /api/processos/viewport em Processo, reusando mapDbRowToMapProcesso.
+ *
+ * Features da viewport têm shape:
+ *   { type: 'Feature', geometry: {...}, properties: { numero, titular, ... } }
+ *
+ * mapDbRowToMapProcesso espera uma "row" com campos diretos + geom.
+ * Fazemos spread de properties + geom=geometry e deixamos a função
+ * existente fazer todo o processamento (extractGeom, scores, etc).
+ */
+export function mapViewportFeatureToProcesso(
+  feature: unknown,
+): Processo | null {
+  if (!feature || typeof feature !== 'object') return null
+  const f = feature as { geometry?: unknown; properties?: unknown }
+  const geometry = f.geometry
+  const properties =
+    f.properties && typeof f.properties === 'object'
+      ? (f.properties as Record<string, unknown>)
+      : {}
+  return mapDbRowToMapProcesso({ ...properties, geom: geometry })
+}
+
+/**
+ * Helper: mapeia lista de features de uma FeatureCollection para Processo[].
+ * Descarta features inválidas (sem numero, sem geometria, etc).
+ */
+export function mapViewportFeaturesToProcessos(
+  features: unknown[],
+): Processo[] {
+  const out: Processo[] = []
+  for (const f of features) {
+    const p = mapViewportFeatureToProcesso(f)
+    if (p) out.push(p)
+  }
+  return out
+}
