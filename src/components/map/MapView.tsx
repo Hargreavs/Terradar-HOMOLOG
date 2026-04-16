@@ -109,6 +109,17 @@ function getViewportProcessosLimit(zoom: number): number {
  */
 const VIEWPORT_ZOOM_MIN = 7
 
+/**
+ * Processos de referência carregados do banco real no mount do mapa.
+ * Garantem que demos de apresentação (Tocantins) apareçam em qualquer
+ * zoom, independentemente do viewport gate (z >= 7). Se editar esta
+ * lista, confirmar que os números existem na tabela `processos`.
+ */
+const DEMO_NUMEROS: readonly string[] = [
+  '864.231/2017',
+  '860.232/1990',
+] as const
+
 type ModoVisualizacao = 'regime' | 'risco' | 'substancia'
 
 /** Largura fixa da sidebar de filtros + margem para o mapa alinhar fitBounds/flyTo. */
@@ -1752,6 +1763,14 @@ export function MapView() {
   })
 
   const mergeViewportProcessos = useMapStore((s) => s.mergeViewportProcessos)
+  const seedDemoProcessos = useMapStore((s) => s.seedDemoProcessos)
+
+  // Seed de processos-demo do banco real.
+  // Dispara 1x quando o mapa termina de carregar. Dedup via store.
+  useEffect(() => {
+    if (!mapLoaded) return
+    void seedDemoProcessos([...DEMO_NUMEROS])
+  }, [mapLoaded, seedDemoProcessos])
 
   useEffect(() => {
     if (!viewportProcessosData) return

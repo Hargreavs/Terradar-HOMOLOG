@@ -1,7 +1,8 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { PROCESSOS_MOCK } from '../data/processos.mock'
 import { cloneFiltrosState } from '../lib/intelMapDrill'
+import { mapDbRowToMapProcesso } from '../lib/mapProcessoFromDbRow'
+import { buscarProcessoPorNumero } from '../lib/processoApi'
 import {
   type CamadaGeoId,
   defaultCamadasGeo,
@@ -100,7 +101,7 @@ function mergeRiskRange(saved: Partial<FiltrosState> | undefined) {
 
 function loadProcessos(): Processo[] {
   localStorage.removeItem('terrae-processos')
-  return PROCESSOS_MOCK
+  return []
 }
 
 const NUMERO_RX = /\d{3}\.\d{3}\/\d{4}/
@@ -146,6 +147,7 @@ export interface MapStore {
   /** Adiciona processo vindo da API (evita duplicar por `numero`). */
   adicionarProcesso: (processo: Processo) => void
   mergeViewportProcessos: (lista: Processo[]) => void
+  seedDemoProcessos: (numeros: string[]) => Promise<void>
   setHoveredProcessoId: (id: string | null) => void
   getProcessosFiltrados: () => Processo[]
   requestFlyTo: (
@@ -304,6 +306,32 @@ export const useMapStore = create<MapStore>()(
           if (!novos.length) return state
           return { processos: [...state.processos, ...novos] }
         }),
+
+      seedDemoProcessos: async (numeros) => {
+        if (!numeros.length) return
+        const resultados = await Promise.all(
+          numeros.map(async (numero) => {
+            try {
+              const row = await buscarProcessoPorNumero(numero)
+              if (!row) return null
+              return mapDbRowToMapProcesso(row)
+            } catch (e) {
+              console.warn('[seedDemoProcessos] falha', numero, e)
+              return null
+            }
+          }),
+        )
+        const validos: Processo[] = resultados.filter(
+          (p): p is Processo => p !== null,
+        )
+        if (!validos.length) return
+        set((state) => {
+          const existentes = new Set(state.processos.map((p) => p.numero))
+          const novos = validos.filter((p) => !existentes.has(p.numero))
+          if (!novos.length) return state
+          return { processos: [...state.processos, ...novos] }
+        })
+      },
 
       setHoveredProcessoId: (id) => set({ hoveredProcessoId: id }),
 
