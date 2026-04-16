@@ -105,6 +105,17 @@ export const CAMADA_GEO_HOVER_LAYER_IDS: string[] = [
   'geo-app_car-line',
   'geo-ferrovias-line',
   'geo-portos-circle',
+  // === API layers (16.03 + 16.04a/b/c) ===
+  'api-biomas-fill',
+  'api-rodovias-line',
+  'api-hidrovias-line',
+  'api-ti-fill',
+  'api-quilombola-fill',
+  'api-uc-pi-fill',
+  'api-uc-us-fill',
+  'api-aquifero-fill',
+  'api-ferrovia-line',
+  'api-porto-circle',
 ]
 
 const LAYERS_BY_CAMADA: Record<CamadaGeoId, string[]> = {
@@ -530,6 +541,22 @@ function strProp(p: Record<string, unknown> | null | undefined, k: string): stri
 }
 
 export function camadaGeoIdFromLayerId(layerId: string): CamadaGeoId | null {
+  // Camadas API (16.03 / 16.04a-c): prefixo 'api-<tipo>-'
+  if (layerId.startsWith('api-')) {
+    if (layerId.startsWith('api-ti-')) return 'terras_indigenas'
+    if (layerId.startsWith('api-quilombola-')) return 'quilombolas'
+    if (layerId.startsWith('api-uc-pi-') || layerId.startsWith('api-uc-us-'))
+      return 'unidades_conservacao'
+    if (layerId.startsWith('api-aquifero-')) return 'aquiferos'
+    if (layerId.startsWith('api-ferrovia-')) return 'ferrovias'
+    if (layerId.startsWith('api-porto-')) return 'portos'
+    if (layerId.startsWith('api-rodovia-')) return 'rodovias'
+    if (layerId.startsWith('api-hidrovia-')) return 'hidrovias'
+    if (layerId.startsWith('api-biomas-')) return 'biomas'
+    return null
+  }
+
+  // Camadas estáticas: prefixo 'geo-<camada>-' (comportamento original, preservado)
   for (const id of CAMADAS_GEO_ORDER) {
     const prefix = `geo-${id}-`
     if (layerId.startsWith(prefix)) return id
@@ -544,6 +571,28 @@ export function formatCamadaGeoTooltip(
   const camada = camadaGeoIdFromLayerId(layerId)
   if (!camada) return null
   const borderColor = CAMADAS_GEO_COLOR[camada]
+
+  // === RAMO API ===
+  // Features vindas de /api/map/layers/:tipo têm contrato { nome, uf, orgao, categoria }
+  if (layerId.startsWith('api-')) {
+    const nome = strProp(props, 'nome') ?? CAMADAS_GEO_LABEL[camada]
+    const uf = strProp(props, 'uf')
+    const orgao = strProp(props, 'orgao')
+    const categoria = strProp(props, 'categoria')
+
+    const partsApi: string[] = []
+    if (categoria) partsApi.push(categoria)
+    if (uf) partsApi.push(uf)
+    if (orgao) partsApi.push(orgao)
+
+    return {
+      title: nome,
+      meta: partsApi.join(' · '),
+      borderColor,
+    }
+  }
+
+  // === RAMO ESTÁTICO (código original) ===
   const nome =
     strProp(props, 'nome') ??
     strProp(props, 'tipo') ??
