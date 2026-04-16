@@ -1593,26 +1593,46 @@ export function MapView() {
         st.processoSelecionado
 
       const bounds = proc ? boundsFromSingleProcesso(proc) : null
-      const duration = reducedMotion ? 0 : 1200
 
       try {
         if (bounds && !bounds.isEmpty()) {
-          map.fitBounds(bounds, {
-            padding: {
-              top: 72,
-              bottom: 72,
-              left: getIntelLeftReservePx() + 40,
-              right: 40,
-            },
-            duration,
-            maxZoom: 16,
-            essential: true,
+          const padding = {
+            top: 120,
+            bottom: 120,
+            left: getIntelLeftReservePx() + 40,
+            right: 40,
+          }
+          const camera = map.cameraForBounds(bounds, {
+            padding,
+            maxZoom: 14,
           })
+          if (camera && 'center' in camera && 'zoom' in camera) {
+            // Navegação intencional por busca: animação direcional de ~3s.
+            // prefers-reduced-motion projetado para animações decorativas
+            // (parallax, spin, flash), não para navegação funcional.
+            map.flyTo({
+              center: camera.center,
+              zoom: camera.zoom,
+              speed: 1.0,
+              curve: 1.8,
+              essential: true,
+            })
+          } else {
+            // Fallback raro: cameraForBounds falhou.
+            console.warn('[flyto] cameraForBounds retornou inválido', camera)
+            map.fitBounds(bounds, {
+              padding,
+              duration: 2500,
+              maxZoom: 14,
+              essential: true,
+            })
+          }
         } else {
           map.flyTo({
             center: [ft.lng, ft.lat],
             zoom: Math.max(ft.zoom, 12),
-            duration,
+            speed: 1.0,
+            curve: 1.8,
             essential: true,
           })
         }
@@ -1630,7 +1650,7 @@ export function MapView() {
     })
 
     return unsub
-  }, [mapLoaded, reducedMotion])
+  }, [mapLoaded])
 
   useEffect(() => {
     const map = mapRef.current
@@ -1759,7 +1779,7 @@ export function MapView() {
     bbox: viewportBbox,
     zoom: viewportZoom,
     limit: getViewportProcessosLimit(viewportZoom ?? 5),
-    debounceMs: 300,
+    debounceMs: 800,
   })
 
   const mergeViewportProcessos = useMapStore((s) => s.mergeViewportProcessos)
