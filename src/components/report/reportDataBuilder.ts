@@ -792,6 +792,7 @@ function indicadoresMunicipaisParaTemplate(
 export async function buildReportData(
   numeroProcesso: string,
   lang: ReportLang = 'pt',
+  mapBase64?: string,
 ): Promise<ReportData> {
   const t = getReportStrings(lang)
   const nd = (s: unknown) => {
@@ -1208,7 +1209,7 @@ export async function buildReportData(
     valor_insitu_usd_ha: valReservaUsdHa,
     cfem_estimada_ha: cfemEstimadaHaFinal,
 
-    mapa_base64: '',
+    mapa_base64: mapBase64 && mapBase64.length > 20 ? mapBase64 : '',
     layers:
       Array.isArray(api.territorial?.layers) && api.territorial.layers.length > 0
         ? buildLayersFromApi(

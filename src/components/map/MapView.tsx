@@ -1,4 +1,5 @@
 import mapboxgl from 'mapbox-gl'
+import { mapInstanceRef } from '../../lib/mapInstanceRef'
 import { type Root, createRoot } from 'react-dom/client'
 import {
   useCallback,
@@ -2890,6 +2891,7 @@ export function MapView() {
         m.remove()
         mapRef.current = null
       }
+      mapInstanceRef.current = null
     }
 
     const mountMap = () => {
@@ -2910,6 +2912,16 @@ export function MapView() {
 
       mapboxgl.accessToken = token
 
+      // TODO Fase 3: preserveDrawingBuffer tem custo de FPS constante
+      // (~10-20% em cenas densas com muitos processos no viewport, por
+      // manter o buffer WebGL sempre vivo). Foi ligado aqui para permitir
+      // que captureProcessoMapView / mapSnapshot.ts consiga fazer
+      // canvas.toDataURL() a qualquer momento no export PDF.
+      // Avaliar, apos validacao em producao com ~176k processos:
+      //   (a) re-init do mapa so quando o usuario clica Exportar (UX
+      //       pisca ~500ms mas zera custo em sessao comum);
+      //   (b) segundo mapa headless dedicado a snapshot, sem afetar o
+      //       interativo.
       const map = new mapboxgl.Map({
         container: el,
         style: MAPBOX_STYLE_SATELLITE,
@@ -2922,9 +2934,11 @@ export function MapView() {
         ],
         minZoom: 3.5,
         maxZoom: 18,
+        preserveDrawingBuffer: true,
       })
 
       mapRef.current = map
+      mapInstanceRef.current = map
 
       ro = new ResizeObserver(() => {
         mapRef.current?.resize()

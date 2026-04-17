@@ -6,6 +6,9 @@ import type { ReportLang } from '../../lib/reportLang'
 import { callGenerateReportAPI } from '../../lib/reportApi'
 import { buildReportData } from './reportDataBuilder'
 import { buildReportHTML } from './ReportTemplate'
+import { captureProcessoMapView } from '../../lib/mapSnapshot'
+import { mapInstanceRef } from '../../lib/mapInstanceRef'
+import { useMapStore } from '../../store/useMapStore'
 
 type ExportState =
   | 'idle'
@@ -33,7 +36,45 @@ export function ExportReportButton({
     try {
       // 1. Coletar dados
       setState('coletando')
-      const reportData = await buildReportData(numeroProcesso, lang)
+
+      // 1a. (Fase 2) Tentar capturar snapshot do mapa ANTES de buildReportData.
+      // Se qualquer etapa falhar (mapa não montado, processo sem geom,
+      // toDataURL bloqueado, RPC de linhas territoriais offline), degrada
+      // graciosamente: PDF sai sem mapa (mesmo comportamento anterior).
+      let mapBase64: string | undefined
+      try {
+        const map = mapInstanceRef.current
+        const processo = useMapStore.getState().processoSelecionado
+
+        if (map && processo && processo.geojson?.geometry) {
+          // Garante que o processo alvo do export é o focado no store.
+          // Isso dispara o effect de linhas territoriais em MapView.
+          if (processo.numero !== numeroProcesso) {
+            console.warn(
+              '[ExportReportButton] processoSelecionado.numero difere de numeroProcesso; pulando captura de mapa',
+            )
+          } else {
+            // Tempo pra flyTo + fetch de linhas + highlights estabilizarem
+            // antes do fitBounds da captura. Conservador: flyTo ~1s +
+            // linhas fade-in ~300ms + margem.
+            await new Promise((r) => setTimeout(r, 2500))
+
+            const snapshot = await captureProcessoMapView(
+              numeroProcesso,
+              map,
+              processo.geojson.geometry as GeoJSON.Polygon | GeoJSON.MultiPolygon,
+            )
+            if (snapshot) {
+              mapBase64 = snapshot.base64
+            }
+          }
+        }
+      } catch (snapErr) {
+        console.error('[ExportReportButton] Falha na captura do mapa (seguindo sem mapa):', snapErr)
+        mapBase64 = undefined
+      }
+
+      const reportData = await buildReportData(numeroProcesso, lang, mapBase64)
 
       // 2. Chamar API (4-7s)
       setState('gerando')
