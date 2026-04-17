@@ -26,6 +26,7 @@ import {
 } from '../../lib/fiscalDisplay'
 import { piorIndicadorCapag } from '../../lib/capagPiorIndicador'
 import type { ReportLang } from '../../lib/reportLang'
+import { getCfemProcessoStatus } from '../../lib/cfemProcessoStatus'
 import { getReportStrings } from '../report/reportL10n'
 
 /** 1 t métrica = 32.151 oz troy (preço master em USD/t → exibição em oz). */
@@ -301,9 +302,11 @@ function osDimFromScore(valor: number, lang: ReportLang): RiskDimension {
   const color = corFaixaOS(valor)
   const en = lang === 'en'
   let label = en ? 'Moderate' : 'Moderado'
+  // Cortes alinhados a `corFaixaOS` (3 cores): ≥80 muito favorável, ≥60 favorável,
+  // ≥40 moderado, <40 desfavorável. Garante que label e cor da barra batam sempre.
   if (valor >= 80) label = en ? 'Very favorable' : 'Muito favorável'
-  else if (valor >= 65) label = en ? 'Favorable' : 'Favorável'
-  else if (valor >= 45) label = en ? 'Moderate' : 'Moderado'
+  else if (valor >= 60) label = en ? 'Favorable' : 'Favorável'
+  else if (valor >= 40) label = en ? 'Moderate' : 'Moderado'
   else label = en ? 'Unfavorable' : 'Desfavorável'
 
   return {
@@ -636,7 +639,21 @@ function cfemHistoricoFromApi(
   cfem: Record<string, unknown>[],
   nd: (s: unknown) => string,
   lang: ReportLang,
+  regime: string | null | undefined,
 ): CfemHistoricoItem[] {
+  const en = lang === 'en'
+  const status = getCfemProcessoStatus(regime)
+  const processoValorCell = (): string => {
+    if (status === 'SEM_DADO_INDIVIDUALIZADO') {
+      return en
+        ? 'Not available per process in current database'
+        : 'Não individualizado na base'
+    }
+    if (status === 'PROCESSO_NAO_PRODUTIVO') {
+      return nd(null)
+    }
+    return nd(null)
+  }
   const mapped = cfem.map((r) => {
     const v = Number(r.valor_brl) || 0
     const br = formatBrlNum(v)
@@ -646,7 +663,6 @@ function cfemHistoricoFromApi(
     return {
       ano: Number(r.ano) || 0,
       valor: v,
-      processo_valor: br,
       municipio_valor: br,
       substancias: nd(translateCommodity(String(substanciasRaw ?? ''), lang)),
     }
@@ -660,7 +676,7 @@ function cfemHistoricoFromApi(
 
   return topRecent.map((r) => ({
     ano: r.ano,
-    processo_valor: r.processo_valor,
+    processo_valor: processoValorCell(),
     municipio_valor: r.municipio_valor,
     substancias: r.substancias,
   }))
@@ -910,6 +926,10 @@ export async function buildReportData(
       : nd(municipioNome || uf)
 
   const cfemRows = (fiscal.cfem_historico ?? []) as Record<string, unknown>[]
+  const regimeParaCfem =
+    p.regime == null || String(p.regime).trim() === ''
+      ? null
+      : String(p.regime)
   const cfemTotal = Number(fiscal.cfem_total_4anos) || 0
   const cfemEstHaMunicipal =
     areaHa > 0 && cfemTotal > 0
@@ -928,6 +948,20 @@ export async function buildReportData(
 
   /** BRL/g a partir do preço por tonelada (ex.: ouro). */
   const precoBrlPorGrama = precoBrlPorT > 0 ? precoBrlPorT / 1_000_000 : 0
+
+  /**
+   * Exibição do preço spot: a unidade real vem de master_substancias.unidade_preco (ex.: 'oz' para ouro, 't' para mármore/ferro).
+   * O sublabel "R$ X/g" só faz sentido para metais preciosos cotados em oz; para commodities/rochas ornamentais é suprimido.
+   */
+  const precoUnidadeLabel =
+    unidadePreco === 'oz' ? 'oz' : unidadePreco !== '' ? unidadePreco : 't'
+  const precoSubLabel: string | null =
+    unidadePreco === 'oz' && precoBrlPorGrama > 0
+      ? `R$ ${precoBrlPorGrama.toLocaleString(t.locale, {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}/g`
+      : null
 
   /**
    * `teor_pct` na master é a percentagem em massa (ex.: 0,0005 = 0,0005 % Au).
@@ -961,10 +995,23 @@ export async function buildReportData(
       ? Math.round(cfemBrlSobreInSituHa)
       : cfemEstHaMunicipal
 
-  const var12 = Number(mercado?.var_1a_pct ?? 0) || 0
-  const cagr5 = Number(mercado?.cagr_5a_pct ?? 0) || 0
+  /** `var_1a_pct` e `cagr_5a_pct` podem ser NULL na master (substância sem série publicada). Preservamos null. */
+  const var12: number | null =
+    mercado?.var_1a_pct == null ||
+    (typeof mercado.var_1a_pct === 'string' && String(mercado.var_1a_pct).trim() === '')
+      ? null
+      : Number.isFinite(Number(mercado.var_1a_pct))
+        ? Number(mercado.var_1a_pct)
+        : null
+  const cagr5: number | null =
+    mercado?.cagr_5a_pct == null ||
+    (typeof mercado.cagr_5a_pct === 'string' && String(mercado.cagr_5a_pct).trim() === '')
+      ? null
+      : Number.isFinite(Number(mercado.cagr_5a_pct))
+        ? Number(mercado.cagr_5a_pct)
+        : null
 
-  let pibMunicipalStr = t.nd
+  let pibMunicipalStr: string = t.nd
   const pibMiFiscal = fiscalMun?.pib_municipal_mi
   if (
     typeof pibMiFiscal === 'number' &&
@@ -1080,8 +1127,20 @@ export async function buildReportData(
     gu_status: nd(p.gu_status),
     gu_pendencia: nd(p.gu_pendencia),
     pendencias: pendenciasFmt,
-    tah_status: nd(p.tah_status),
-    licenca_ambiental: nd(p.licenca_ambiental),
+    tah_status: (() => {
+      const dt = p.tah_ultimo_pagamento
+      if (dt != null && String(dt).trim() !== '') {
+        return `Pago em ${formatIsoToBr(String(dt))}`
+      }
+      return nd(p.tah_status)
+    })(),
+    licenca_ambiental: (() => {
+      const dt = p.licenca_ambiental_data
+      if (dt != null && String(dt).trim() !== '') {
+        return `Protocolada em ${formatIsoToBr(String(dt))}`
+      }
+      return nd(p.licenca_ambiental)
+    })(),
     protocolo_anos: (() => {
       const ap = p.ano_protocolo
       if (ap != null && Number.isFinite(Number(ap))) {
@@ -1111,9 +1170,12 @@ export async function buildReportData(
     os_viab: osViab,
     os_seg: osSeg,
 
+    preco_spot_usd_t: precoUsdPorT,
     preco_oz_usd: precoOzUsd,
     preco_g_brl: precoBrlPorGrama,
     ptax: cambioRef,
+    preco_unidade_label: precoUnidadeLabel,
+    preco_sub_label: precoSubLabel,
     var_12m_pct: var12,
     mercado_tendencia:
       mercado?.tendencia != null &&
@@ -1125,6 +1187,11 @@ export async function buildReportData(
     demanda_global_t: 0,
     reservas_mundiais_pct: Number(mercado?.reservas_br_pct ?? 0) || 0,
     producao_mundial_pct: Number(mercado?.producao_br_pct ?? 0) || 0,
+    fonte_res_prod:
+      mercado?.fonte_res_prod != null &&
+      String(mercado.fonte_res_prod).trim() !== ''
+        ? String(mercado.fonte_res_prod).trim()
+        : null,
     estrategia_nacional: mercado?.estrategia_nacional
       ? translateEstrategiaPnm(
           fixEstrategiaNacionalPnmAcentos(String(mercado.estrategia_nacional)),
@@ -1209,7 +1276,8 @@ export async function buildReportData(
         0,
       linhas_bndes_nomes: linhasBndesNomes,
     },
-    cfem_historico: cfemHistoricoFromApi(cfemRows, nd, lang),
+    cfem_historico: cfemHistoricoFromApi(cfemRows, nd, lang, regimeParaCfem),
+    cfem_processo_status: getCfemProcessoStatus(regimeParaCfem),
 
     estagio,
     estagio_index,

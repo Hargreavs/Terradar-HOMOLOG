@@ -1,6 +1,8 @@
 import type { ReportLang } from './reportLang'
+import type { CfemProcessoStatus } from './cfemProcessoStatus'
 
 export type { ReportLang } from './reportLang'
+export type { CfemProcessoStatus } from './cfemProcessoStatus'
 
 export interface RiskDimension {
   valor: number
@@ -105,16 +107,24 @@ export interface ReportData {
   os_seg: RiskDimension
 
   // Mercado
+  /** Preço spot master (USD/t), `master_substancias.preco_usd` — não confundir com valor in-situ /ha. */
+  preco_spot_usd_t: number
   preco_oz_usd: number
   preco_g_brl: number
   ptax: number
-  var_12m_pct: number
+  /** Unidade de exibição do preço spot (ex.: 'oz', 't', 'm3') vinda de master_substancias.unidade_preco. */
+  preco_unidade_label: string
+  /** Sublinha abaixo do preço (só faz sentido para metal precioso, ex.: "R$ X/g · PTAX R$ Y"). null suprime a linha. */
+  preco_sub_label: string | null
+  var_12m_pct: number | null
   /** Label de mercado (ex.: «Alta») — `master_substancias.tendencia`; não confundir com `var_1a_pct`. */
   mercado_tendencia: string
-  cagr_5a_pct: number
+  cagr_5a_pct: number | null
   demanda_global_t: number
   reservas_mundiais_pct: number
   producao_mundial_pct: number
+  /** `master_substancias.fonte_res_prod` (marker `SEM_FONTE_OFICIAL:` = sem estatística comparável). */
+  fonte_res_prod: string | null
   /** PNM e políticas setoriais (master_substâncias). */
   estrategia_nacional: string
   /** Lista ou texto da master_substâncias (separadores `;` ou quebra de linha). */
@@ -151,6 +161,8 @@ export interface ReportData {
     linhas_bndes_nomes?: string[]
   }
   cfem_historico: CfemHistoricoItem[]
+  /** Atribuicao CFEM ao processo: nunca OK ate haver fonte por processo na base. */
+  cfem_processo_status?: CfemProcessoStatus
 
   // Maturidade
   estagio: string

@@ -209,6 +209,15 @@ export interface ScoreInput {
   densidade: number | null
   receita_tributaria: number | null
   divida_consolidada: number | null
+
+  /** Dias desde `processos.ultimo_evento_data` (despacho). */
+  dias_sem_despacho?: number | null
+  /** Contagem `fn_pendencias_processo(numero)`. */
+  qtd_pendencias_anm?: number | null
+  /** Dias até vencimento do alvará (negativo = vencido). Derivado de `alvara_validade`. */
+  dias_ate_caducidade?: number | null
+  /** Regime ANM (espelha `regime` quando preenchido pelo batch). */
+  regime_anm?: string | null
 }
 
 export interface ScoreResult {
@@ -239,6 +248,9 @@ export interface ScoreResult {
     scoreComunidades: number
     scoreCAPAG_rs: number
     scoreCaducidade: number
+    scoreRegTempo: number
+    scoreRegPendencias: number
+    scoreRegAlertas: number
     a1: number
     a2: number
     a3: number
@@ -410,30 +422,76 @@ function regimeSemPrazoAlvara(regime: string | null): boolean {
   return false
 }
 
+const MS_DIA = 1000 * 60 * 60 * 24
+
+function resolveDiasAteCaducidade(input: ScoreInput): number | null {
+  if (input.dias_ate_caducidade != null && !Number.isNaN(input.dias_ate_caducidade)) {
+    return input.dias_ate_caducidade
+  }
+  if (!input.alvara_validade) return null
+  const hoje = new Date()
+  const validade = new Date(input.alvara_validade)
+  if (Number.isNaN(validade.getTime())) return null
+  return Math.floor((validade.getTime() - hoje.getTime()) / MS_DIA)
+}
+
+/** Faixas aba `5_RS_REGULATORIO` (tempo sem despacho). */
+function scoreTempoFromDias(d: number | null | undefined): number {
+  if (d == null || Number.isNaN(d)) return 50
+  if (d > 365) return 80
+  if (d >= 180) return 50
+  if (d >= 30) return 20
+  return 5
+}
+
+/** Faixas aba `5_RS_REGULATORIO` (pendências ANM). */
+function scorePendenciasFromQtd(q: number | null | undefined): number {
+  if (q == null || Number.isNaN(q)) return 5
+  if (q >= 3) return 75
+  if (q === 2) return 50
+  if (q === 1) return 30
+  return 5
+}
+
+/** Faixas aba `5_RS_REGULATORIO` (planilha: vencido = faixa única 90). */
+function scoreCaducidadeFromDiasAte(
+  diasAte: number | null,
+  regimeParaSemAlvara: string | null,
+): number {
+  if (diasAte == null || Number.isNaN(diasAte)) {
+    if (regimeSemPrazoAlvara(regimeParaSemAlvara)) return 5
+    return 50
+  }
+  if (diasAte < 0) return 90
+  if (diasAte < 180) return 85
+  if (diasAte <= 365) return 50
+  return 10
+}
+
+/** Faixa C4 aba `8_OS_SEGURANCA` (recência despachos). */
+function scoreC4RecenciaFromDias(d: number | null | undefined): number {
+  if (d == null || Number.isNaN(d)) return 25
+  if (d < 30) return 100
+  if (d < 90) return 75
+  if (d < 180) return 50
+  if (d <= 365) return 25
+  return 15
+}
+
 function computeRsRegulatorio(input: ScoreInput): {
   score: number
   breakdown: { tempo: number; pendencias: number; alertas: number; caducidade: number }
 } {
-  const scoreTempo = 50
-  const scorePendencias = 5
+  const scoreTempo = scoreTempoFromDias(input.dias_sem_despacho)
+  const scorePendencias = scorePendenciasFromQtd(input.qtd_pendencias_anm)
   const scoreAlertas = 5
 
-  let scoreCaducidade: number
-  if (input.alvara_validade) {
-    const hoje = new Date()
-    const validade = new Date(input.alvara_validade)
-    const diasRestantes = Math.floor(
-      (validade.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24),
-    )
-    if (diasRestantes < 0) scoreCaducidade = 90
-    else if (diasRestantes < 180) scoreCaducidade = 85
-    else if (diasRestantes <= 365) scoreCaducidade = 50
-    else scoreCaducidade = 10
-  } else if (regimeSemPrazoAlvara(input.regime)) {
-    scoreCaducidade = 5
-  } else {
-    scoreCaducidade = 50
-  }
+  const regimeCad =
+    input.regime_anm != null && input.regime_anm !== ''
+      ? input.regime_anm
+      : input.regime
+  const diasAte = resolveDiasAteCaducidade(input)
+  const scoreCaducidade = scoreCaducidadeFromDiasAte(diasAte, regimeCad)
 
   const score =
     scoreTempo * PESOS_RS_REGULATORIO.tempo +
@@ -621,6 +679,7 @@ function computeOsSeguranca(
   riskScore: number,
   rsAmbiental: number,
   rsRegulatorio: number,
+  input: ScoreInput,
 ): {
   score: number
   breakdown: { c1: number; c2: number; c3: number; c4: number; c5: number; c6: number }
@@ -628,7 +687,7 @@ function computeOsSeguranca(
   const c1 = 100 - riskScore
   const c2 = 100 - rsAmbiental
   const c3 = 100 - rsRegulatorio
-  const c4 = 25
+  const c4 = scoreC4RecenciaFromDias(input.dias_sem_despacho)
   const c5 = 100
   const c6 = 15
 
@@ -733,9 +792,13 @@ export function computeAllScores(input: ScoreInput): ScoreResult {
 
   const regulatorioResult = computeRsRegulatorio(input)
   const rsRegulatorio = regulatorioResult.score
-  fallbacks.push('scoreTempo: fallback 50 (sem ult_evento)')
-  fallbacks.push('scorePendencias: fallback 5 (sem SEI)')
-  fallbacks.push('scoreAlertas: fallback 5 (sem Adoo)')
+  if (input.dias_sem_despacho == null) {
+    fallbacks.push('RS tempo: sem data de último despacho (fallback 50)')
+  }
+  if (input.qtd_pendencias_anm == null) {
+    fallbacks.push('RS pendências: contagem indisponível (fallback 5)')
+  }
+  fallbacks.push('RS alertas: Adoo não integrado (valor fixo 5)')
 
   const riskScoreRaw =
     rsGeologico * PESOS_RS.geologico +
@@ -748,16 +811,17 @@ export function computeAllScores(input: ScoreInput): ScoreResult {
 
   const atratResult = computeOsAtratividade(scoreSubstancia, input)
   const viabResult = computeOsViabilidade(faseTerradar, input)
-  const segResult = computeOsSeguranca(riskScore, rsAmbiental, rsRegulatorio)
+  const segResult = computeOsSeguranca(riskScore, rsAmbiental, rsRegulatorio, input)
 
   if (input.receita_tributaria == null && input.divida_consolidada == null) {
     fallbacks.push('B6: fallback 35 (sem SICONFI)')
   }
 
   fallbacks.push('B4: fallback 30 (sem campo situacao)')
-  fallbacks.push('C4: fallback 25 (sem ult_evento)')
-  fallbacks.push('C5: fallback 100 (sem Adoo)')
-  fallbacks.push('C6: fallback 15 (sem Adoo)')
+  if (input.dias_sem_despacho == null) {
+    fallbacks.push('OS C4: sem data de último despacho (fallback 25)')
+  }
+  fallbacks.push('OS C5/C6: Adoo não integrado (valores fixos)')
 
   const calcOS = (perfil: keyof typeof PERFIS): number => {
     const pesos = PERFIS[perfil]
@@ -804,6 +868,9 @@ export function computeAllScores(input: ScoreInput): ScoreResult {
       scoreComunidades: socialResult.breakdown.comunidades,
       scoreCAPAG_rs: socialResult.breakdown.capag,
       scoreCaducidade: regulatorioResult.breakdown.caducidade,
+      scoreRegTempo: regulatorioResult.breakdown.tempo,
+      scoreRegPendencias: regulatorioResult.breakdown.pendencias,
+      scoreRegAlertas: regulatorioResult.breakdown.alertas,
       ...atratResult.breakdown,
       ...viabResult.breakdown,
       ...segResult.breakdown,

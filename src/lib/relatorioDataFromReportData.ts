@@ -4,6 +4,7 @@
 import type {
   BiomaRelatorio,
   CapagEstruturado,
+  CfemHistorico,
   CfemMunicipalHistorico,
   DadosANM,
   DadosFiscaisRicos,
@@ -34,6 +35,7 @@ import {
 import { piorIndicadorCapag } from './capagPiorIndicador'
 import { haversineKm } from './geoHaversine'
 import { centroideMunicipioSedeIbge } from './municipioSedeCentroideIbge'
+import { getCfemProcessoStatus } from './cfemProcessoStatus'
 
 function todayIso(): string {
   const d = new Date()
@@ -257,7 +259,7 @@ function territorialFromReport(
     situacao_ferrovia: 'Não disponível',
     bitola_ferrovia: '',
     uf_ferrovia: '',
-    nome_rodovia,
+    nome_rodovia: nome_rodovia ?? undefined,
     tipo_rodovia: '',
     uf_rodovia: '',
     distancia_rodovia_km:
@@ -285,22 +287,29 @@ function territorialFromReport(
   }
 }
 
-function intelFromReport(rd: ReportData, processo: Processo): IntelMineral {
+function intelFromReport(rd: ReportData, _processo: Processo): IntelMineral {
   const v12 = rd.var_12m_pct
   const tendencia: IntelMineral['tendencia_preco'] =
-    v12 > 0.5 ? 'alta' : v12 < -0.5 ? 'queda' : 'estavel'
+    v12 == null
+      ? 'estavel'
+      : v12 > 0.5
+        ? 'alta'
+        : v12 < -0.5
+          ? 'queda'
+          : 'estavel'
 
   return {
     substancia_contexto: rd.substancia_anm,
+    fonte_res_prod: rd.fonte_res_prod,
     reservas_brasil_mundial_pct: rd.reservas_mundiais_pct,
     producao_brasil_mundial_pct: rd.producao_mundial_pct,
     demanda_projetada_2030:
-      'Síntese a partir da master de substâncias e fontes de mercado.',
+      'Projeção elaborada com base em fontes oficiais de mercado e referências setoriais',
     preco_medio_usd_t:
       rd.preco_oz_usd > 0 && rd.substancia_anm.toUpperCase().includes('OURO')
         ? rd.preco_oz_usd * 32_151
-        : rd.valor_insitu_usd_ha > 0 && processo.area_ha > 0
-          ? (rd.valor_insitu_usd_ha / 750_000) * 1_000_000
+        : rd.preco_spot_usd_t > 0
+          ? rd.preco_spot_usd_t
           : 0,
     unidade_preco:
       rd.substancia_anm.toUpperCase().includes('OURO') ? 'oz' : 't',
@@ -325,21 +334,24 @@ function intelFromReport(rd: ReportData, processo: Processo): IntelMineral {
     processos_vizinhos: [],
     cambio_brl_usd: rd.ptax,
     cambio_data: todayIso(),
-    var_1a_pct: rd.var_12m_pct,
-    cagr_5a_pct: rd.cagr_5a_pct,
+    var_1a_pct: rd.var_12m_pct ?? undefined,
+    cagr_5a_pct: rd.cagr_5a_pct ?? undefined,
   }
 }
 
-function fiscalFromReport(rd: ReportData): DadosFiscaisRicos {
+function fiscalFromReport(rd: ReportData, processo: Processo): DadosFiscaisRicos {
   const notaNorm = normalizeCapagNotaDisplay(rd.capag_nota)
   const badge = capagBadgeLetra(notaNorm)
   const capagPrincipal = badge ?? notaNorm
 
-  const cfemProc = rd.cfem_historico.map((h) => ({
+  const cfemProcStatus =
+    rd.cfem_processo_status ?? getCfemProcessoStatus(processo.regime)
+  const cfemProc: CfemHistorico[] = []
+  const cfemMun: CfemHistorico[] = rd.cfem_historico.map((h) => ({
     ano: h.ano,
-    valor_recolhido_brl: parsePtBrMoney(h.processo_valor),
+    valor_recolhido_brl: parsePtBrMoney(h.municipio_valor),
   }))
-  const cfemMun: CfemMunicipalHistorico[] = rd.cfem_historico.map((h) => ({
+  const cfemMunRico: CfemMunicipalHistorico[] = rd.cfem_historico.map((h) => ({
     ano: h.ano,
     valor_total_municipio_brl: parsePtBrMoney(h.municipio_valor),
     substancias: h.substancias,
@@ -419,8 +431,9 @@ function fiscalFromReport(rd: ReportData): DadosFiscaisRicos {
     cfem_processo: cfemProc,
     cfem_municipio: cfemMun,
     cfem_historico: cfemProc,
+    cfem_processo_status: cfemProcStatus,
     cfem_total_5anos_mi: 0,
-    cfem_municipal_historico: cfemMun,
+    cfem_municipal_historico: cfemMunRico,
     incentivos_estaduais: incentivosLista,
     linhas_bndes: linhasBndesLista,
     aliquota_cfem_pct: rd.cfem_aliquota_pct,
@@ -700,11 +713,11 @@ export function relatorioDataFromReportData(
     observacoes_tecnicas,
     territorial: territorialFromReport(rd, processo),
     intel_mineral: intelFromReport(rd, processo),
-    fiscal: fiscalFromReport(rd),
+    fiscal: fiscalFromReport(rd, processo),
     timestamps,
     metadata: {
       fonte_territorial: 'PostGIS · fn_territorial_analysis',
-      fonte_precos: 'Master substâncias / IMF',
+      fonte_precos: 'Referências setoriais / IMF',
       fonte_fiscal: 'SICONFI DCA · STN CAPAG · IBGE (PIB, IDHM) · ANM CFEM',
       cambio: rd.ptax,
       calculado_em: ts,

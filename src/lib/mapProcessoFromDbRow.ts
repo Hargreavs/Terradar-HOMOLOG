@@ -47,9 +47,26 @@ function ringCentroidLngLat(ring: number[][]): [number, number] {
   return n > 0 ? [sx / n, sy / n] : [0, 0]
 }
 
+/** Conjunto canonico dos valores snake_case aceitos diretamente sem heuristica. */
+const REGIME_CANONICOS: ReadonlySet<Regime> = new Set<Regime>([
+  'requerimento_pesquisa',
+  'concessao_lavra',
+  'autorizacao_pesquisa',
+  'req_lavra',
+  'licenciamento',
+  'lavra_garimpeira',
+  'registro_extracao',
+  'disponibilidade',
+  'mineral_estrategico',
+  'bloqueio_provisorio',
+  'bloqueio_permanente',
+])
+
 function coerceRegime(raw: string): Regime {
   const r = raw.toLowerCase().trim()
-  if (r === 'requerimento_pesquisa') return 'requerimento_pesquisa'
+  // Aceitar o valor canonico snake_case direto (evita heuristica quebrar em
+  // strings como `req_lavra`, que nao contem `requer`).
+  if (REGIME_CANONICOS.has(r as Regime)) return r as Regime
   if (
     r.includes('garimp') ||
     (r.includes('lavra') && r.includes('garimpeira'))

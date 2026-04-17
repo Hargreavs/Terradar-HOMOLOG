@@ -64,18 +64,18 @@ interface DimensoesOportunidade {
 
 const round1 = (n: number) => Math.round(n * 10) / 10
 
-function labelRs(valor: number): string {
-  if (valor <= 0) return '-'
-  if (valor < 40) return 'Risco baixo'
-  if (valor <= 69) return 'Risco médio'
+/** Classificação visual por escala 0-100 do subfator (valor_bruto), não pelo valor ponderado. */
+function labelSubfatorBruto(valorBruto: number): string {
+  if (valorBruto <= 30) return 'Risco baixo'
+  if (valorBruto <= 60) return 'Risco médio'
   return 'Risco alto'
 }
 
-function labelOs(valor: number): string {
-  if (valor >= 75) return 'Alta'
-  if (valor >= 50) return 'Moderada'
-  if (valor >= 25) return 'Baixa'
-  return 'Não recomendado'
+/** Oportunidade: alto valor_bruto = melhor (invertido em relação ao eixo risco). */
+function labelSubfatorBrutoOportunidade(valorBruto: number): string {
+  if (valorBruto <= 30) return 'Oportunidade baixa'
+  if (valorBruto <= 60) return 'Oportunidade média'
+  return 'Oportunidade alta'
 }
 
 function rsSub(
@@ -88,7 +88,7 @@ function rsSub(
   const valor = round1(valor_bruto * peso_pct)
   return {
     nome,
-    label: labelRs(valor),
+    label: labelSubfatorBruto(valor_bruto),
     texto,
     valor,
     peso_pct,
@@ -107,7 +107,7 @@ function osSub(
   const valor = round1(valor_bruto * peso_pct)
   return {
     nome,
-    label: labelOs(valor_bruto),
+    label: labelSubfatorBrutoOportunidade(valor_bruto),
     texto,
     valor,
     peso_pct,
@@ -206,7 +206,7 @@ function buildAmbientalSubs(input: ScoreInput): Subfator[] {
   ) => {
     subs.push({
       nome,
-      label: labelRs(pontos),
+      label: labelSubfatorBruto(pontos),
       texto,
       valor: pontos,
       peso_pct: 1,
@@ -360,57 +360,76 @@ function buildSocialSubs(
   ]
 }
 
+function textoCaducidadeRegulatorio(input: ScoreInput): string {
+  const diasRaw =
+    input.dias_ate_caducidade != null &&
+    !Number.isNaN(input.dias_ate_caducidade)
+      ? input.dias_ate_caducidade
+      : input.alvara_validade
+        ? Math.floor(
+            (new Date(input.alvara_validade).getTime() - Date.now()) /
+              MS_DIA_BATCH,
+          )
+        : null
+
+  if (diasRaw != null && !Number.isNaN(diasRaw)) {
+    if (diasRaw < 0) {
+      return `Alvará vencido há ${Math.abs(diasRaw)} dias`
+    }
+    return `Alvará expira em ${diasRaw} dias`
+  }
+  const r = (input.regime_anm ?? input.regime ?? '').toLowerCase()
+  if (r.includes('disponibilidade') || r.includes('concess')) {
+    return 'Regime sem prazo de alvará (caducidade 5)'
+  }
+  return 'Alvará/validade não disponível (fallback 50)'
+}
+
 function buildRegulatorioSubs(
   input: ScoreInput,
   d: ScoreResult['detail'],
 ): Subfator[] {
-  let cadTxt: string
-  if (input.alvara_validade) {
-    const hoje = new Date()
-    const validade = new Date(input.alvara_validade)
-    const dias = Math.floor(
-      (validade.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24),
-    )
-    cadTxt =
-      dias < 0
-        ? `Alvará vencido há ${Math.abs(dias)} dias`
-        : `Alvará expira em ${dias} dias`
-  } else {
-    const r = (input.regime ?? '').toLowerCase()
-    if (r.includes('disponibilidade') || r.includes('concess')) {
-      cadTxt = 'Regime sem prazo de alvará (caducidade 5)'
-    } else {
-      cadTxt = 'Alvará/validade não disponível (fallback 50)'
-    }
-  }
+  const tempoTxt =
+    input.dias_sem_despacho != null && !Number.isNaN(input.dias_sem_despacho)
+      ? `${input.dias_sem_despacho} dias desde último despacho`
+      : 'Sem data de último despacho registrada'
+
+  const pendTxt =
+    input.qtd_pendencias_anm != null &&
+    !Number.isNaN(input.qtd_pendencias_anm)
+      ? `${input.qtd_pendencias_anm} pendência(s) na ANM`
+      : 'Contagem de pendências indisponível'
+
+  const alertasTxt =
+    'Integração Adoo pendente - não compõe score atualmente'
 
   return [
     rsSub(
       'Tempo sem despacho',
-      50,
+      d.scoreRegTempo,
       0.3,
-      'Fallback 50 (sem ult_evento no cadastro)',
+      tempoTxt,
       'ANM/SEI',
     ),
     rsSub(
       'Pendências',
-      5,
+      d.scoreRegPendencias,
       0.25,
-      'Fallback 5 (sem SEI parseado)',
+      pendTxt,
       'ANM/SEI',
     ),
     rsSub(
       'Alertas restritivos',
-      5,
+      d.scoreRegAlertas,
       0.25,
-      'Fallback 5 (sem Adoo)',
+      alertasTxt,
       'Adoo',
     ),
     rsSub(
       'Proximidade de caducidade',
       d.scoreCaducidade,
       0.2,
-      cadTxt,
+      textoCaducidadeRegulatorio(input),
       'ANM/Cadastro Mineiro',
     ),
   ]
@@ -540,7 +559,15 @@ function buildViabilidadeSubs(
 function buildSegurancaSubs(
   result: ScoreResult,
   d: ScoreResult['detail'],
+  input: ScoreInput,
 ): Subfator[] {
+  const c4Txt =
+    input.dias_sem_despacho != null && !Number.isNaN(input.dias_sem_despacho)
+      ? `${input.dias_sem_despacho} dias desde último despacho`
+      : 'Sem data de último despacho registrada'
+
+  const adooTxt = 'Integração Adoo pendente - não compõe score atualmente'
+
   return [
     osSub(
       'Solidez geral (100 − Risk Score)',
@@ -567,21 +594,21 @@ function buildSegurancaSubs(
       'Recência de despacho',
       d.c4,
       0.15,
-      'Fallback 25 (sem ult_evento)',
+      c4Txt,
       'ANM/SEI',
     ),
     osSub(
       'Ausência de alertas restritivos',
       d.c5,
       0.1,
-      'Fallback 100 (sem Adoo)',
+      adooTxt,
       'Adoo',
     ),
     osSub(
       'Alertas favoráveis',
       d.c6,
       0.05,
-      'Fallback 15 (sem Adoo)',
+      adooTxt,
       'Adoo',
     ),
   ]
@@ -625,7 +652,7 @@ function buildDimensoes(
       },
       seguranca: {
         valor: result.os_breakdown.seguranca,
-        subfatores: buildSegurancaSubs(result, d),
+        subfatores: buildSegurancaSubs(result, d, input),
       },
     },
   }
@@ -634,6 +661,24 @@ function buildDimensoes(
 // ══════════════════════════════════════════════════
 // INPUT BUILDER (replica `computeScoresAuto` de server/db.ts, mas expõe o input)
 // ══════════════════════════════════════════════════
+
+const MS_DIA_BATCH = 1000 * 60 * 60 * 24
+
+function diasDesdeUltimoDespacho(ultimo: unknown): number | null {
+  if (ultimo == null || ultimo === '') return null
+  const d = new Date(String(ultimo))
+  if (Number.isNaN(d.getTime())) return null
+  const hoje = new Date()
+  return Math.floor((hoje.getTime() - d.getTime()) / MS_DIA_BATCH)
+}
+
+function diasAteAlvaraValidade(alvara: unknown): number | null {
+  if (alvara == null || alvara === '') return null
+  const validade = new Date(String(alvara))
+  if (Number.isNaN(validade.getTime())) return null
+  const hoje = new Date()
+  return Math.floor((validade.getTime() - hoje.getTime()) / MS_DIA_BATCH)
+}
 
 async function buildScoreInput(
   processo: Record<string, unknown>,
@@ -659,11 +704,27 @@ async function buildScoreInput(
 
   const f = fiscalData
 
+  const numeroProc = String(processo.numero ?? '').trim()
+  let qtdPendenciasAnm: number | null = null
+  if (numeroProc) {
+    const { data, error } = await supabase.rpc('fn_pendencias_processo', {
+      p_numero: numeroProc,
+    })
+    if (!error && Array.isArray(data)) {
+      qtdPendenciasAnm = data.length
+    }
+  }
+
+  const regimeStr =
+    processo.regime != null ? String(processo.regime) : null
+  const diasSemDespacho = diasDesdeUltimoDespacho(processo.ultimo_evento_data)
+  const diasAteCad = diasAteAlvaraValidade(processo.alvara_validade)
+
   return {
     substancia: String(processo.substancia ?? ''),
     substancia_familia: String(processo.substancia_familia ?? 'outros') || 'outros',
     fase: String(processo.fase ?? ''),
-    regime: processo.regime != null ? String(processo.regime) : null,
+    regime: regimeStr,
     area_ha: Number(processo.area_ha) || 0,
     alvara_validade:
       processo.alvara_validade != null ? String(processo.alvara_validade) : null,
@@ -701,6 +762,10 @@ async function buildScoreInput(
         : f?.passivo_nao_circulante != null
           ? Number(f.passivo_nao_circulante)
           : null,
+    dias_sem_despacho: diasSemDespacho,
+    qtd_pendencias_anm: qtdPendenciasAnm,
+    dias_ate_caducidade: diasAteCad,
+    regime_anm: regimeStr,
   }
 }
 

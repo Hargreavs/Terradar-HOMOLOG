@@ -10,6 +10,7 @@ import type {
   ReportLLMResult,
 } from './reportTypes'
 import type { ReportLang } from './reportLang'
+import { isSemFonteOficialReservaProducaoGlobal } from './reportFonteResProd'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -213,14 +214,18 @@ Gere JSON:
 }
 
 function buildPromptMercado(d: ReportData): string {
+  const semCtxGlobal = isSemFonteOficialReservaProducaoGlobal(d.fonte_res_prod)
+  const linhasResProd = semCtxGlobal
+    ? `- Participação Brasil em reservas/produção mundiais: não há fonte oficial comparável publicada para esta substância (exibir no PDF apenas disclaimer, sem percentuais).`
+    : `- Reservas Brasil: ${d.reservas_mundiais_pct}% do mundial
+- Produção Brasil: ${d.producao_mundial_pct}% do mundial`
   return `Dados de mercado da substância ${d.substancia_anm}:
 - Preço: USD ${d.preco_oz_usd}/oz (R$ ${d.preco_g_brl}/g)
 - Tendência (rótulo master): ${d.mercado_tendencia}
 - Variação 12 meses: ${d.var_12m_pct}%
 - CAGR 5 anos: ${d.cagr_5a_pct}%
 - Demanda global: ${d.demanda_global_t} t
-- Reservas Brasil: ${d.reservas_mundiais_pct}% do mundial
-- Produção Brasil: ${d.producao_mundial_pct}% do mundial
+${linhasResProd}
 - CFEM/ha estimada: R$ ${d.cfem_estimada_ha}
 - Área do processo: ${d.area_ha} ha
 

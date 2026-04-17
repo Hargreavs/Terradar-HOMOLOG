@@ -152,6 +152,8 @@ export interface DemandaProjetadaEstruturada {
 
 export interface IntelMineral {
   substancia_contexto: string
+  /** `master_substancias.fonte_res_prod`; `SEM_FONTE_OFICIAL:` desativa percentuais no card Contexto global. */
+  fonte_res_prod?: string | null
   reservas_brasil_mundial_pct: number
   producao_brasil_mundial_pct: number
   demanda_projetada_2030: string
@@ -241,6 +243,12 @@ export interface DadosFiscaisRicos {
   cfem_municipio: CfemHistorico[]
   /** Legado: espelho de `cfem_processo` (compat). */
   cfem_historico: CfemHistorico[]
+  /** Atribuição de CFEM ao processo: só `OK` quando houver fonte por processo na base. */
+  cfem_processo_status?:
+    | 'PROCESSO_NAO_PRODUTIVO'
+    | 'SEM_DADO_INDIVIDUALIZADO'
+    | 'OK'
+    | null
   cfem_total_5anos_mi: number
   cfem_municipal_historico: CfemMunicipalHistorico[]
   incentivos_estaduais: string[]

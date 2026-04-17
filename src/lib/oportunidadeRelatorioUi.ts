@@ -26,9 +26,10 @@ export type PerfilOportunidadeOSKey = keyof typeof PESOS_OS_POR_PERFIL
 export type DimensaoOSKey = keyof typeof CORES_DIMENSAO_OS
 
 export function corFaixaOS(v: number): string {
-  if (v >= 75) return '#1D9E75'
-  if (v >= 50) return '#E8A830'
-  if (v >= 25) return '#888780'
+  // Escala 3 cores (sem cinza): alinhada ao label "Favorável/Moderado/Desfavorável"
+  // entregue por `osDimFromScore`. Cortes: ≥60 verde, ≥40 amarelo, <40 vermelho.
+  if (v >= 60) return '#1D9E75'
+  if (v >= 40) return '#E8A830'
   return '#E24B4A'
 }
 

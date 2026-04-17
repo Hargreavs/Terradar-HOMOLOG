@@ -9,7 +9,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from 'react'
-import { ArrowUpRight, Info, Loader2, Sparkles } from 'lucide-react'
+import { ArrowUpRight, Loader2, Sparkles } from 'lucide-react'
 import { relatoriosMock } from '../../data/relatorio.mock'
 import type {
   DadosANM,
@@ -26,7 +26,11 @@ import { estiloBadgeRelevancia } from '../../lib/relevanciaAlerta'
 import { formatarRealBrlInteligente } from '../../lib/formatarRealBrlInteligente'
 import { formatarUsdMiInteligente } from '../../lib/formatarUsdMiInteligente'
 import { labelSubstanciaParaExibicao } from '../../lib/substancias'
-import { REGIME_COLORS, REGIME_LABELS } from '../../lib/regimes'
+import {
+  PREFIX_SEM_FONTE_RES_PROD,
+  textoAposSemFonteOficial,
+} from '../../lib/reportFonteResProd'
+import { REGIME_LABELS } from '../../lib/regimes'
 import { RegimeBadge } from '../ui/RegimeBadge'
 import { AlertaItemImpactoBar } from '../legislativo/AlertaItemImpactoBar'
 import { CamadaTooltipHover } from '../filters/CamadaTooltipHover'
@@ -67,6 +71,7 @@ const ABAS: { id: AbaId; label: string }[] = [
 
 /** Mesma cor de "Camadas disponíveis" na sidebar (`index.css` --text-section-title) */
 const SECTION_TITLE = 'var(--text-section-title)'
+
 
 /** Escala tipográfica do drawer (mínimo 12px) */
 const FS = {
@@ -642,22 +647,6 @@ const CFEM_BAR_TOOLTIP = {
 } as const
 
 const CFEM_BAR_TOOLTIP_OPACITY_MS = 150
-
-const REGIMES_SEM_CFEM = [
-  'requerimento_pesquisa',
-  'autorizacao_pesquisa',
-  'req_lavra',
-] as const
-
-function fraseFaseSemCfem(regime: Processo['regime']): string {
-  const mapa: Partial<Record<Processo['regime'], string>> = {
-    requerimento_pesquisa: 'Requerimento de Pesquisa',
-    autorizacao_pesquisa: 'Autorização de Pesquisa',
-    req_lavra: 'Requerimento de Lavra',
-  }
-  const fase = mapa[regime] ?? 'Regime não arrecadador'
-  return `Processos em fase de ${fase} não geram CFEM. A compensação financeira só é devida a partir da Concessão de Lavra.`
-}
 
 type CfemBarTooltipAnchor = {
   ano: number
@@ -1273,6 +1262,63 @@ function FonteLabel({
   )
 }
 
+/**
+ * Quando o polígono/viewport cai em `disponibilidade` por fallback (regime vazio ou não casado),
+ * recompõe o regime a partir da fase exibida no relatório (`dados_anm.fase_atual` ← SIGMINE/ANM).
+ * Cobre PT e os rótulos EN de `translateTenure` no `ReportData`.
+ */
+function regimeInferidoDeFaseExibida(
+  faseAtual: string | undefined | null,
+): Regime | null {
+  if (faseAtual == null) return null
+  const r = faseAtual.toLowerCase().trim()
+  if (!r) return null
+  if (r.includes('mining application')) return 'req_lavra'
+  if (r.includes('exploration application')) return 'requerimento_pesquisa'
+  if (r.includes('exploration authorization')) return 'autorizacao_pesquisa'
+  if (
+    r.includes('licensing application') ||
+    r.includes('licenciamento') ||
+    (r.includes('licenc') && r.includes('requer'))
+  ) {
+    return 'licenciamento'
+  }
+  if (
+    r.includes('extraction registration') ||
+    (r.includes('registro') && r.includes('extra'))
+  ) {
+    return 'registro_extracao'
+  }
+  if (r.includes('garimpo permit application') || r.includes('garimpeir')) {
+    return 'lavra_garimpeira'
+  }
+  if (r.includes('mining concession')) return 'concessao_lavra'
+  if (r.includes('requer') && r.includes('pesquis')) {
+    return 'requerimento_pesquisa'
+  }
+  if (r.includes('reconhec')) return 'requerimento_pesquisa'
+  if (r.includes('requer') && r.includes('lavra')) return 'req_lavra'
+  if (r.includes('pesquis')) return 'autorizacao_pesquisa'
+  if (r.includes('licenci')) return 'licenciamento'
+  if (r.includes('dispon')) return 'disponibilidade'
+  if (r.includes('estratég') || r.includes('estrateg')) {
+    return 'mineral_estrategico'
+  }
+  if (r.includes('bloqueio') && r.includes('prov')) return 'bloqueio_provisorio'
+  if (r.includes('bloqueio') && r.includes('perm')) return 'bloqueio_permanente'
+  return null
+}
+
+/** Regime para badge e rótulos: não usar `disponibilidade` como proxy de alvará vencido. */
+function regimeParaExibicaoDrawer(
+  processo: Processo,
+  faseAtualRelatorio: string | undefined,
+): Regime {
+  if (processo.regime !== 'disponibilidade') return processo.regime
+  const inferred = regimeInferidoDeFaseExibida(faseAtualRelatorio)
+  return inferred ?? processo.regime
+}
+
 export interface RelatorioCompletoProps {
   processo: Processo | null
   aberto: boolean
@@ -1353,6 +1399,14 @@ export function RelatorioCompleto({
     )
   }, [processo])
 
+  const regimeDrawerUi = useMemo((): Regime => {
+    if (!processo) return 'disponibilidade'
+    return regimeParaExibicaoDrawer(
+      processo,
+      dados?.dados_anm?.fase_atual,
+    )
+  }, [processo, dados?.dados_anm?.fase_atual])
+
   if (!processo) return null
 
   if (loadingApi || erroApi) {
@@ -1388,7 +1442,7 @@ export function RelatorioCompleto({
             gap: 12,
           }}
         >
-          <RegimeBadge regime={processo.regime} variant="drawer" />
+          <RegimeBadge regime={regimeDrawerUi} variant="drawer" />
           <button
             type="button"
             onClick={onFechar}
@@ -1514,9 +1568,9 @@ export function RelatorioCompleto({
     fiscal.cfem_estimada_ha > 0 &&
     (mostrarCfemLinha1 || mostrarCfemLinha2 || mostrarCfemLinha3)
 
-  const cfemSemRecolhimento = REGIMES_SEM_CFEM.includes(
-    processo.regime as (typeof REGIMES_SEM_CFEM)[number],
-  )
+  const temCfemHistoricoMunicipal =
+    fiscal.cfem_municipio.length > 0 ||
+    fiscal.cfem_municipal_historico.length > 0
 
   const fontePrecoTendenciaCard =
     metadata?.fonte_demanda ??
@@ -1637,7 +1691,7 @@ export function RelatorioCompleto({
             flex: 1,
           }}
         >
-          <RegimeBadge regime={processo.regime} variant="drawer" />
+          <RegimeBadge regime={regimeDrawerUi} variant="drawer" />
         </div>
         <div
           style={{
@@ -1819,7 +1873,7 @@ export function RelatorioCompleto({
                     label: 'Substância',
                     value: apresentarSubstanciaLabel(processo.substancia),
                   },
-                  { label: 'Regime', value: REGIME_LABELS[processo.regime] },
+                  { label: 'Regime', value: REGIME_LABELS[regimeDrawerUi] },
                   { label: 'Área', value: `${processo.area_ha.toLocaleString('pt-BR')} ha` },
                   { label: 'UF', value: processo.uf },
                   { label: 'Município', value: processo.municipio },
@@ -1855,7 +1909,9 @@ export function RelatorioCompleto({
                       style={{
                         fontSize: FS.base,
                         color:
-                          'valueColor' in row && row.valueColor != null
+                          'valueColor' in row &&
+                          row.valueColor != null &&
+                          typeof row.valueColor === 'string'
                             ? row.valueColor
                             : '#D3D1C7',
                         margin: 0,
@@ -2145,7 +2201,7 @@ export function RelatorioCompleto({
                     ? DOT_AUSENCIA_POSITIVA
                     : '#D3D1C7'
                   const distSens =
-                    row.km !== null ? distanciaSensivelLabel(row.km) : null
+                    row.km != null ? distanciaSensivelLabel(row.km) : null
                   return (
                     <Fragment key={i}>
                       {i > 0 ? (
@@ -2809,176 +2865,219 @@ export function RelatorioCompleto({
               >
                 {processo.substancia.toUpperCase()}
               </p>
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '1fr 1fr',
-                  gap: 16,
-                }}
-              >
-                {(() => {
-                  const pctR = intel_mineral.reservas_brasil_mundial_pct
-                  const corR =
-                    pctR > 20 ? '#1D9E75' : pctR >= 5 ? '#EF9F27' : '#888780'
-                  const pctP = intel_mineral.producao_brasil_mundial_pct
-                  const corP =
-                    pctP > 20 ? '#1D9E75' : pctP < 5 ? '#E24B4A' : '#EF9F27'
-                  return (
-                    <>
-                      <div>
-                        <p
-                          style={{
-                            ...subsecaoTituloStyle,
-                            margin: '0 0 2px 0',
-                          }}
-                        >
-                          Reservas Brasil
-                        </p>
-                        <p
-                          style={{
-                            fontSize: FS.display,
-                            fontWeight: 500,
-                            color: corR,
-                            margin: '0 0 6px 0',
-                          }}
-                        >
-                          {pctR}%
-                        </p>
-                        <div
-                          style={{
-                            height: 6,
-                            borderRadius: 3,
-                            backgroundColor: '#2C2C2A',
-                            overflow: 'hidden',
-                          }}
-                        >
-                          <div
-                            style={{
-                              width: `${Math.min(100, pctR)}%`,
-                              height: '100%',
-                              backgroundColor: corR,
-                            }}
-                          />
-                        </div>
-                        <p
-                          style={{
-                            fontSize: FS.md,
-                            color: SECTION_TITLE,
-                            margin: '6px 0 0 0',
-                          }}
-                        >
-                          das reservas mundiais
-                        </p>
-                      </div>
-                      <div>
-                        <p
-                          style={{
-                            ...subsecaoTituloStyle,
-                            margin: '0 0 2px 0',
-                          }}
-                        >
-                          Produção Brasil
-                        </p>
-                        <p
-                          style={{
-                            fontSize: FS.display,
-                            fontWeight: 500,
-                            color: corP,
-                            margin: '0 0 6px 0',
-                          }}
-                        >
-                          {pctP}%
-                        </p>
-                        <div
-                          style={{
-                            height: 6,
-                            borderRadius: 3,
-                            backgroundColor: '#2C2C2A',
-                            overflow: 'hidden',
-                          }}
-                        >
-                          <div
-                            style={{
-                              width: `${Math.min(100, pctP)}%`,
-                              height: '100%',
-                              backgroundColor: corP,
-                            }}
-                          />
-                        </div>
-                        <p
-                          style={{
-                            fontSize: FS.md,
-                            color: SECTION_TITLE,
-                            margin: '6px 0 0 0',
-                          }}
-                        >
-                          da produção mundial
-                        </p>
-                      </div>
-                    </>
-                  )
-                })()}
-              </div>
-              {(() => {
-                const pctR = intel_mineral.reservas_brasil_mundial_pct
-                const pctP = intel_mineral.producao_brasil_mundial_pct
-                const diff = pctR - pctP
-                const fPg = formatarGapPontosPercentuais(diff)
-                const fX = formatarPctContextoGlobal(pctP)
-                const fY = formatarPctContextoGlobal(pctR)
-
-                let corGap: string
-                let gapTxt: string
-                let explic: string
-
-                if (Math.abs(diff) < 0.5) {
-                  corGap = '#888780'
-                  gapTxt =
-                    Math.abs(diff) < 0.05
-                      ? 'Gap: 0 p.p.'
-                      : `Gap: ${fPg} p.p.`
-                  explic = `A participação brasileira na produção mundial (${fX}%) está alinhada à sua proporção de reservas (${fY}%).`
-                } else if (diff > 0) {
-                  corGap = '#1D9E75'
-                  gapTxt = `Gap: +${fPg} p.p.`
-                  explic = `A produção brasileira (${fX}%) está abaixo da proporção de reservas (${fY}%), indicando potencial de expansão de ${fPg} p.p.`
-                } else {
-                  corGap = '#E8A830'
-                  gapTxt = `Gap: ${fPg} p.p.`
-                  explic = `A produção brasileira (${fX}%) supera a proporção de reservas (${fY}%), indicando ritmo de extração acelerado`
-                }
-
-                return (
-                  <>
-                    <p
-                      style={{
-                        fontSize: FS.lg,
-                        fontWeight: 500,
-                        color: corGap,
-                        margin: '16px 0 0 0',
-                        lineHeight: 1.45,
-                      }}
-                    >
-                      {gapTxt}
-                    </p>
+              {intel_mineral.fonte_res_prod != null &&
+              intel_mineral.fonte_res_prod.startsWith(PREFIX_SEM_FONTE_RES_PROD) ? (
+                <>
+                  <p
+                    style={{
+                      fontSize: FS.md,
+                      color: '#D3D1C7',
+                      lineHeight: 1.55,
+                      margin: '0 0 12px 0',
+                      textAlign: 'center',
+                    }}
+                  >
+                    Não há fonte oficial publicada para reservas ou produção
+                    mundial desta substância.
+                  </p>
+                  {textoAposSemFonteOficial(intel_mineral.fonte_res_prod) !==
+                  '' ? (
                     <p
                       style={{
                         fontSize: FS.md,
                         color: '#888780',
-                        margin: '6px 0 0 0',
-                        lineHeight: 1.45,
+                        lineHeight: 1.5,
+                        margin: '0 0 0 0',
+                        textAlign: 'center',
                       }}
                     >
-                      {explic}
+                      {textoAposSemFonteOficial(intel_mineral.fonte_res_prod)}
                     </p>
-                  </>
-                )
-              })()}
-              <FonteLabel
-                dataIso={timestamps.usgs}
-                fonte="USGS Mineral Commodity Summaries"
-                marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
-              />
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr 1fr',
+                      gap: 16,
+                    }}
+                  >
+                    {(() => {
+                      const pctR = intel_mineral.reservas_brasil_mundial_pct
+                      const corR =
+                        pctR > 20 ? '#1D9E75' : pctR >= 5 ? '#EF9F27' : '#888780'
+                      const pctP = intel_mineral.producao_brasil_mundial_pct
+                      const corP =
+                        pctP > 20
+                          ? '#1D9E75'
+                          : pctP < 5
+                            ? '#E24B4A'
+                            : '#EF9F27'
+                      return (
+                        <>
+                          <div>
+                            <p
+                              style={{
+                                ...subsecaoTituloStyle,
+                                margin: '0 0 2px 0',
+                              }}
+                            >
+                              Reservas Brasil
+                            </p>
+                            <p
+                              style={{
+                                fontSize: FS.display,
+                                fontWeight: 500,
+                                color: corR,
+                                margin: '0 0 6px 0',
+                              }}
+                            >
+                              {pctR}%
+                            </p>
+                            <div
+                              style={{
+                                height: 6,
+                                borderRadius: 3,
+                                backgroundColor: '#2C2C2A',
+                                overflow: 'hidden',
+                              }}
+                            >
+                              <div
+                                style={{
+                                  width: `${Math.min(100, pctR)}%`,
+                                  height: '100%',
+                                  backgroundColor: corR,
+                                }}
+                              />
+                            </div>
+                            <p
+                              style={{
+                                fontSize: FS.md,
+                                color: SECTION_TITLE,
+                                margin: '6px 0 0 0',
+                              }}
+                            >
+                              das reservas mundiais
+                            </p>
+                          </div>
+                          <div>
+                            <p
+                              style={{
+                                ...subsecaoTituloStyle,
+                                margin: '0 0 2px 0',
+                              }}
+                            >
+                              Produção Brasil
+                            </p>
+                            <p
+                              style={{
+                                fontSize: FS.display,
+                                fontWeight: 500,
+                                color: corP,
+                                margin: '0 0 6px 0',
+                              }}
+                            >
+                              {pctP}%
+                            </p>
+                            <div
+                              style={{
+                                height: 6,
+                                borderRadius: 3,
+                                backgroundColor: '#2C2C2A',
+                                overflow: 'hidden',
+                              }}
+                            >
+                              <div
+                                style={{
+                                  width: `${Math.min(100, pctP)}%`,
+                                  height: '100%',
+                                  backgroundColor: corP,
+                                }}
+                              />
+                            </div>
+                            <p
+                              style={{
+                                fontSize: FS.md,
+                                color: SECTION_TITLE,
+                                margin: '6px 0 0 0',
+                              }}
+                            >
+                              da produção mundial
+                            </p>
+                          </div>
+                        </>
+                      )
+                    })()}
+                  </div>
+                  {(() => {
+                    const pctR = intel_mineral.reservas_brasil_mundial_pct
+                    const pctP = intel_mineral.producao_brasil_mundial_pct
+                    const diff = pctR - pctP
+                    const fPg = formatarGapPontosPercentuais(diff)
+                    const fX = formatarPctContextoGlobal(pctP)
+                    const fY = formatarPctContextoGlobal(pctR)
+
+                    let corGap: string
+                    let gapTxt: string
+                    let explic: string
+
+                    if (Math.abs(diff) < 0.5) {
+                      corGap = '#888780'
+                      gapTxt =
+                        Math.abs(diff) < 0.05
+                          ? 'Gap: 0 p.p.'
+                          : `Gap: ${fPg} p.p.`
+                      explic = `A participação brasileira na produção mundial (${fX}%) está alinhada à sua proporção de reservas (${fY}%).`
+                    } else if (diff > 0) {
+                      corGap = '#1D9E75'
+                      gapTxt = `Gap: +${fPg} p.p.`
+                      explic = `A produção brasileira (${fX}%) está abaixo da proporção de reservas (${fY}%), indicando potencial de expansão de ${fPg} p.p.`
+                    } else {
+                      corGap = '#E8A830'
+                      gapTxt = `Gap: ${fPg} p.p.`
+                      explic = `A produção brasileira (${fX}%) supera a proporção de reservas (${fY}%), indicando ritmo de extração acelerado`
+                    }
+
+                    return (
+                      <>
+                        <p
+                          style={{
+                            fontSize: FS.lg,
+                            fontWeight: 500,
+                            color: corGap,
+                            margin: '16px 0 0 0',
+                            lineHeight: 1.45,
+                          }}
+                        >
+                          {gapTxt}
+                        </p>
+                        <p
+                          style={{
+                            fontSize: FS.md,
+                            color: '#888780',
+                            margin: '6px 0 0 0',
+                            lineHeight: 1.45,
+                          }}
+                        >
+                          {explic}
+                        </p>
+                      </>
+                    )
+                  })()}
+                  <FonteLabel
+                    dataIso={timestamps.usgs}
+                    fonte={
+                      intel_mineral.fonte_res_prod != null &&
+                      intel_mineral.fonte_res_prod.trim() !== ''
+                        ? intel_mineral.fonte_res_prod
+                        : 'USGS Mineral Commodity Summaries'
+                    }
+                    marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
+                  />
+                </>
+              )}
             </Card>
 
             <Card>
@@ -3230,7 +3329,7 @@ export function RelatorioCompleto({
               </div>
               <FonteLabel
                 dataIso={timestamps.usgs}
-                fonte="Master substâncias TERRADAR / USGS MCS"
+                fonte="USGS Mineral Commodity Summaries"
                 marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
               />
             </Card>
@@ -4403,34 +4502,25 @@ export function RelatorioCompleto({
               />
             </Card>
 
-            {(fiscal.cfem_processo?.length ?? 0) > 0 ||
-            (fiscal.cfem_municipio?.length ?? 0) > 0 ||
-            fiscal.cfem_historico.length > 0 ||
-            fiscal.cfem_municipal_historico.length > 0 ? (
-              <Card>
-                <SecLabel branco style={{ marginBottom: 4 }}>
-                  CFEM: processo vs. município
-                </SecLabel>
-                <p
-                  style={{
-                    ...CFEM_CARD_SUBTITLE_STYLE,
-                    margin: '0 0 28px 0',
-                    textTransform: 'none',
-                    letterSpacing: 'normal',
-                    fontWeight: 400,
-                  }}
-                >
-                  {cfemSemRecolhimento
-                    ? 'Arrecadação CFEM do município nos últimos 5 anos'
-                    : 'Arrecadação deste processo comparada ao total do município'}
-                </p>
-                {(() => {
+            <Card>
+              <SecLabel branco style={{ marginBottom: 4 }}>
+                CFEM: processo vs. município
+              </SecLabel>
+              {temCfemHistoricoMunicipal ? (
+                <>
+                  {(() => {
                   const ANO_ATUAL = new Date().getFullYear()
                   const ANO_MIN_CFEM = ANO_ATUAL - 4
-                  const cfemProcRaw =
-                    fiscal.cfem_processo.length > 0
-                      ? fiscal.cfem_processo
-                      : fiscal.cfem_historico
+                  const cfemSt = fiscal.cfem_processo_status
+                  const cfemComparativoOk = cfemSt === 'OK'
+                  const regimeDisplay =
+                    REGIME_LABELS[regimeDrawerUi] ?? String(regimeDrawerUi)
+                  const cfemCardSubtitle = cfemComparativoOk
+                    ? 'Arrecadação deste processo comparada ao total do município'
+                    : cfemSt === 'SEM_DADO_INDIVIDUALIZADO'
+                      ? 'A CFEM individualizada por processo não está disponível na base atual. O gráfico mostra a CFEM total do município.'
+                      : `Este processo está em fase de ${regimeDisplay} e não gera CFEM. O gráfico abaixo mostra a arrecadação de CFEM do município de ${processo.municipio}, como contexto regional.`
+                  const cfemProcRaw = fiscal.cfem_processo
                   const cfemMunRaw =
                     fiscal.cfem_municipio.length > 0
                       ? fiscal.cfem_municipio
@@ -4444,15 +4534,10 @@ export function RelatorioCompleto({
                   const cfemMun = cfemMunRaw.filter(
                     (h) => h.ano >= ANO_MIN_CFEM,
                   )
-                  const cfemProcEffetivo = cfemSemRecolhimento
-                    ? cfemProc.map((h) => ({
-                        ...h,
-                        valor_recolhido_brl: 0,
-                      }))
-                    : cfemProc
-                  const processoTemCfem = cfemProcEffetivo.some(
-                    (h) => h.valor_recolhido_brl > 0,
-                  )
+                  const cfemProcEffetivo = cfemProc
+                  const processoTemCfem =
+                    cfemComparativoOk &&
+                    cfemProcEffetivo.some((h) => h.valor_recolhido_brl > 0)
                   const procPorAno = new Map(
                     cfemProcEffetivo.map((h) => [h.ano, h.valor_recolhido_brl]),
                   )
@@ -4486,7 +4571,7 @@ export function RelatorioCompleto({
                     0,
                   )
                   let linhaPct: ReactNode = null
-                  if (!cfemSemRecolhimento) {
+                  if (cfemComparativoOk) {
                     if (totalProc === 0) {
                       linhaPct = (
                         <p
@@ -4550,6 +4635,17 @@ export function RelatorioCompleto({
                   ].reduce((a, b) => (a > b ? a : b))
                   return (
                     <>
+                      <p
+                        style={{
+                          ...CFEM_CARD_SUBTITLE_STYLE,
+                          margin: '0 0 28px 0',
+                          textTransform: 'none',
+                          letterSpacing: 'normal',
+                          fontWeight: 400,
+                        }}
+                      >
+                        {cfemCardSubtitle}
+                      </p>
                       {cfemMun.length > 0 || processoTemCfem ? (
                         <div
                           style={{
@@ -4617,47 +4713,12 @@ export function RelatorioCompleto({
                         maxMun={maxMun}
                         trackH={trackH}
                       />
-                      {cfemSemRecolhimento ? (
-                        <div
-                          style={{
-                            marginTop: 16,
-                            marginBottom: 22,
-                            padding: '12px 14px',
-                            borderRadius: 8,
-                            background: 'rgba(234, 179, 8, 0.08)',
-                            border: '1px solid rgba(234, 179, 8, 0.24)',
-                            display: 'flex',
-                            flexDirection: 'row',
-                            alignItems: 'flex-start',
-                            gap: 10,
-                          }}
-                        >
-                          <Info
-                            size={18}
-                            strokeWidth={2}
-                            aria-hidden
-                            style={{
-                              flexShrink: 0,
-                              marginTop: 2,
-                              color: 'rgba(234, 179, 8, 0.95)',
-                            }}
-                          />
-                          <span
-                            style={{
-                              fontSize: FS.sm,
-                              color: 'rgba(234, 179, 8, 0.95)',
-                              lineHeight: 1.5,
-                            }}
-                          >
-                            {fraseFaseSemCfem(processo.regime)}
-                          </span>
-                        </div>
-                      ) : null}
+                      {cfemComparativoOk ? (
                       <div
                         style={{
                           display: 'flex',
                           alignItems: 'stretch',
-                          marginTop: cfemSemRecolhimento ? 0 : 4,
+                          marginTop: 4,
                           marginBottom: 28,
                         }}
                       >
@@ -4675,7 +4736,7 @@ export function RelatorioCompleto({
                           >
                             Este processo 5 anos
                           </p>
-                          {cfemSemRecolhimento || processoTemCfem ? (
+                          {processoTemCfem ? (
                             <p
                               style={{
                                 fontSize: 20,
@@ -4738,6 +4799,39 @@ export function RelatorioCompleto({
                           </p>
                         </div>
                       </div>
+                      ) : (
+                      <div
+                        style={{
+                          marginTop: 4,
+                          marginBottom: 28,
+                        }}
+                      >
+                        <p
+                          style={{
+                            fontSize: 11,
+                            fontWeight: 500,
+                            letterSpacing: '1px',
+                            textTransform: 'uppercase',
+                            color: '#888780',
+                            margin: '0 0 6px 0',
+                            lineHeight: 1.3,
+                          }}
+                        >
+                          Município (últimos 5 anos)
+                        </p>
+                        <p
+                          style={{
+                            fontSize: 20,
+                            fontWeight: 700,
+                            color: '#EF9F27',
+                            margin: 0,
+                            lineHeight: 1.2,
+                          }}
+                        >
+                          {formatarRealBrlInteligente(totalMun)}
+                        </p>
+                      </div>
+                      )}
                       {linhaPct}
                       <FonteLabel
                         dataIso={dataIsoCfem}
@@ -4747,8 +4841,49 @@ export function RelatorioCompleto({
                     </>
                   )
                 })()}
-              </Card>
-            ) : null}
+                </>
+              ) : (
+                <div
+                  style={{
+                    minHeight: 200,
+                    margin: '0 0 28px 0',
+                    padding: '24px 20px',
+                    borderRadius: 8,
+                    border: '1px solid rgba(44, 44, 42, 0.9)',
+                    boxSizing: 'border-box',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    textAlign: 'center',
+                    gap: 12,
+                  }}
+                >
+                  <p
+                    style={{
+                      fontSize: FS.md,
+                      fontWeight: 500,
+                      color: '#F1EFE8',
+                      margin: 0,
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    Histórico de CFEM do município indisponível
+                  </p>
+                  <p
+                    style={{
+                      fontSize: FS.sm,
+                      color: '#888780',
+                      margin: 0,
+                      lineHeight: 1.5,
+                      maxWidth: 420,
+                    }}
+                  >
+                    Os dados de arrecadação CFEM para este município ainda não foram indexados na base do TERRADAR. Consulte diretamente o portal ANM Dados Abertos para mais informações.
+                  </p>
+                </div>
+              )}
+            </Card>
 
             <Card>
               <SecLabel branco>Incentivos estaduais</SecLabel>

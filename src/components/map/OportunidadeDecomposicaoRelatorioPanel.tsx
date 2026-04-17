@@ -143,9 +143,9 @@ export function OportunidadeDecomposicaoRelatorioPanel({
 }) {
   const [expandido, setExpandido] = useState<Record<DimensaoOSKey, boolean>>(
     () => ({
-      atratividade: true,
-      viabilidade: true,
-      seguranca: true,
+      atratividade: false,
+      viabilidade: false,
+      seguranca: false,
     }),
   )
 

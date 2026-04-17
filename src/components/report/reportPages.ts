@@ -1,4 +1,8 @@
 import type { ReportData, ReportLLMBlocks, RiskDimension } from '../../lib/reportTypes'
+import {
+  isSemFonteOficialReservaProducaoGlobal,
+  textoAposSemFonteOficial,
+} from '../../lib/reportFonteResProd'
 import type { ReportL10n } from './reportL10n'
 import {
   fmtCfemEstimadaBrlMiPerHa,
@@ -111,7 +115,10 @@ export function buildPage2_SumarioVital(
       ? `<div class="imp" style="border-left-color:var(--amber);"><strong>${sanitizeReportText(t.pontoAtencao)}</strong> ${sanitizeReportText(pontoRaw.replace(/\s+/g, ' '))}</div>`
       : ''
 
-  const tendenciaSub = `${data.var_12m_pct >= 0 ? '+' : ''}${fmtPct(data.var_12m_pct)} · ${sanitizeReportText(t.tendenciaSub)}`
+  const tendenciaSub =
+    data.var_12m_pct == null
+      ? sanitizeReportText(t.nd)
+      : `${data.var_12m_pct >= 0 ? '+' : ''}${fmtPct(data.var_12m_pct)} · ${sanitizeReportText(t.tendenciaSub)}`
 
   const vereditoBlock = String(llm.veredito_texto ?? '').trim()
     ? `<div style="font-size:8.5pt;color:#666;margin-bottom:10px;">${paragraphsFromLLM(llm.veredito_texto)}</div>`
@@ -156,7 +163,7 @@ export function buildPage2_SumarioVital(
     </div>
     <div class="card">
       <div class="card-lbl">${sanitizeReportText(t.tendenciaPreco)}</div>
-      <div class="card-val ${data.var_12m_pct >= 0 ? 'green' : 'red'} card-tend">${sanitizeReportText(data.mercado_tendencia)}</div>
+      <div class="card-val ${(data.var_12m_pct ?? 0) >= 0 ? 'green' : 'red'} card-tend">${sanitizeReportText(data.mercado_tendencia)}</div>
       <div class="card-sub">${tendenciaSub}</div>
     </div>
   </div>
@@ -279,11 +286,45 @@ export function buildPage4_Mercado(
   llm: ReportLLMBlocks['mercado'],
   t: ReportL10n,
 ): string {
-  const gapPp = data.reservas_mundiais_pct - data.producao_mundial_pct
-  const gapStr =
-    gapPp >= 0
-      ? `<strong class="green">+${gapPp.toLocaleString(t.locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} p.p.</strong> ${sanitizeReportText(t.tblGapPotencial)}`
-      : `<strong>${gapPp.toLocaleString(t.locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} p.p.</strong>`
+  const semFonteResProd = isSemFonteOficialReservaProducaoGlobal(
+    data.fonte_res_prod,
+  )
+  const complementoSemFonte =
+    semFonteResProd && data.fonte_res_prod
+      ? textoAposSemFonteOficial(data.fonte_res_prod)
+      : ''
+
+  let gapStr = ''
+  if (!semFonteResProd) {
+    const gapPp = data.reservas_mundiais_pct - data.producao_mundial_pct
+    gapStr =
+      gapPp >= 0
+        ? `<strong class="green">+${gapPp.toLocaleString(t.locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} p.p.</strong> ${sanitizeReportText(t.tblGapPotencial)}`
+        : `<strong>${gapPp.toLocaleString(t.locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} p.p.</strong>`
+  }
+
+  const blocoPosicaoBrasil = semFonteResProd
+    ? `<h2 style="margin-top:0;">${sanitizeReportText(t.contextoGlobalTitulo)} &mdash; ${sanitizeReportText(data.substancia_anm)}</h2>
+  <p style="text-align:center;font-size:10.5pt;line-height:1.45;color:#4a4a48;margin:0 0 10px 0;">${sanitizeReportText(t.disclaimerSemFonteResProd)}</p>
+  ${
+    complementoSemFonte !== ''
+      ? `<p style="text-align:center;font-size:9.5pt;line-height:1.45;color:#666;margin:0 0 14px 0;">${sanitizeReportText(complementoSemFonte)}</p>`
+      : '<div style="margin-bottom:14px;"></div>'
+  }
+  <table class="dsm">
+        <tr><td>${sanitizeReportText(t.tblAplicacoes)}</td><td>${sanitizeReportText(t.tblAplicacoesVal)}</td></tr>
+      </table>`
+    : `<h2 style="margin-top:0;">${sanitizeReportText(t.posicaoBrasil)}</h2>
+      <table class="dsm">
+        <tr><td>${sanitizeReportText(t.tblReservasMundiais)}</td><td>${fmtPct(data.reservas_mundiais_pct)} ${sanitizeReportText(t.doTotalGlobal)}</td></tr>
+        <tr><td>${sanitizeReportText(t.tblProducaoMundial)}</td><td>${fmtPct(data.producao_mundial_pct)} ${sanitizeReportText(t.doTotalGlobal)}</td></tr>
+        <tr><td>${sanitizeReportText(t.tblGap)}</td><td>${gapStr}</td></tr>
+        <tr><td>${sanitizeReportText(t.tblAplicacoes)}</td><td>${sanitizeReportText(t.tblAplicacoesVal)}</td></tr>
+      </table>`
+
+  const rodapeP4 = semFonteResProd
+    ? sanitizeReportText(t.contextoGlobalIndisponivelRodape)
+    : sanitizeReportText(t.fontesP4)
 
   return `<div class="page content">
   <div class="ptag">TERRADAR ${sanitizeReportText(data.processo)}</div>
@@ -294,17 +335,17 @@ export function buildPage4_Mercado(
   <div class="kpis">
     <div class="kpi">
       <div class="kpi-lbl">${sanitizeReportText(t.precoSpot)}</div>
-      <div class="kpi-val gold">US$ ${fmtUsdOz(data.preco_oz_usd)}<span class="card-unit">/oz</span></div>
-      <div class="kpi-sub">R$ ${fmtUsdOz(data.preco_g_brl)}/g &middot; PTAX R$ ${fmtUsdOz(data.ptax)}</div>
+      <div class="kpi-val gold">US$ ${fmtUsdOz(data.preco_oz_usd)}<span class="card-unit">/${sanitizeReportText(data.preco_unidade_label)}</span></div>
+      <div class="kpi-sub">${data.preco_sub_label != null ? sanitizeReportText(data.preco_sub_label) : sanitizeReportText(t.refSpot)}</div>
     </div>
     <div class="kpi">
       <div class="kpi-lbl">${sanitizeReportText(t.var12m)}</div>
-      <div class="kpi-val ${data.var_12m_pct >= 0 ? 'green' : 'red'}">${fmtPct(data.var_12m_pct)}</div>
+      <div class="kpi-val ${data.var_12m_pct == null ? '' : data.var_12m_pct >= 0 ? 'green' : 'red'}">${data.var_12m_pct == null ? sanitizeReportText(t.nd) : fmtPct(data.var_12m_pct)}</div>
       <div class="kpi-sub">${sanitizeReportText(t.refSpot)}</div>
     </div>
     <div class="kpi">
       <div class="kpi-lbl">${sanitizeReportText(t.cresc5a)}</div>
-      <div class="kpi-val green">${fmtPct(data.cagr_5a_pct)} <span class="card-unit">a.a.</span></div>
+      <div class="kpi-val ${data.cagr_5a_pct == null ? '' : 'green'}">${data.cagr_5a_pct == null ? sanitizeReportText(t.nd) : `${fmtPct(data.cagr_5a_pct)} <span class="card-unit">a.a.</span>`}</div>
       <div class="kpi-sub">${sanitizeReportText(t.cagrLbl)}</div>
     </div>
     ${
@@ -321,13 +362,7 @@ export function buildPage4_Mercado(
 
   <div class="cols">
     <div class="col">
-      <h2 style="margin-top:0;">${sanitizeReportText(t.posicaoBrasil)}</h2>
-      <table class="dsm">
-        <tr><td>${sanitizeReportText(t.tblReservasMundiais)}</td><td>${fmtPct(data.reservas_mundiais_pct)} ${sanitizeReportText(t.doTotalGlobal)}</td></tr>
-        <tr><td>${sanitizeReportText(t.tblProducaoMundial)}</td><td>${fmtPct(data.producao_mundial_pct)} ${sanitizeReportText(t.doTotalGlobal)}</td></tr>
-        <tr><td>${sanitizeReportText(t.tblGap)}</td><td>${gapStr}</td></tr>
-        <tr><td>${sanitizeReportText(t.tblAplicacoes)}</td><td>${sanitizeReportText(t.tblAplicacoesVal)}</td></tr>
-      </table>
+      ${blocoPosicaoBrasil}
     </div>
     <div class="col">
       <h2 style="margin-top:0;">${sanitizeReportText(t.aspectosReg)}</h2>
@@ -358,7 +393,7 @@ export function buildPage4_Mercado(
 
   <div class="imp">${paragraphsFromLLM(llm.implicacao)}</div>
 
-  <div class="src">${sanitizeReportText(t.fontesP4)}</div>
+  <div class="src">${rodapeP4}</div>
   ${reportFooter(4, data)}
 </div>`
 }
@@ -368,6 +403,16 @@ export function buildPage5_Fiscal(
   llm: ReportLLMBlocks['fiscal'],
   t: ReportL10n,
 ): string {
+  const cfemTemDados =
+    Array.isArray(data.cfem_historico) && data.cfem_historico.length > 0
+
+  const cfemDisclaimerFiscal =
+    data.cfem_processo_status === 'SEM_DADO_INDIVIDUALIZADO'
+      ? `<p style="font-size:8.5pt;color:var(--text-muted);margin:0 0 8px 0;line-height:1.45;">${sanitizeReportText('A CFEM individualizada por processo não está disponível na base atual. A tabela abaixo mostra a CFEM total do município (todas as substâncias) por ano.')}</p>`
+      : data.cfem_processo_status === 'PROCESSO_NAO_PRODUTIVO'
+        ? `<p style="font-size:8.5pt;color:var(--text-muted);margin:0 0 8px 0;line-height:1.45;">${sanitizeReportText(`Este processo está em fase de ${String(data.regime_display ?? '').trim()} e não gera CFEM. A tabela traz a CFEM municipal como contexto regional.`)}</p>`
+        : ''
+
   const cfemRows = data.cfem_historico
     .map(
       (c) =>
@@ -379,6 +424,16 @@ export function buildPage5_Fiscal(
     </tr>`,
     )
     .join('')
+
+  const cfemBlocoHistorico = cfemTemDados
+    ? `<table class="cfem" style="font-size:8.5pt;table-layout:fixed;">
+    <thead><tr><th style="width:12%;">${sanitizeReportText(t.thAno)}</th><th style="width:25%;">${sanitizeReportText(t.thCfemProcesso)}</th><th style="width:25%;">${sanitizeReportText(t.thCfemMunicipio)}</th><th style="width:38%;">${sanitizeReportText(t.thCfemSubst)}</th></tr></thead>
+    <tbody>${cfemRows}</tbody>
+  </table>`
+    : `<div style="min-height:140px;margin:8px 0 12px 0;padding:18px 16px;border:1px solid rgba(80,78,72,0.35);border-radius:6px;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:8px;">
+    <p style="margin:0;font-size:9pt;font-weight:600;color:var(--text);">${sanitizeReportText('Histórico de CFEM do município indisponível')}</p>
+    <p style="margin:0;font-size:8pt;color:var(--text-muted);line-height:1.45;max-width:420px;">${sanitizeReportText('Os dados de arrecadação CFEM para este município ainda não foram indexados na base do TERRADAR. Consulte diretamente o portal ANM Dados Abertos para mais informações.')}</p>
+  </div>`
 
   const linhasBndesCell =
     data.incentivos.linhas_bndes_nomes &&
@@ -435,10 +490,8 @@ export function buildPage5_Fiscal(
   <h2>${sanitizeReportText(t.arrecadacaoCfem)}</h2>
   <p style="font-size:8.5pt;color:var(--text-light);margin-bottom:4px;">${paragraphsFromLLM(llm.cfem_intro)}</p>
 
-  <table class="cfem" style="font-size:8.5pt;table-layout:fixed;">
-    <thead><tr><th style="width:12%;">${sanitizeReportText(t.thAno)}</th><th style="width:25%;">${sanitizeReportText(t.thCfemProcesso)}</th><th style="width:25%;">${sanitizeReportText(t.thCfemMunicipio)}</th><th style="width:38%;">${sanitizeReportText(t.thCfemSubst)}</th></tr></thead>
-    <tbody>${cfemRows}</tbody>
-  </table>
+  ${cfemDisclaimerFiscal}
+  ${cfemBlocoHistorico}
 
   <div class="imp">${paragraphsFromLLM(llm.implicacao)}</div>
 
@@ -550,8 +603,8 @@ export function buildPage7_Oportunidade(
     </tbody>
   </table>
 
-  <div style="margin-top:8px;background:linear-gradient(135deg, rgba(15,122,90,0.06) 0%, rgba(212,168,67,0.08) 100%);border:1px solid rgba(212,168,67,0.2);border-radius:6px;padding:10px 12px;">
-    <div style="font-family:var(--mono);font-size:6.5pt;letter-spacing:1.5px;text-transform:uppercase;color:var(--gold);margin-bottom:6px;">${sanitizeReportText(t.sinteseTerradar)}</div>
+  <div style="margin-top:6px;background:linear-gradient(135deg, rgba(15,122,90,0.06) 0%, rgba(212,168,67,0.08) 100%);border:1px solid rgba(212,168,67,0.2);border-radius:6px;padding:7px 10px;page-break-inside:avoid;font-size:8.25pt;line-height:1.38;">
+    <div style="font-family:var(--mono);font-size:6.5pt;letter-spacing:1.5px;text-transform:uppercase;color:var(--gold);margin-bottom:4px;">${sanitizeReportText(t.sinteseTerradar)}</div>
     ${sinteseInner}
   </div>
 

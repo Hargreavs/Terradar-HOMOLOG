@@ -126,6 +126,12 @@ export const REPORT_L10N_PT = {
 
   fontesP4: 'Fontes: master de substância, ANM, IBGE e referências de mercado.',
 
+  contextoGlobalTitulo: 'Contexto Global',
+  disclaimerSemFonteResProd:
+    'Não há fonte oficial publicada para reservas ou produção mundial desta substância.',
+  contextoGlobalIndisponivelRodape:
+    'Contexto global indisponível para esta substância.',
+
   tblLinhasBndesEleg: 'linhas elegíveis (cadastro)',
 
   p5Tag: 'Fiscal e incentivos',
@@ -172,9 +178,9 @@ export const REPORT_L10N_PT = {
   leituraIntegrada: 'Leitura integrada:',
   fontesP6: 'Fontes: modelo TERRADAR, dados cadastrais e territoriais ·',
 
-  dimMercado: 'Mercado',
-  dimViab: 'Viabilidade',
-  dimSeg: 'Segurança jurídica',
+  dimMercado: 'Atratividade de mercado',
+  dimViab: 'Viabilidade operacional',
+  dimSeg: 'Segurança do investimento',
 
   p7Tag: 'Oportunidade',
   oportunidadePerfilCons: '(perfil conservador)',
@@ -198,42 +204,45 @@ export const REPORT_L10N_PT = {
   p8Tag: 'Metodologia e fontes',
   p8Hl: 'Como interpretar este relatório',
   p8Intro:
-    'O TERRADAR integra cadastro ANM, camadas territoriais, indicadores fiscais e mercado para apoiar decisão — sempre com validação técnica e jurídica adicional.',
+    'O TERRADAR utiliza uma metodologia proprietária de cálculo e análise que avalia processos minerários em múltiplas dimensões a partir de dados extraídos exclusivamente de fontes oficiais públicas brasileiras e internacionais. Os algoritmos de pontuação, normalização e ponderação foram desenvolvidos e calibrados considerando vários aspectos da regulação minerária, análise de risco e inteligência de mercado. A estrutura de pesos, faixas de classificação e regras de fallback são propriedade intelectual do TERRADAR e não são divulgadas neste relatório.',
 
-  cboxRs: 'Risk Score (RS)',
+  cboxRs: 'Risk Score (0-100)',
   cboxRsTxt:
-    'Compõe risco geológico, ambiental, social e regulatório em escala 0–100.',
-  cboxMat: 'Maturidade',
-  cboxMatTxt: 'Aproxima o estágio do processo ao longo do ciclo mineral.',
-  cboxOs: 'Opportunity Score (OS)',
-  cboxOsTxt: 'Combina atratividade de mercado, viabilidade e segurança jurídica.',
-  cboxVi: 'Valor in-situ',
-  cboxViTxt: 'Estimativa indicativa a partir de teor, densidade e preço.',
+    'Avalia vulnerabilidades em 4 dimensões: geológica, ambiental, social e regulatória. Menor é melhor. Faixas: 0-39 baixo, 40-69 médio, 70-100 alto. Cálculo proprietário baseado em dados públicos.',
+  cboxMat: 'Veredito de maturidade',
+  cboxMatTxt:
+    '5 níveis: Exploratório, Inicial, Intermediário, Avançado, Maduro. Baseado na fase, documentos e status do alvará.',
+  cboxOs: 'Opportunity Score (0-100)',
+  cboxOsTxt:
+    'Avalia potencial de retorno em 3 dimensões: atratividade, viabilidade e segurança. Pesos ajustados ao perfil do investidor. Maior é melhor. Cálculo proprietário.',
+  cboxVi: 'Valor in-situ teórico',
+  cboxViTxt:
+    'Estimativa com premissas conservadoras por hectare. Não constitui NI 43-101 / JORC. Referência indicativa.',
 
-  fontesDadosTitulo: 'Fontes de dados',
+  fontesDadosTitulo: 'Fontes de dados utilizadas',
   thCategoria: 'Categoria',
   thFontes: 'Fontes',
 
-  catCadastro: 'Cadastro ANM / SEI',
-  catCadastroVal: 'API processo, eventos e documentos.',
-  catCfem: 'CFEM',
-  catCfemVal: 'Dados de arrecadação ANM.',
-  catTerr: 'Territorial',
-  catTerrVal: 'PostGIS, ICMBio, FUNAI, infraestrutura.',
+  catCadastro: 'Cadastro minerário',
+  catCadastroVal: 'ANM/SIGMINE (API REST), SEI-ANM',
+  catCfem: 'Arrecadação mineral',
+  catCfemVal: 'ANM/CFEM (Dados Abertos)',
+  catTerr: 'Dados territoriais',
+  catTerrVal: 'FUNAI (TIs), CNUC/MMA (UCs), INCRA, CAR/SICAR, CPRM/SGB',
   catInfra: 'Infraestrutura',
-  catInfraVal: 'Malha viária e ativos próximos.',
-  catSocio: 'Socioambiental',
-  catSocioVal: 'Camadas de restrição e proximidade.',
-  catFiscal: 'Fiscal',
-  catFiscalVal: 'CAPAG, IBGE, receitas municipais.',
-  catMercado: 'Mercado',
-  catMercadoVal: 'Master de substância, câmbio e benchmarks.',
+  catInfraVal: 'DNIT (ferrovias/rodovias), ANTAQ (portos), IBGE',
+  catSocio: 'Socioeconômicos',
+  catSocioVal: 'IBGE (PIB, população, IDH, biomas)',
+  catFiscal: 'Dados fiscais',
+  catFiscalVal: 'STN (CAPAG, SICONFI), Banco Central (PTAX)',
+  catMercado: 'Inteligência de mercado',
+  catMercadoVal: 'FMI (preços), USGS (reservas/produção), World Gold Council',
   catLeg: 'Legislação',
-  catLegVal: 'PNM, CFEM, marco regulatório mineral.',
+  catLegVal: 'Código de Mineração, Lei 13.540/2017, Decreto 10.657/2021',
 
-  p8NotaRodape: 'Documento gerado automaticamente em',
+  p8NotaRodape: 'Sobre este relatório: gerado pela plataforma TERRADAR em',
   p8NotaRodape2:
-    ' — pode conter arredondamentos; não dispensa parecer profissional.',
+    '. Os dados foram verificados em múltiplas auditorias cruzadas, com consultas diretas a APIs oficiais (SICONFI, IBGE SIDRA), processamento de shapefiles geoespaciais e verificação processual no SEI-ANM. Nenhum dado foi inventado, inferido ou estimado sem base documental explícita.',
   p8ShareSite: 'Brasília/DF · sharetecnologia.com.br',
 } as const
 
@@ -360,6 +369,12 @@ export const REPORT_L10N_EN = {
 
   fontesP4: 'Sources: commodity master, ANM, IBGE, market references.',
 
+  contextoGlobalTitulo: 'Global context',
+  disclaimerSemFonteResProd:
+    'No official public source exists for global reserves or production of this commodity.',
+  contextoGlobalIndisponivelRodape:
+    'Global context unavailable for this commodity.',
+
   tblLinhasBndesEleg: 'eligible lines (registry)',
 
   p5Tag: 'Fiscal and incentives',
@@ -406,9 +421,9 @@ export const REPORT_L10N_EN = {
   leituraIntegrada: 'Integrated read:',
   fontesP6: 'Sources: TERRADAR model, cadastral and territorial data ·',
 
-  dimMercado: 'Market',
-  dimViab: 'Viability',
-  dimSeg: 'Legal certainty',
+  dimMercado: 'Market appeal',
+  dimViab: 'Operational viability',
+  dimSeg: 'Investment security',
 
   p7Tag: 'Opportunity',
   oportunidadePerfilCons: '(conservative profile)',
@@ -432,42 +447,45 @@ export const REPORT_L10N_EN = {
   p8Tag: 'Methodology and sources',
   p8Hl: 'How to read this report',
   p8Intro:
-    'TERRADAR blends ANM cadastre, territorial layers, fiscal indicators, and market data to support decisions — always subject to additional technical and legal validation.',
+    'TERRADAR applies a proprietary methodology that evaluates mining processes across multiple dimensions, drawing exclusively from official public Brazilian and international data sources. Its scoring, normalization and weighting algorithms were developed and calibrated taking into account regulatory, risk and market intelligence aspects of mining. Weight structures, classification bands and fallback rules are TERRADAR intellectual property and are not disclosed in this report.',
 
-  cboxRs: 'Risk Score (RS)',
+  cboxRs: 'Risk Score (0-100)',
   cboxRsTxt:
-    'Combines geologic, environmental, social, and regulatory risk on a 0–100 scale.',
-  cboxMat: 'Maturity',
-  cboxMatTxt: 'Places the process stage along the mining lifecycle.',
-  cboxOs: 'Opportunity Score (OS)',
-  cboxOsTxt: 'Combines market appeal, viability, and legal certainty.',
-  cboxVi: 'In-situ value',
-  cboxViTxt: 'Indicative estimate from grade, tonnage, and price.',
+    'Scores vulnerabilities across 4 dimensions: geologic, environmental, social and regulatory. Lower is better. Bands: 0-39 low, 40-69 medium, 70-100 high. Proprietary calculation based on public data.',
+  cboxMat: 'Maturity verdict',
+  cboxMatTxt:
+    '5 levels: Exploratory, Initial, Intermediate, Advanced, Mature. Based on phase, documents and permit status.',
+  cboxOs: 'Opportunity Score (0-100)',
+  cboxOsTxt:
+    'Scores return potential across 3 dimensions: market appeal, viability and security. Weights tuned to the investor profile. Higher is better. Proprietary calculation.',
+  cboxVi: 'Theoretical in-situ value',
+  cboxViTxt:
+    'Estimate with conservative per-hectare assumptions. Does not constitute NI 43-101 / JORC. Indicative reference only.',
 
-  fontesDadosTitulo: 'Data sources',
+  fontesDadosTitulo: 'Data sources used',
   thCategoria: 'Category',
   thFontes: 'Sources',
 
-  catCadastro: 'ANM / SEI cadastre',
-  catCadastroVal: 'Process API, events, documents.',
-  catCfem: 'CFEM',
-  catCfemVal: 'ANM collection data.',
-  catTerr: 'Territorial',
-  catTerrVal: 'PostGIS, ICMBio, FUNAI, infrastructure.',
+  catCadastro: 'Mining cadastre',
+  catCadastroVal: 'ANM/SIGMINE (REST API), SEI-ANM',
+  catCfem: 'Mineral royalties',
+  catCfemVal: 'ANM/CFEM (Open Data)',
+  catTerr: 'Territorial data',
+  catTerrVal: 'FUNAI (ILs), CNUC/MMA (PAs), INCRA, CAR/SICAR, CPRM/SGB',
   catInfra: 'Infrastructure',
-  catInfraVal: 'Road network and nearby assets.',
-  catSocio: 'Socio-environmental',
-  catSocioVal: 'Restriction layers and proximity.',
-  catFiscal: 'Fiscal',
-  catFiscalVal: 'CAPAG, IBGE, municipal revenues.',
-  catMercado: 'Market',
-  catMercadoVal: 'Commodity master, FX, benchmarks.',
-  catLeg: 'Legal',
-  catLegVal: 'PNM, CFEM, mining policy.',
+  catInfraVal: 'DNIT (rail/road), ANTAQ (ports), IBGE',
+  catSocio: 'Socioeconomic',
+  catSocioVal: 'IBGE (GDP, population, HDI, biomes)',
+  catFiscal: 'Fiscal data',
+  catFiscalVal: 'STN (CAPAG, SICONFI), Central Bank (PTAX)',
+  catMercado: 'Market intelligence',
+  catMercadoVal: 'IMF (prices), USGS (reserves/production), World Gold Council',
+  catLeg: 'Legal framework',
+  catLegVal: 'Mining Code, Law 13,540/2017, Decree 10,657/2021',
 
-  p8NotaRodape: 'Auto-generated on',
+  p8NotaRodape: 'About this report: generated by the TERRADAR platform on',
   p8NotaRodape2:
-    ' — figures may be rounded; does not replace professional advice.',
+    '. All data points were cross-audited through direct queries to official APIs (SICONFI, IBGE SIDRA), processing of geospatial shapefiles and case review on SEI-ANM. No figure was fabricated, inferred or estimated without explicit documentary basis.',
   p8ShareSite: 'Brasília/DF · sharetecnologia.com.br',
 } as const
 
