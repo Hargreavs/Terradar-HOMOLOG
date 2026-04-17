@@ -127,18 +127,43 @@ export function buildPage2_SumarioVital(
   const guRow = `${sanitizeReportText(data.gu_status)}${data.gu_pendencia && data.gu_pendencia !== 'N/D' ? ` <span class="tag ta" style="font-size:5.5pt;">${sanitizeReportText(data.gu_pendencia)}</span>` : ''}`
 
   // Status regulatório (TAH / Licença): rows renderizadas SEMPRE (ND fallback vem do builder
-  // via `nd()`). O badge "em dia" só aparece quando há status real (evita tag verde falsa em ND).
+  // via `nd()`). O badge "em dia" só aparece quando há status real E o pagamento é recente
+  // (<= 18 meses). TAH é anual; pagamentos antigos (ex: 2013) não devem receber tag verde.
   const tahStatusText = String(data.tah_status ?? '').trim()
   const tahHasReal =
     tahStatusText !== '' && tahStatusText !== t.nd && tahStatusText !== 'N/D' && tahStatusText !== 'N/A'
+
+  const tahRecente = (() => {
+    if (!tahHasReal) return false
+    const m = /(\d{2})\/(\d{2})\/(\d{4})/.exec(tahStatusText)
+    if (!m) return false
+    const dataPag = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]))
+    if (Number.isNaN(dataPag.getTime())) return false
+    const diffMeses = (Date.now() - dataPag.getTime()) / (1000 * 60 * 60 * 24 * 30.44)
+    return diffMeses <= 18
+  })()
+
   const tahCell = tahHasReal
-    ? `${sanitizeReportText(tahStatusText)} <span class="tag tg" style="font-size:5.5pt;">${sanitizeReportText(t.tahEmDia)}</span>`
+    ? (tahRecente
+        ? `${sanitizeReportText(tahStatusText)} <span class="tag tg" style="font-size:5.5pt;">${sanitizeReportText(t.tahEmDia)}</span>`
+        : sanitizeReportText(tahStatusText))
     : sanitizeReportText(tahStatusText === '' ? t.nd : tahStatusText)
 
   const licencaText = String(data.licenca_ambiental ?? '').trim()
   const licencaCell = sanitizeReportText(licencaText === '' ? t.nd : licencaText)
 
   const conservLabel = t.locale.startsWith('en') ? ' (conservative)' : ' (conservador)'
+
+  const pendenciasBlock =
+    data.pendencias && data.pendencias.length > 0
+      ? `<div style="margin-top:14px;padding:10px 12px;border:1px solid rgba(217,165,91,0.25);border-left:3px solid var(--amber);border-radius:4px;background:rgba(217,165,91,0.04);page-break-inside:avoid;">
+      <div style="font-family:var(--mono);font-size:6.5pt;letter-spacing:1.5px;text-transform:uppercase;color:var(--amber);margin-bottom:6px;">Pendências regulatórias ativas</div>
+      <ul style="margin:0;padding-left:16px;font-size:7.5pt;line-height:1.5;color:#444;">
+        ${data.pendencias.map((p) => `<li style="margin-bottom:3px;">${sanitizeReportText(p)}</li>`).join('')}
+      </ul>
+    </div>`
+      : ''
+
   const htmlResult = `<div class="page content breathe">
   <div class="ptag">TERRADAR ${sanitizeReportText(data.processo)}</div>
   <h1>${sanitizeReportText(t.p2Tag)}</h1>
@@ -200,6 +225,7 @@ export function buildPage2_SumarioVital(
       </table>
     </div>
   </div>
+  ${pendenciasBlock}
   <div class="src">${sanitizeReportText(t.fontesP2)} ${sanitizeReportText(data.data_relatorio)}</div>
   ${reportFooter(2, data)}
 </div>`
@@ -335,13 +361,13 @@ export function buildPage4_Mercado(
   <div class="kpis">
     <div class="kpi">
       <div class="kpi-lbl">${sanitizeReportText(t.precoSpot)}</div>
-      <div class="kpi-val gold">US$ ${fmtUsdOz(data.preco_oz_usd)}<span class="card-unit">/${sanitizeReportText(data.preco_unidade_label)}</span></div>
+      <div class="kpi-val gold">US$ ${fmtUsdOz(data.preco_oz_usd, t.locale)}<span class="card-unit">/${sanitizeReportText(data.preco_unidade_label)}</span></div>
       <div class="kpi-sub">${data.preco_sub_label != null ? sanitizeReportText(data.preco_sub_label) : sanitizeReportText(t.refSpot)}</div>
     </div>
     <div class="kpi">
       <div class="kpi-lbl">${sanitizeReportText(t.var12m)}</div>
       <div class="kpi-val ${data.var_12m_pct == null ? '' : data.var_12m_pct >= 0 ? 'green' : 'red'}">${data.var_12m_pct == null ? sanitizeReportText(t.nd) : fmtPct(data.var_12m_pct)}</div>
-      <div class="kpi-sub">${sanitizeReportText(t.refSpot)}</div>
+      <div class="kpi-sub"></div>
     </div>
     <div class="kpi">
       <div class="kpi-lbl">${sanitizeReportText(t.cresc5a)}</div>

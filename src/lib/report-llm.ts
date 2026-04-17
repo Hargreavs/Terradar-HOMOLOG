@@ -39,11 +39,12 @@ REGRAS ABSOLUTAS:
     - Inferir a classificação equivalente: nota final = pior nota entre os indicadores disponíveis.
     - Exemplo correto: "Os indicadores CAPAG parciais revelam endividamento controlado (16,13%, nota A), embora a poupança corrente (99,92%, nota C) sinalize fragilidade na capacidade de investimento municipal."
     - Exemplo ERRADO: "Ausência de dados CAPAG impede análise completa da capacidade de gestão municipal."
-11. REFERÊNCIAS CRUZADAS REGULATÓRIAS: Quando dados_sei contém informações regulatórias (portaria, licença ambiental, certidão, TAH, plano de lavra, plano de fechamento de mina):
-    - No bloco RISCO REGULATÓRIO: citar documentos específicos com datas (ex: "portaria de lavra publicada no DOU em 09/01/2017", "licença ambiental apresentada em 17/04/2025").
-    - No bloco LEITURA INTEGRADA: se todos os documentos estão em dia, usar "regularidade documental completa" em vez de "condicionada à regularização".
-    - No bloco SEGURANÇA DO INVESTIMENTO: citar os marcos regulatórios como evidência de conformidade.
-    - NUNCA dizer "pendências regulatórias" se portaria, licença e certidão estão vigentes.`
+11. REFERÊNCIAS CRUZADAS REGULATÓRIAS: Quando dados_sei ou data contém informações regulatórias (portaria, licença ambiental, certidão, TAH, plano de lavra):
+    - No bloco RISCO REGULATÓRIO: citar documentos específicos com datas. Quando existirem pendências ativas em \`Pendências regulatórias ATIVAS\`, listar cada uma com tipo e gravidade; NÃO omitir.
+    - No bloco LEITURA INTEGRADA: usar "regularidade documental completa" APENAS se TODAS estas condições forem verdadeiras: (a) nenhuma pendência ativa listada, (b) alvará vigente (não vencido), (c) GU vigente ou não requerida conforme fase, (d) TAH pago recentemente.
+    - Se qualquer das condições falhar, usar linguagem contextual: "regularidade parcial com pendências abertas", "alvará vencido há X anos", "GU vencida e não renovada", citando dados factuais sem inventar.
+    - NO BLOCO SEGURANÇA DO INVESTIMENTO: pendências ativas DEVEM aparecer como fator negativo de segurança.
+    - NUNCA dizer "regularidade documental completa" quando existem pendências listadas em \`Pendências regulatórias ATIVAS\`.`
 
 /** Prompt paralelo em EN (US), tom mineração institucional — mesmas regras de PI que o PT. */
 const SYSTEM_PROMPT_EN = `You are a mining intelligence analyst writing for institutional investors at TERRADAR.
@@ -87,8 +88,12 @@ ABSOLUTE RULES:
 9. PARTIAL CAPAG: When capag_nota is "n.d." but individual indicators exist, never say CAPAG is
    unavailable; cite indicators with their values and letter grades, and infer the equivalent rating
    from the worst letter.
-10. REGULATORY CROSS-REFERENCES: When dados_sei lists permits/licenses, cite the dates. If all are
-    current, say "full documentary regularity", not "pending regularization".`
+10. REGULATORY CROSS-REFERENCES: When regulatory data is provided:
+    - In REGULATORY RISK: cite documents with dates. When \`Pendências regulatórias ATIVAS\` lists any items, list each with type and severity; do NOT omit.
+    - In INTEGRATED READING: use "full documentary regularity" ONLY if ALL these hold: (a) no pending items listed, (b) permit currently valid, (c) GU valid or never required per phase, (d) TAH recently paid.
+    - If any condition fails, use contextual language: "partial regularity with open items", "permit expired N years ago", etc.
+    - Pending items MUST appear as a negative factor in INVESTMENT SECURITY.
+    - NEVER say "full documentary regularity" when there are items in \`Pendências regulatórias ATIVAS\`.`
 
 function systemPromptForLang(lang: ReportLang): string {
   return lang === 'en' ? SYSTEM_PROMPT_EN : SYSTEM_PROMPT
@@ -219,8 +224,12 @@ function buildPromptMercado(d: ReportData): string {
     ? `- Participação Brasil em reservas/produção mundiais: não há fonte oficial comparável publicada para esta substância (exibir no PDF apenas disclaimer, sem percentuais).`
     : `- Reservas Brasil: ${d.reservas_mundiais_pct}% do mundial
 - Produção Brasil: ${d.producao_mundial_pct}% do mundial`
+  const unidadeLabel = d.preco_unidade_label || 't'
+  const precoLinha = unidadeLabel === 'oz'
+    ? `- Preço: USD ${d.preco_oz_usd}/oz (R$ ${d.preco_g_brl}/g)`
+    : `- Preço: USD ${d.preco_oz_usd}/${unidadeLabel}`
   return `Dados de mercado da substância ${d.substancia_anm}:
-- Preço: USD ${d.preco_oz_usd}/oz (R$ ${d.preco_g_brl}/g)
+${precoLinha}
 - Tendência (rótulo master): ${d.mercado_tendencia}
 - Variação 12 meses: ${d.var_12m_pct}%
 - CAGR 5 anos: ${d.cagr_5a_pct}%
@@ -279,6 +288,11 @@ function buildPromptRisco(d: ReportData): string {
     .map((l) => `${l.tipo}: ${l.nome}, ${l.distancia_km} km, sobreposto: ${l.sobreposto}`)
     .join('\n')
 
+  const pendenciasContexto =
+    d.pendencias && d.pendencias.length > 0
+      ? `- Pendências regulatórias ATIVAS (lista literal, não inferir):\n${d.pendencias.map((p) => `  • ${p}`).join('\n')}`
+      : `- Pendências regulatórias ativas: nenhuma`
+
   return `REGRAS ESPECÍFICAS PARA RISCO:
 
 - RISCO GEOLÓGICO: Verificar data.fase antes de redigir.
@@ -311,6 +325,7 @@ Dados de risco do processo ${d.processo}:
 - Fase: ${d.fase}, Regime: ${d.regime}, Alvará: ${d.alvara_status} até ${d.alvara_validade}
 - GU: ${d.gu_status}
 - CAPAG: ${d.capag_nota}
+${pendenciasContexto}
 - Camadas territoriais:
 ${layersText}
 
@@ -330,6 +345,11 @@ REGRA: NUNCA mencionar pesos numéricos dos sub-scores.`
 function buildPromptOportunidade(d: ReportData): string {
   const ferroviaKm =
     d.infraestrutura.find((i) => i.tipo === 'Ferrovia')?.distancia_km ?? 'N/A'
+
+  const pendenciasContexto =
+    d.pendencias && d.pendencias.length > 0
+      ? `- Pendências regulatórias ATIVAS (lista literal):\n${d.pendencias.map((p) => `  • ${p}`).join('\n')}`
+      : `- Pendências regulatórias ativas: nenhuma`
 
   return `REGRAS ESPECÍFICAS PARA OPORTUNIDADE:
 
@@ -357,6 +377,7 @@ Dados de oportunidade do processo ${d.processo}:
 - Variação preço 12m: ${d.var_12m_pct}%
 - Ferrovia mais próxima: ${ferroviaKm} km
 - CAPAG: ${d.capag_nota}
+${pendenciasContexto}
 - Fase: ${d.fase}, Regime: ${d.regime}
 
 Gere JSON:

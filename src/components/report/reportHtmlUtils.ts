@@ -25,8 +25,8 @@ export function paragraphsFromLLM(text: string | null | undefined): string {
   return parts.map((p) => `<p>${p}</p>`).join('')
 }
 
-export function fmtUsdOz(n: number): string {
-  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+export function fmtUsdOz(n: number, locale: string): string {
+  return n.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 export function fmtPct(n: number): string {
