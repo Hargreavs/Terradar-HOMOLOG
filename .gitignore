@@ -25,3 +25,6 @@ dist-ssr
 
 # Export PDF working docs (session 19)
 Docs/export-pdf/
+
+# Ad-hoc extraction / SQL (não versionar)
+tmp/
