@@ -318,8 +318,7 @@ export function MapSearchBar({
         selecionarProcesso(alvo)
         requestFlyTo(alvo.lat, alvo.lng, 10, alvo.id)
         recordSearch(alvo.numero)
-        setLocal('')
-        setFiltro('searchQuery', '')
+        setFiltro('searchQuery', alvo.numero)
         setInputFocado(false)
         inputRef.current?.blur()
       } catch (err) {
@@ -351,6 +350,7 @@ export function MapSearchBar({
       selecionarProcesso(alvo)
       requestFlyTo(alvo.lat, alvo.lng, 10, alvo.id)
       recordSearch(alvo.numero)
+      setFiltro('searchQuery', alvo.numero)
       return
     }
     void buscarRemoto(local)
@@ -361,6 +361,7 @@ export function MapSearchBar({
     selecionarProcesso,
     buscarRemoto,
     recordSearch,
+    setFiltro,
   ])
 
   const escolherProcesso = useCallback(
@@ -398,8 +399,7 @@ export function MapSearchBar({
       selecionarProcesso(p)
       requestFlyTo(p.lat, p.lng, 10, p.id)
       recordSearch(p.numero)
-      setLocal('')
-      setFiltro('searchQuery', '')
+      setFiltro('searchQuery', p.numero)
       setInputFocado(false)
       setRemoteSuggestion(null)
       lastFetchedRef.current = null
@@ -440,10 +440,11 @@ export function MapSearchBar({
   const limparBusca = useCallback(() => {
     setLocal('')
     setFiltro('searchQuery', '')
+    selecionarProcesso(null)
     setHighlightIdx(-1)
     setFeedbackErro(null)
     inputRef.current?.focus()
-  }, [setFiltro])
+  }, [setFiltro, selecionarProcesso])
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (!listaVisivel) {

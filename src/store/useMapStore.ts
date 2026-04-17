@@ -6,7 +6,6 @@ import { buscarProcessoPorNumero } from '../lib/processoApi'
 import {
   type CamadaGeoId,
   defaultCamadasGeo,
-  mergeCamadasGeoPersisted,
 } from '../lib/mapCamadasGeo'
 import {
   UF_FILTRO_NENHUM,
@@ -401,20 +400,18 @@ export const useMapStore = create<MapStore>()(
     }),
     {
       name: 'terrae-filtros',
-      partialize: (s): { filtros: FiltrosPersistidos; camadasGeo: Record<CamadaGeoId, boolean> } => ({
+      partialize: (s): { filtros: FiltrosPersistidos } => ({
         filtros: {
           camadas: s.filtros.camadas,
           periodo: s.filtros.periodo,
           riskScoreMin: s.filtros.riskScoreMin,
           riskScoreMax: s.filtros.riskScoreMax,
         },
-        camadasGeo: s.camadasGeo,
       }),
       merge: (persistedState, currentState) => {
         const box = persistedState as
           | {
               filtros?: Partial<FiltrosState> & Partial<FiltrosPersistidos>
-              camadasGeo?: Partial<Record<CamadaGeoId, boolean>>
             }
           | undefined
         const s = box?.filtros
@@ -429,7 +426,7 @@ export const useMapStore = create<MapStore>()(
         return {
           ...currentState,
           filtros,
-          camadasGeo: mergeCamadasGeoPersisted(box?.camadasGeo),
+          camadasGeo: defaultCamadasGeo(),
           processos: loadProcessos(),
         }
       },

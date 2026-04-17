@@ -30,6 +30,17 @@ import {
   syncTerritorioSimuladoVisibility,
   territorioSimuladoLayersPresent,
 } from '../../lib/mapTerritorioSimulado'
+import {
+  addTerritorialLinesLayers,
+  applyFeatureHighlights,
+  clearFeatureHighlights,
+  fetchTerritorialLines,
+  getCamadasParaAtivar,
+  getHighlightedFeatureIds,
+  setTerritorialLinesVisibility,
+  updateTerritorialLinesData,
+} from '../../lib/mapTerritorialLines'
+import type { CamadaGeoId } from '../../lib/mapCamadasGeo'
 import { countFiltrosAlterados } from '../../lib/mapFiltrosCount'
 import {
   REGIME_BADGE_TOOLTIP,
@@ -1765,6 +1776,170 @@ export function MapView() {
     return unsub
   }, [mapLoaded])
 
+  // ============================================================================
+  // Territorial Lines — linhas tracejadas do processo até áreas sensíveis.
+  // ----------------------------------------------------------------------------
+  // Trigger: `processoSelecionado` no store (busca OU clique que abre drawer).
+  // Timing: flyTo termina → 200ms pausa → fetch RPC → ativa camadas necessárias
+  // → setData → fade-in 300ms.
+  // Fonte: RPC `fn_territorial_lines` (proxy `/api/map/territorial-lines`).
+  // Camadas auto-ativadas: TI/UC/Quilombola/Ferrovia/Rodovia/Porto (snapshot + restore).
+  // ============================================================================
+  useEffect(() => {
+    if (!mapLoaded) return
+    const map = mapRef.current
+    if (!map) return
+
+    addTerritorialLinesLayers(map, {
+      type: 'FeatureCollection',
+      features: [],
+    })
+
+    let abortCtrl: AbortController | null = null
+    let moveEndTimer: ReturnType<typeof setTimeout> | null = null
+    let highlightTimer: ReturnType<typeof setTimeout> | null = null
+    let currentProcessoId: string | null = null
+    let camadasSnapshot: Partial<Record<CamadaGeoId, boolean>> | null = null
+
+    const cleanup = () => {
+      abortCtrl?.abort()
+      abortCtrl = null
+      if (moveEndTimer) {
+        clearTimeout(moveEndTimer)
+        moveEndTimer = null
+      }
+      if (highlightTimer) {
+        clearTimeout(highlightTimer)
+        highlightTimer = null
+      }
+    }
+
+    const ativarCamadasNecessarias = (camadasParaAtivar: CamadaGeoId[]) => {
+      const state = useMapStore.getState()
+      const snapshot: Partial<Record<CamadaGeoId, boolean>> = {}
+      for (const id of camadasParaAtivar) {
+        snapshot[id] = state.camadasGeo[id]
+      }
+      camadasSnapshot = snapshot
+
+      for (const id of camadasParaAtivar) {
+        if (!state.camadasGeo[id]) {
+          state.toggleCamadaGeo(id)
+        }
+      }
+    }
+
+    const restaurarCamadasAnteriores = () => {
+      if (!camadasSnapshot) return
+      const state = useMapStore.getState()
+      for (const id of Object.keys(camadasSnapshot) as CamadaGeoId[]) {
+        const estavaAtiva = camadasSnapshot[id]
+        if (estavaAtiva === undefined) continue
+        if (!estavaAtiva && state.camadasGeo[id]) {
+          state.toggleCamadaGeo(id)
+        }
+      }
+      camadasSnapshot = null
+    }
+
+    const showLinesFor = async (proc: Processo) => {
+      cleanup()
+      clearFeatureHighlights(map)
+      restaurarCamadasAnteriores()
+      currentProcessoId = proc.id
+
+      abortCtrl = new AbortController()
+      const myCtrl = abortCtrl
+
+      const waitForMoveEnd = (): Promise<void> =>
+        new Promise((resolve) => {
+          if (!map.isMoving() && !map.isZooming()) {
+            resolve()
+            return
+          }
+          map.once('moveend', () => resolve())
+        })
+
+      await waitForMoveEnd()
+      if (myCtrl.signal.aborted) return
+
+      await new Promise<void>((resolve) => {
+        moveEndTimer = setTimeout(resolve, 200)
+      })
+      if (myCtrl.signal.aborted) return
+
+      try {
+        const fc = await fetchTerritorialLines(proc.numero)
+
+        if (myCtrl.signal.aborted) return
+        if (currentProcessoId !== proc.id) return
+
+        if (!fc || fc.features.length === 0) {
+          clearFeatureHighlights(map)
+          setTerritorialLinesVisibility(map, false)
+          return
+        }
+
+        const camadasNecessarias = getCamadasParaAtivar(fc)
+        ativarCamadasNecessarias(camadasNecessarias)
+
+        updateTerritorialLinesData(map, fc)
+        setTerritorialLinesVisibility(map, true)
+
+        highlightTimer = window.setTimeout(() => {
+          highlightTimer = null
+          if (myCtrl.signal.aborted) return
+          if (currentProcessoId !== proc.id) return
+          clearFeatureHighlights(map)
+          const highlights = getHighlightedFeatureIds(fc)
+          applyFeatureHighlights(map, highlights)
+        }, 400)
+      } catch (err) {
+        if (myCtrl.signal.aborted) return
+        console.warn('[TerritorialLines] Falha ao buscar linhas:', err)
+        clearFeatureHighlights(map)
+        setTerritorialLinesVisibility(map, false)
+      }
+    }
+
+    const hideLines = () => {
+      cleanup()
+      clearFeatureHighlights(map)
+      currentProcessoId = null
+      setTerritorialLinesVisibility(map, false)
+      restaurarCamadasAnteriores()
+    }
+
+    let prevProcessoId: string | null =
+      useMapStore.getState().processoSelecionado?.id ?? null
+
+    const unsub = useMapStore.subscribe((state) => {
+      const currentProc = state.processoSelecionado
+      const newId = currentProc?.id ?? null
+
+      if (newId === prevProcessoId) return
+      prevProcessoId = newId
+
+      if (currentProc) {
+        showLinesFor(currentProc)
+      } else {
+        hideLines()
+      }
+    })
+
+    const initialProc = useMapStore.getState().processoSelecionado
+    if (initialProc) {
+      showLinesFor(initialProc)
+    }
+
+    return () => {
+      unsub()
+      cleanup()
+      clearFeatureHighlights(map)
+      restaurarCamadasAnteriores()
+    }
+  }, [mapLoaded])
+
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapLoaded || !map.isStyleLoaded()) return
@@ -1982,6 +2157,7 @@ export function MapView() {
     if (!map.getSource(SRC_ID)) {
       map.addSource(SRC_ID, {
         type: 'geojson',
+        promoteId: 'id',
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         data: fc as any,
       })
@@ -1992,8 +2168,22 @@ export function MapView() {
           source: SRC_ID,
           paint: {
             'line-color': '#D9A55B',
-            'line-opacity': 0.85,
-            'line-width': ['interpolate', ['linear'], ['zoom'], 4, 0.5, 12, 2.5],
+            'line-opacity': [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              1.0,
+              ['==', ['feature-state', 'highlighted'], false],
+              0.3,
+              0.85,
+            ],
+            'line-width': [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              4.0,
+              ['==', ['feature-state', 'highlighted'], false],
+              ['interpolate', ['linear'], ['zoom'], 4, 0.5, 12, 2.5],
+              ['interpolate', ['linear'], ['zoom'], 4, 0.5, 12, 2.5],
+            ],
           },
         },
         'processos-fill',
@@ -2063,6 +2253,7 @@ export function MapView() {
     if (!map.getSource(SRC_ID)) {
       map.addSource(SRC_ID, {
         type: 'geojson',
+        promoteId: 'id',
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         data: fc as any,
       })
@@ -2073,7 +2264,14 @@ export function MapView() {
           source: SRC_ID,
           paint: {
             'fill-color': '#E07A5F',
-            'fill-opacity': 0.28,
+            'fill-opacity': [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              0.5,
+              ['==', ['feature-state', 'highlighted'], false],
+              0.15,
+              0.28,
+            ],
           },
         },
         'processos-fill',
@@ -2085,8 +2283,22 @@ export function MapView() {
           source: SRC_ID,
           paint: {
             'line-color': '#E07A5F',
-            'line-opacity': 0.9,
-            'line-width': 1.2,
+            'line-opacity': [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              1.0,
+              ['==', ['feature-state', 'highlighted'], false],
+              0.4,
+              0.9,
+            ],
+            'line-width': [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              2.0,
+              ['==', ['feature-state', 'highlighted'], false],
+              1.2,
+              1.2,
+            ],
           },
         },
         'processos-fill',
@@ -2128,6 +2340,7 @@ export function MapView() {
     if (!map.getSource(SRC_ID)) {
       map.addSource(SRC_ID, {
         type: 'geojson',
+        promoteId: 'id',
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         data: fc as any,
       })
@@ -2138,7 +2351,14 @@ export function MapView() {
           source: SRC_ID,
           paint: {
             'fill-color': '#C4915A',
-            'fill-opacity': 0.3,
+            'fill-opacity': [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              0.5,
+              ['==', ['feature-state', 'highlighted'], false],
+              0.15,
+              0.3,
+            ],
           },
         },
         'processos-fill',
@@ -2150,8 +2370,22 @@ export function MapView() {
           source: SRC_ID,
           paint: {
             'line-color': '#C4915A',
-            'line-opacity': 0.9,
-            'line-width': 1.2,
+            'line-opacity': [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              1.0,
+              ['==', ['feature-state', 'highlighted'], false],
+              0.4,
+              0.9,
+            ],
+            'line-width': [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              2.0,
+              ['==', ['feature-state', 'highlighted'], false],
+              1.0,
+              1.2,
+            ],
           },
         },
         'processos-fill',
@@ -2191,6 +2425,7 @@ export function MapView() {
     if (!map.getSource(SRC_ID)) {
       map.addSource(SRC_ID, {
         type: 'geojson',
+        promoteId: 'id',
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         data: fc as any,
       })
@@ -2201,7 +2436,14 @@ export function MapView() {
           source: SRC_ID,
           paint: {
             'fill-color': '#2F7A3E',
-            'fill-opacity': 0.32,
+            'fill-opacity': [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              0.5,
+              ['==', ['feature-state', 'highlighted'], false],
+              0.15,
+              0.32,
+            ],
           },
         },
         'processos-fill',
@@ -2213,8 +2455,22 @@ export function MapView() {
           source: SRC_ID,
           paint: {
             'line-color': '#2F7A3E',
-            'line-opacity': 0.9,
-            'line-width': 1.2,
+            'line-opacity': [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              1.0,
+              ['==', ['feature-state', 'highlighted'], false],
+              0.4,
+              0.9,
+            ],
+            'line-width': [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              2.0,
+              ['==', ['feature-state', 'highlighted'], false],
+              1.0,
+              1.2,
+            ],
           },
         },
         'processos-fill',
@@ -2244,6 +2500,7 @@ export function MapView() {
     if (!map.getSource(SRC_ID)) {
       map.addSource(SRC_ID, {
         type: 'geojson',
+        promoteId: 'id',
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         data: fc as any,
       })
@@ -2254,7 +2511,14 @@ export function MapView() {
           source: SRC_ID,
           paint: {
             'fill-color': '#5FAE6C',
-            'fill-opacity': 0.24,
+            'fill-opacity': [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              0.5,
+              ['==', ['feature-state', 'highlighted'], false],
+              0.15,
+              0.24,
+            ],
           },
         },
         'processos-fill',
@@ -2266,8 +2530,22 @@ export function MapView() {
           source: SRC_ID,
           paint: {
             'line-color': '#5FAE6C',
-            'line-opacity': 0.85,
-            'line-width': 1,
+            'line-opacity': [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              1.0,
+              ['==', ['feature-state', 'highlighted'], false],
+              0.4,
+              0.85,
+            ],
+            'line-width': [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              2.0,
+              ['==', ['feature-state', 'highlighted'], false],
+              1.0,
+              1.0,
+            ],
           },
         },
         'processos-fill',
@@ -2352,6 +2630,7 @@ export function MapView() {
     if (!map.getSource(SRC_ID)) {
       map.addSource(SRC_ID, {
         type: 'geojson',
+        promoteId: 'id',
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         data: fc as any,
       })
@@ -2376,8 +2655,22 @@ export function MapView() {
           source: SRC_ID,
           paint: {
             'line-color': '#B8B8B8',
-            'line-opacity': 0.95,
-            'line-width': ['interpolate', ['linear'], ['zoom'], 4, 0.6, 12, 2],
+            'line-opacity': [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              1.0,
+              ['==', ['feature-state', 'highlighted'], false],
+              0.3,
+              0.95,
+            ],
+            'line-width': [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              4.0,
+              ['==', ['feature-state', 'highlighted'], false],
+              ['interpolate', ['linear'], ['zoom'], 4, 0.6, 12, 2],
+              ['interpolate', ['linear'], ['zoom'], 4, 0.6, 12, 2],
+            ],
           },
         },
         'processos-fill',
@@ -2406,6 +2699,7 @@ export function MapView() {
     if (!map.getSource(SRC_ID)) {
       map.addSource(SRC_ID, {
         type: 'geojson',
+        promoteId: 'id',
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         data: fc as any,
       })
@@ -2415,10 +2709,24 @@ export function MapView() {
         source: SRC_ID,
         paint: {
           'circle-color': '#7EADD4',
-          'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 3, 12, 8],
+          'circle-radius': [
+            'case',
+            ['==', ['feature-state', 'highlighted'], true],
+            10.0,
+            ['==', ['feature-state', 'highlighted'], false],
+            ['interpolate', ['linear'], ['zoom'], 4, 3, 12, 8],
+            ['interpolate', ['linear'], ['zoom'], 4, 3, 12, 8],
+          ],
           'circle-stroke-color': '#FFFFFF',
           'circle-stroke-width': 1.5,
-          'circle-opacity': 0.95,
+          'circle-opacity': [
+            'case',
+            ['==', ['feature-state', 'highlighted'], true],
+            1.0,
+            ['==', ['feature-state', 'highlighted'], false],
+            0.3,
+            0.95,
+          ],
         },
       })
     } else {
