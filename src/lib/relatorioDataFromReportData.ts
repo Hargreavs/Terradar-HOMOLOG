@@ -682,7 +682,7 @@ export function relatorioDataFromReportData(
     data_protocolo: processo.data_protocolo,
     ano_protocolo: anoProt ?? processo.ano_protocolo,
     tempo_tramitacao_anos: tempoAnosDrawer,
-    pendencias: [],
+    pendencias: rd.pendencias ?? [],
     ultimo_despacho: textoUltimoDrawer,
     data_ultimo_despacho: dataUltimoDrawer || '',
     numero_sei:

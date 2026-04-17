@@ -57,6 +57,21 @@ export interface AnaliseTerritorial {
   aquiferos: { nome: string; tipo: string }[]
 }
 
+export interface Pendencia {
+  tipo: string
+  fase: string | null
+  categoria: string | null
+  data_origem: string | null
+  dias_em_aberto: number | null
+  prazo_original_dias: number | null
+  status: string | null
+  gravidade: string | null
+  risco_caducidade: boolean | null
+  descricao: string | null
+  evento_codigo: number | null
+  evento_descricao: string | null
+}
+
 export interface ProcessoCompleto {
   processo: Record<string, unknown>
   scores: Record<string, unknown> | null
@@ -74,6 +89,8 @@ export interface ProcessoCompleto {
   fiscal_municipio: Record<string, unknown> | null
   incentivos_uf: Record<string, unknown> | null
   linhas_bndes: Record<string, unknown>[] | null
+  /** Pendências ativas via RPC `fn_pendencias_processo`. Array vazio se sem match ou falha. */
+  pendencias: Pendencia[]
 }
 
 /**

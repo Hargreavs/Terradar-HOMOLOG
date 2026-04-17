@@ -83,6 +83,8 @@ export interface ReportData {
   nup_sei: string
   gu_status: string
   gu_pendencia: string
+  /** Strings formatadas das pendências ativas do processo (fn_pendencias_processo). */
+  pendencias: string[]
   tah_status: string
   licenca_ambiental: string
   protocolo_anos: number

@@ -6,6 +6,7 @@ import express from 'express'
 import mapRouter from './routes/map'
 import processosViewportRouter from './routes/processos-viewport'
 import { POST } from '../app/api/generate-report/route'
+import { supabase } from './supabase'
 import {
   computeScoresAuto,
   getCapag,
@@ -149,6 +150,7 @@ app.get('/api/processo', async (req, res) => {
       analise,
       fiscalMun,
       incentivosUfRaw,
+      pendenciasRpc,
     ] = await Promise.all([
       getScores(processoId),
       getTerritoralLayers(processoId),
@@ -159,6 +161,7 @@ app.get('/api/processo', async (req, res) => {
       getTerritoralAnalysis(numero),
       getFiscal(municipioIbge),
       getIncentivosUf(String(proc.uf ?? '')),
+      supabase.rpc('fn_pendencias_processo', { p_numero: numero }),
     ])
 
     const linhasBndesData = await getLinhasBndes(
@@ -226,6 +229,27 @@ app.get('/api/processo', async (req, res) => {
       console.error('[computeScoresAuto] Erro:', err)
     }
 
+    if (pendenciasRpc.error) {
+      console.error('[fn_pendencias_processo] Erro:', pendenciasRpc.error)
+    }
+    const pendenciasRaw = (pendenciasRpc.error
+      ? []
+      : (pendenciasRpc.data ?? [])) as Array<Record<string, unknown>>
+    const pendencias = pendenciasRaw.map((row) => ({
+      tipo: String(row.out_tipo ?? ''),
+      fase: (row.out_fase as string | null) ?? null,
+      categoria: (row.out_categoria as string | null) ?? null,
+      data_origem: (row.out_data_origem as string | null) ?? null,
+      dias_em_aberto: (row.out_dias_em_aberto as number | null) ?? null,
+      prazo_original_dias: (row.out_prazo_original_dias as number | null) ?? null,
+      status: (row.out_status as string | null) ?? null,
+      gravidade: (row.out_gravidade as string | null) ?? null,
+      risco_caducidade: (row.out_risco_caducidade as boolean | null) ?? null,
+      descricao: (row.out_descricao as string | null) ?? null,
+      evento_codigo: (row.out_evento_codigo as number | null) ?? null,
+      evento_descricao: (row.out_evento_descricao as string | null) ?? null,
+    }))
+
     res.json({
       ok: true,
       data: {
@@ -243,6 +267,7 @@ app.get('/api/processo', async (req, res) => {
         fiscal_municipio: fiscalMun,
         incentivos_uf: incentivosUfRaw,
         linhas_bndes: linhasBndesData,
+        pendencias,
       },
     })
   } catch (err: unknown) {

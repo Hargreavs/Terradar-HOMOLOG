@@ -784,6 +784,30 @@ export async function buildReportData(
   }
 
   const api = await fetchProcessoCompleto(numeroProcesso)
+  const pendenciasOrdenadas = [...(api.pendencias ?? [])].sort((a, b) => {
+    const pa = a.status === 'CRITICA' ? 0 : 1
+    const pb = b.status === 'CRITICA' ? 0 : 1
+    if (pa !== pb) return pa - pb
+    return (b.dias_em_aberto ?? 0) - (a.dias_em_aberto ?? 0)
+  })
+  const pendenciasFmt: string[] = pendenciasOrdenadas.map((pd) => {
+    const label = pd.status === 'CRITICA' ? 'CRITICA' : pd.gravidade
+    const cab = label ? `${pd.tipo} (${label})` : pd.tipo
+    const partes: string[] = [cab]
+    if (pd.data_origem) {
+      const d = new Date(pd.data_origem)
+      if (!Number.isNaN(d.getTime())) {
+        const dd = String(d.getUTCDate()).padStart(2, '0')
+        const mm = String(d.getUTCMonth() + 1).padStart(2, '0')
+        const yyyy = d.getUTCFullYear()
+        partes.push(`${dd}/${mm}/${yyyy}`)
+      }
+    }
+    if (pd.dias_em_aberto != null) {
+      partes.push(`${pd.dias_em_aberto} dias em aberto`)
+    }
+    return partes.join(' · ')
+  })
   const p = api.processo as Record<string, unknown>
   const scores = (api.scores ?? null) as Record<string, unknown> | null
   const fiscal = api.fiscal
@@ -1055,6 +1079,7 @@ export async function buildReportData(
     nup_sei: nd(String(p.nup_sei ?? p.numero_sei ?? '')),
     gu_status: nd(p.gu_status),
     gu_pendencia: nd(p.gu_pendencia),
+    pendencias: pendenciasFmt,
     tah_status: nd(p.tah_status),
     licenca_ambiental: nd(p.licenca_ambiental),
     protocolo_anos: (() => {
