@@ -1,4 +1,5 @@
 export type Regime =
+  | 'requerimento_pesquisa'
   | 'concessao_lavra'
   | 'autorizacao_pesquisa'
   | 'req_lavra'

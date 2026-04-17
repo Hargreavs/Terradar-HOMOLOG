@@ -25,6 +25,7 @@ export type PendingNavigation =
   | { type: 'substancia'; payload: string; timestamp: number }
 
 const REGIMES: Regime[] = [
+  'requerimento_pesquisa',
   'concessao_lavra',
   'autorizacao_pesquisa',
   'req_lavra',

@@ -1,6 +1,7 @@
 import type { FiltrosState, Regime } from '../types'
 
 const REGIMES_TODOS: Regime[] = [
+  'requerimento_pesquisa',
   'concessao_lavra',
   'autorizacao_pesquisa',
   'req_lavra',

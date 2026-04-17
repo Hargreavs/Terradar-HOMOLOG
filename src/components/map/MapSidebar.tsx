@@ -130,6 +130,7 @@ const REGIME_GROUPS: { title: string; regimes: Regime[] }[] = [
   {
     title: 'CONCESSÕES E AUTORIZAÇÕES',
     regimes: [
+      'requerimento_pesquisa',
       'concessao_lavra',
       'autorizacao_pesquisa',
       'req_lavra',

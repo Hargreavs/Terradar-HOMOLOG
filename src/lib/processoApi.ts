@@ -82,10 +82,11 @@ export interface ProcessoCompleto {
  */
 export async function buscarProcessoPorNumero(
   numero: string,
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown> | null> {
   try {
     const qs = new URLSearchParams({ numero: numero.trim() })
-    const res = await fetch(`/api/processo/busca?${qs}`)
+    const res = await fetch(`/api/processo/busca?${qs}`, { signal })
     const json = (await res.json()) as {
       ok?: boolean
       data?: Record<string, unknown>

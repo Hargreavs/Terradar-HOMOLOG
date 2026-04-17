@@ -4,6 +4,7 @@ import { pool } from '../pool'
 const router = Router()
 
 const REGIMES_VALIDOS = new Set([
+  'requerimento_pesquisa',
   'concessao_lavra',
   'autorizacao_pesquisa',
   'req_lavra',

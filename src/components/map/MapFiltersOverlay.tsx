@@ -5,6 +5,7 @@ export const MIN_Y = 1960
 export const MAX_Y = 2026
 
 export const REGIME_PILL_ORDER: Regime[] = [
+  'requerimento_pesquisa',
   'concessao_lavra',
   'autorizacao_pesquisa',
   'req_lavra',
@@ -18,6 +19,7 @@ export const REGIME_PILL_ORDER: Regime[] = [
 ]
 
 export const REGIME_PILL_COLORS: Record<Regime, string> = {
+  requerimento_pesquisa: '#8FB4E0',
   concessao_lavra: '#4A90B8',
   autorizacao_pesquisa: '#5B9A6F',
   req_lavra: '#8B7CB8',

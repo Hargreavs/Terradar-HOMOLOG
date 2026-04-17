@@ -229,6 +229,7 @@ const SUB_KEYS = [
 export const UFS_INTEL_DASHBOARD = ['MG', 'PA', 'GO', 'BA', 'AM', 'MT'] as const
 
 const REGIMES_ORDEM: Regime[] = [
+  'requerimento_pesquisa',
   'concessao_lavra',
   'autorizacao_pesquisa',
   'req_lavra',

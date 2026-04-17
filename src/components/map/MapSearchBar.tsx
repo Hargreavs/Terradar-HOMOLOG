@@ -31,6 +31,44 @@ function normalizarNumeroANM(input: string): string | null {
   return `${d.slice(0, 3)}.${d.slice(3, 6)}/${d.slice(6)}`
 }
 
+/**
+ * Máscara progressiva do número ANM (NNN.NNN/AAAA) aplicada ao input.
+ * Só formata quando a string inteira for composta apenas por dígitos,
+ * pontos ou barras — assim preserva buscas por endereço, cidade ou estado.
+ * Trunca em 10 dígitos (tamanho máximo do número ANM).
+ */
+function formatarInputANM(raw: string): string {
+  if (!raw) return raw
+  if (!/^[\d./]+$/.test(raw)) return raw
+  const d = raw.replace(/\D/g, '').slice(0, 10)
+  if (d.length <= 3) return d
+  if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`
+  return `${d.slice(0, 3)}.${d.slice(3, 6)}/${d.slice(6)}`
+}
+
+/**
+ * Mapeia posição do cursor do texto cru (o que o usuário digitou) para
+ * o texto formatado, preservando a quantidade de dígitos à esquerda.
+ */
+function mapCursorPos(
+  raw: string,
+  formatted: string,
+  rawCursor: number,
+): number {
+  let digitsBefore = 0
+  const lim = Math.min(rawCursor, raw.length)
+  for (let i = 0; i < lim; i++) {
+    if (/\d/.test(raw.charAt(i))) digitsBefore++
+  }
+  let out = 0
+  let seen = 0
+  while (out < formatted.length && seen < digitsBefore) {
+    if (/\d/.test(formatted.charAt(out))) seen++
+    out++
+  }
+  return out
+}
+
 function filtrarSugestoesPorNumero(
   processos: Processo[],
   local: string,
@@ -69,8 +107,15 @@ export function MapSearchBar({
     readSearchHistory(),
   )
   const [feedbackErro, setFeedbackErro] = useState<string | null>(null)
+  const [remoteSuggestion, setRemoteSuggestion] = useState<Processo | null>(
+    null,
+  )
+  const [preloadLoading, setPreloadLoading] = useState(false)
   const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const prevFiltrosCountRef = useRef<number | null>(null)
+  const preloadAbortRef = useRef<AbortController | null>(null)
+  const preloadDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastFetchedRef = useRef<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const listId = useRef(
     `map-search-sugestoes-${Math.random().toString(36).slice(2, 9)}`,
@@ -87,25 +132,36 @@ export function MapSearchBar({
     [processos, local],
   )
 
+  const temRemoteSuggestion = remoteSuggestion !== null
   const mostrarBuscaRemota =
-    sugestoes.length === 0 && normalizarNumeroANM(local) !== null
+    sugestoes.length === 0 &&
+    !temRemoteSuggestion &&
+    normalizarNumeroANM(local) !== null
 
   const showHistorico =
     inputFocado &&
     local.trim() === '' &&
     historico.length > 0 &&
-    !mostrarBuscaRemota
+    !mostrarBuscaRemota &&
+    !temRemoteSuggestion
 
   const listaItemsCount = useMemo(() => {
     if (showHistorico) return historico.length
-    if (sugestoes.length > 0) return sugestoes.length
-    if (mostrarBuscaRemota) return 1
-    return 0
-  }, [showHistorico, historico.length, sugestoes.length, mostrarBuscaRemota])
+    const remoteCount = temRemoteSuggestion ? 1 : 0
+    const fallbackCount = mostrarBuscaRemota ? 1 : 0
+    return sugestoes.length + remoteCount + fallbackCount
+  }, [
+    showHistorico,
+    historico.length,
+    sugestoes.length,
+    temRemoteSuggestion,
+    mostrarBuscaRemota,
+  ])
 
   const listaVisivel =
     inputFocado &&
     ((sugestoes.length > 0 && digitos(local).length >= 1) ||
+      temRemoteSuggestion ||
       mostrarBuscaRemota ||
       showHistorico)
 
@@ -152,9 +208,72 @@ export function MapSearchBar({
   useEffect(
     () => () => {
       if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current)
+      if (preloadDebounceRef.current) clearTimeout(preloadDebounceRef.current)
+      if (preloadAbortRef.current) preloadAbortRef.current.abort()
     },
     [],
   )
+
+  /**
+   * Pré-busca remota (debounced) quando o texto já é um número ANM completo
+   * e a lista local não traz resultado. Evita que o usuário precise clicar
+   * no item "Buscar no banco de dados" — o processo aparece como sugestão
+   * real com município/UF/regime assim que o fetch retorna.
+   */
+  useEffect(() => {
+    const canon = normalizarNumeroANM(local)
+    const cancelDebounce = () => {
+      if (preloadDebounceRef.current) {
+        clearTimeout(preloadDebounceRef.current)
+        preloadDebounceRef.current = null
+      }
+    }
+
+    if (!canon || sugestoes.length > 0) {
+      cancelDebounce()
+      if (preloadAbortRef.current) {
+        preloadAbortRef.current.abort()
+        preloadAbortRef.current = null
+      }
+      lastFetchedRef.current = null
+      if (remoteSuggestion !== null) setRemoteSuggestion(null)
+      if (preloadLoading) setPreloadLoading(false)
+      return
+    }
+
+    if (lastFetchedRef.current === canon) return
+
+    cancelDebounce()
+    preloadDebounceRef.current = window.setTimeout(() => {
+      if (preloadAbortRef.current) preloadAbortRef.current.abort()
+      const ac = new AbortController()
+      preloadAbortRef.current = ac
+      lastFetchedRef.current = canon
+      setPreloadLoading(true)
+      setRemoteSuggestion(null)
+
+      buscarProcessoPorNumero(canon, ac.signal)
+        .then((row) => {
+          if (ac.signal.aborted) return
+          if (!row) {
+            setRemoteSuggestion(null)
+            return
+          }
+          const novo = mapDbRowToMapProcesso(row)
+          setRemoteSuggestion(novo)
+        })
+        .catch(() => {
+          if (ac.signal.aborted) return
+          setRemoteSuggestion(null)
+        })
+        .finally(() => {
+          if (!ac.signal.aborted) setPreloadLoading(false)
+        })
+    }, 400)
+
+    return cancelDebounce
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [local, sugestoes.length])
 
   const onChange = (v: string) => {
     setLocal(v)
@@ -258,6 +377,44 @@ export function MapSearchBar({
     [setFiltro, requestFlyTo, selecionarProcesso, recordSearch],
   )
 
+  /**
+   * Injeta no store um processo já pré-buscado (evita segundo fetch)
+   * e faz fly-to, mesmo comportamento final de `buscarRemoto`.
+   */
+  const escolherRemoteSuggestion = useCallback(
+    (p: Processo) => {
+      const existente = useMapStore
+        .getState()
+        .processos.find((x) => x.numero === p.numero)
+      if (existente) {
+        useMapStore.setState((s) => ({
+          processos: s.processos.map((x) =>
+            x.numero === p.numero ? p : x,
+          ),
+        }))
+      } else {
+        adicionarProcesso(p)
+      }
+      selecionarProcesso(p)
+      requestFlyTo(p.lat, p.lng, 10, p.id)
+      recordSearch(p.numero)
+      setLocal('')
+      setFiltro('searchQuery', '')
+      setInputFocado(false)
+      setRemoteSuggestion(null)
+      lastFetchedRef.current = null
+      setHighlightIdx(-1)
+      inputRef.current?.blur()
+    },
+    [
+      adicionarProcesso,
+      selecionarProcesso,
+      requestFlyTo,
+      recordSearch,
+      setFiltro,
+    ],
+  )
+
   const escolherPorNumeroHistorico = useCallback(
     (texto: string) => {
       const norm = normalizarNumeroANM(texto)
@@ -324,16 +481,22 @@ export function MapSearchBar({
         escolherPorNumeroHistorico(pick)
         return
       }
+      if (sugestoes.length > 0) {
+        const pick =
+          highlightIdx >= 0 && highlightIdx < sugestoes.length
+            ? sugestoes[highlightIdx]
+            : sugestoes[0]
+        if (pick) escolherProcesso(pick)
+        return
+      }
+      if (remoteSuggestion) {
+        escolherRemoteSuggestion(remoteSuggestion)
+        return
+      }
       if (mostrarBuscaRemota) {
         void buscarRemoto(local)
         return
       }
-      const pick =
-        highlightIdx >= 0 && highlightIdx < sugestoes.length
-          ? sugestoes[highlightIdx]
-          : sugestoes[0]
-      if (pick) escolherProcesso(pick)
-      return
     }
     if (e.key === 'Escape') {
       e.preventDefault()
@@ -398,7 +561,27 @@ export function MapSearchBar({
             aria-controls={listaVisivel ? listId : undefined}
             aria-autocomplete="list"
             value={local}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(e) => {
+              const raw = e.target.value
+              const rawCursor = e.target.selectionStart ?? raw.length
+              const formatted = formatarInputANM(raw)
+              if (formatted === raw) {
+                onChange(raw)
+                return
+              }
+              onChange(formatted)
+              const newCursor = mapCursorPos(raw, formatted, rawCursor)
+              requestAnimationFrame(() => {
+                const el = inputRef.current
+                if (el && document.activeElement === el) {
+                  try {
+                    el.setSelectionRange(newCursor, newCursor)
+                  } catch {
+                    /* inputs de tipo não-selecionável ignoram */
+                  }
+                }
+              })
+            }}
             onFocus={() => setInputFocado(true)}
             onBlur={() => {
               window.setTimeout(() => setInputFocado(false), 180)
@@ -499,43 +682,97 @@ export function MapSearchBar({
                     </button>
                   </li>
                 ))}
+                {remoteSuggestion ? (
+                  (() => {
+                    const p = remoteSuggestion
+                    const idx = sugestoes.length
+                    return (
+                      <li key={`remote-${p.id}`} role="presentation">
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={idx === highlightIdx}
+                          title="Resultado do banco de dados"
+                          className={`flex w-full cursor-pointer items-center gap-2 border-0 px-3 py-2.5 text-left text-[14px] leading-normal transition-colors ${
+                            idx === highlightIdx
+                              ? 'bg-[#2C2C2A] text-[#F1EFE8]'
+                              : 'bg-transparent text-[#D3D1C7] hover:bg-[#252523]'
+                          }`}
+                          onMouseDown={(e) => {
+                            e.preventDefault()
+                            escolherRemoteSuggestion(p)
+                          }}
+                          onMouseEnter={() => setHighlightIdx(idx)}
+                        >
+                          <Search
+                            size={14}
+                            strokeWidth={2}
+                            className="shrink-0 text-[#EF9F27]"
+                            aria-hidden
+                          />
+                          <span className="shrink-0 font-semibold tabular-nums text-[#F1EFE8]">
+                            {p.numero}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-[13px] text-[#888780]">
+                            {p.municipio} · {p.uf}
+                          </span>
+                          <span
+                            className="max-w-[42%] shrink-0 truncate text-right text-[12px] font-medium"
+                            style={{
+                              color: REGIME_COLORS[p.regime] ?? '#888780',
+                            }}
+                            title={REGIME_LABELS[p.regime]}
+                          >
+                            {REGIME_LABELS[p.regime]}
+                          </span>
+                        </button>
+                      </li>
+                    )
+                  })()
+                ) : null}
               </>
             )}
             {mostrarBuscaRemota ? (
-              <li role="presentation">
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={highlightIdx === 0 && sugestoes.length === 0}
-                  disabled={buscandoRemoto}
-                  className={`flex w-full cursor-pointer items-center gap-2 border-0 px-3 py-2.5 text-left text-[14px] leading-normal transition-colors ${
-                    highlightIdx === 0 && sugestoes.length === 0
-                      ? 'bg-[#2C2C2A] text-[#F1EFE8]'
-                      : 'bg-transparent text-[#D3D1C7] hover:bg-[#252523]'
-                  } ${buscandoRemoto ? 'cursor-wait opacity-80' : ''}`}
-                  onMouseDown={(e) => {
-                    e.preventDefault()
-                    if (!buscandoRemoto) void buscarRemoto(local)
-                  }}
-                  onMouseEnter={() => setHighlightIdx(0)}
-                >
-                  {buscandoRemoto ? (
-                    <Loader2
-                      className="h-4 w-4 shrink-0 animate-spin text-[#EF9F27]"
-                      aria-hidden
-                    />
-                  ) : (
-                    <span className="shrink-0" aria-hidden>
-                      🔍
-                    </span>
-                  )}
-                  <span className="min-w-0 flex-1">
-                    {buscandoRemoto
-                      ? 'Buscando...'
-                      : `Buscar "${local.trim()}" no banco de dados`}
-                  </span>
-                </button>
-              </li>
+              (() => {
+                const fallbackIdx = sugestoes.length
+                const loading = buscandoRemoto || preloadLoading
+                return (
+                  <li role="presentation">
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={highlightIdx === fallbackIdx}
+                      disabled={loading}
+                      className={`flex w-full cursor-pointer items-center gap-2 border-0 px-3 py-2.5 text-left text-[14px] leading-normal transition-colors ${
+                        highlightIdx === fallbackIdx
+                          ? 'bg-[#2C2C2A] text-[#F1EFE8]'
+                          : 'bg-transparent text-[#D3D1C7] hover:bg-[#252523]'
+                      } ${loading ? 'cursor-wait opacity-80' : ''}`}
+                      onMouseDown={(e) => {
+                        e.preventDefault()
+                        if (!loading) void buscarRemoto(local)
+                      }}
+                      onMouseEnter={() => setHighlightIdx(fallbackIdx)}
+                    >
+                      {loading ? (
+                        <Loader2
+                          className="h-4 w-4 shrink-0 animate-spin text-[#EF9F27]"
+                          aria-hidden
+                        />
+                      ) : (
+                        <span className="shrink-0" aria-hidden>
+                          🔍
+                        </span>
+                      )}
+                      <span className="min-w-0 flex-1">
+                        {loading
+                          ? 'Buscando...'
+                          : `Buscar "${local.trim()}" no banco de dados`}
+                      </span>
+                    </button>
+                  </li>
+                )
+              })()
             ) : null}
           </ul>
         ) : null}

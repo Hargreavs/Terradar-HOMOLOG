@@ -48,7 +48,8 @@ function ringCentroidLngLat(ring: number[][]): [number, number] {
 }
 
 function coerceRegime(raw: string): Regime {
-  const r = raw.toLowerCase()
+  const r = raw.toLowerCase().trim()
+  if (r === 'requerimento_pesquisa') return 'requerimento_pesquisa'
   if (
     r.includes('garimp') ||
     (r.includes('lavra') && r.includes('garimpeira'))
@@ -56,9 +57,11 @@ function coerceRegime(raw: string): Regime {
     return 'lavra_garimpeira'
   }
   if (r.includes('concess') && r.includes('lavra')) return 'concessao_lavra'
-  if (r.includes('pesquis') || r.includes('reconhec')) {
-    return 'autorizacao_pesquisa'
+  if (r.includes('requer') && r.includes('pesquis')) {
+    return 'requerimento_pesquisa'
   }
+  if (r.includes('reconhec')) return 'requerimento_pesquisa'
+  if (r.includes('pesquis')) return 'autorizacao_pesquisa'
   if (r.includes('requer') && r.includes('lavra')) return 'req_lavra'
   if (r.includes('licenci')) return 'licenciamento'
   if (r.includes('registro') && r.includes('extra')) return 'registro_extracao'

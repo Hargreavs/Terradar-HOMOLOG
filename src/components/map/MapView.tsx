@@ -2913,6 +2913,7 @@ export function MapView() {
               <ul className="flex flex-col gap-2">
                 {(
                   [
+                    'requerimento_pesquisa',
                     'concessao_lavra',
                     'autorizacao_pesquisa',
                     'req_lavra',

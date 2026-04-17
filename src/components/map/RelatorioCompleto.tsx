@@ -643,10 +643,15 @@ const CFEM_BAR_TOOLTIP = {
 
 const CFEM_BAR_TOOLTIP_OPACITY_MS = 150
 
-const REGIMES_SEM_CFEM = ['autorizacao_pesquisa', 'req_lavra'] as const
+const REGIMES_SEM_CFEM = [
+  'requerimento_pesquisa',
+  'autorizacao_pesquisa',
+  'req_lavra',
+] as const
 
 function fraseFaseSemCfem(regime: Processo['regime']): string {
   const mapa: Partial<Record<Processo['regime'], string>> = {
+    requerimento_pesquisa: 'Requerimento de Pesquisa',
     autorizacao_pesquisa: 'Autorização de Pesquisa',
     req_lavra: 'Requerimento de Lavra',
   }
