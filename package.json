@@ -9,7 +9,10 @@
     "dev:all": "concurrently -n web,api -c blue,green \"npm run dev\" \"npm run dev:api\"",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "ingest:sedes": "tsx server/scripts/ingest-sedes-ibge.ts",
+    "fix:sedes-encoding": "tsx server/scripts/fix-sedes-encoding.ts",
+    "ingest:divida-siconfi-disabled": "tsx server/scripts/ingest-divida-consolidada-siconfi.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",
