@@ -7,11 +7,16 @@ import {
   useState,
 } from 'react'
 import { mapDbRowToMapProcesso } from '../../lib/mapProcessoFromDbRow'
-import { pushSearchHistory, readSearchHistory } from '../../lib/processoApi'
-import { buscarProcessoPorNumero } from '../../lib/processoApi'
+import {
+  buscarProcessoPorNumero,
+  buscarProcessos,
+  pushSearchHistory,
+  readSearchHistory,
+} from '../../lib/processoApi'
 import { REGIME_COLORS, REGIME_LABELS } from '../../lib/regimes'
 import { useMapStore } from '../../store/useMapStore'
 import type { Processo } from '../../types'
+import type { ResultadoBuscaItem } from '../../types/busca'
 
 const MAX_SUGESTOES = 20
 
@@ -39,11 +44,15 @@ function normalizarNumeroANM(input: string): string | null {
  */
 function formatarInputANM(raw: string): string {
   if (!raw) return raw
-  if (!/^[\d./]+$/.test(raw)) return raw
-  const d = raw.replace(/\D/g, '').slice(0, 10)
+  if (!/^[\d./\-]+$/.test(raw)) return raw
+  const d = raw.replace(/\D/g, '')
+  // >10 dígitos: CNPJ ou algo não-ANM. Desmascarar: retornar só dígitos
+  // (remove pontos/barras residuais de máscaras aplicadas em keystrokes
+  // anteriores quando o usuário ainda estava abaixo de 10 dígitos).
+  if (d.length > 10) return d
   if (d.length <= 3) return d
   if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`
-  return `${d.slice(0, 3)}.${d.slice(3, 6)}/${d.slice(6)}`
+  return `${d.slice(0, 3)}.${d.slice(3, 6)}/${d.slice(6, 10)}`
 }
 
 /**
@@ -88,6 +97,17 @@ type MapSearchBarProps = {
   filtrosAlteradosCount: number
   modoRisco: boolean
   onToggleModoRisco: () => void
+  /**
+   * Abre o drawer do relatório pra um processo resolvido pela busca
+   * remota (CNPJ/titular). Necessário porque processos sem geom não têm
+   * polígono pra clicar no mapa → não há popup → sem este callback não
+   * existiria caminho pra abrir o drawer. Injetado pelo MapView para
+   * reusar a mesma lógica de enrichment do caminho popup→relatório.
+   */
+  onAbrirRelatorio?: (
+    p: Processo,
+    aba?: 'processo' | 'risco',
+  ) => Promise<void>
 }
 
 export function MapSearchBar({
@@ -96,6 +116,7 @@ export function MapSearchBar({
   filtrosAlteradosCount,
   modoRisco,
   onToggleModoRisco,
+  onAbrirRelatorio,
 }: MapSearchBarProps) {
   const searchQuery = useMapStore((s) => s.filtros.searchQuery)
   const [local, setLocal] = useState(searchQuery)
@@ -107,9 +128,13 @@ export function MapSearchBar({
     readSearchHistory(),
   )
   const [feedbackErro, setFeedbackErro] = useState<string | null>(null)
-  const [remoteSuggestion, setRemoteSuggestion] = useState<Processo | null>(
-    null,
-  )
+  const [remoteResultados, setRemoteResultados] = useState<
+    ResultadoBuscaItem[]
+  >([])
+  const [remoteTotal, setRemoteTotal] = useState(0)
+  const [remoteTipo, setRemoteTipo] = useState<
+    'numero' | 'cnpj' | 'titular' | 'vazio'
+  >('vazio')
   const [preloadLoading, setPreloadLoading] = useState(false)
   const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const prevFiltrosCountRef = useRef<number | null>(null)
@@ -132,36 +157,29 @@ export function MapSearchBar({
     [processos, local],
   )
 
-  const temRemoteSuggestion = remoteSuggestion !== null
   const mostrarBuscaRemota =
     sugestoes.length === 0 &&
-    !temRemoteSuggestion &&
-    normalizarNumeroANM(local) !== null
+    remoteResultados.length === 0 &&
+    normalizarNumeroANM(local) !== null &&
+    !preloadLoading
 
   const showHistorico =
     inputFocado &&
     local.trim() === '' &&
     historico.length > 0 &&
     !mostrarBuscaRemota &&
-    !temRemoteSuggestion
+    remoteResultados.length === 0
 
-  const listaItemsCount = useMemo(() => {
-    if (showHistorico) return historico.length
-    const remoteCount = temRemoteSuggestion ? 1 : 0
-    const fallbackCount = mostrarBuscaRemota ? 1 : 0
-    return sugestoes.length + remoteCount + fallbackCount
-  }, [
-    showHistorico,
-    historico.length,
-    sugestoes.length,
-    temRemoteSuggestion,
-    mostrarBuscaRemota,
-  ])
+  const listaItemsCount = showHistorico
+    ? historico.length
+    : sugestoes.length +
+      remoteResultados.length +
+      (mostrarBuscaRemota ? 1 : 0)
 
   const listaVisivel =
     inputFocado &&
     ((sugestoes.length > 0 && digitos(local).length >= 1) ||
-      temRemoteSuggestion ||
+      remoteResultados.length > 0 ||
       mostrarBuscaRemota ||
       showHistorico)
 
@@ -215,64 +233,65 @@ export function MapSearchBar({
   )
 
   /**
-   * Pré-busca remota (debounced) quando o texto já é um número ANM completo
-   * e a lista local não traz resultado. Evita que o usuário precise clicar
-   * no item "Buscar no banco de dados" — o processo aparece como sugestão
-   * real com município/UF/regime assim que o fetch retorna.
+   * Pré-busca remota multi-canal (número / CNPJ / titular) via /api/processo/search.
+   * Aborta e debounça; só roda se input >= 2 chars e não há sugestões locais.
    */
   useEffect(() => {
-    const canon = normalizarNumeroANM(local)
-    const cancelDebounce = () => {
-      if (preloadDebounceRef.current) {
-        clearTimeout(preloadDebounceRef.current)
-        preloadDebounceRef.current = null
-      }
-    }
+    if (preloadAbortRef.current) preloadAbortRef.current.abort()
+    if (preloadDebounceRef.current) clearTimeout(preloadDebounceRef.current)
 
-    if (!canon || sugestoes.length > 0) {
-      cancelDebounce()
-      if (preloadAbortRef.current) {
-        preloadAbortRef.current.abort()
-        preloadAbortRef.current = null
-      }
-      lastFetchedRef.current = null
-      if (remoteSuggestion !== null) setRemoteSuggestion(null)
-      if (preloadLoading) setPreloadLoading(false)
+    const q = local.trim()
+
+    if (q.length < 2) {
+      setRemoteResultados([])
+      setRemoteTotal(0)
+      setRemoteTipo('vazio')
+      setPreloadLoading(false)
       return
     }
 
-    if (lastFetchedRef.current === canon) return
+    if (sugestoes.length > 0) {
+      setRemoteResultados([])
+      setRemoteTotal(0)
+      setRemoteTipo('vazio')
+      setPreloadLoading(false)
+      return
+    }
 
-    cancelDebounce()
-    preloadDebounceRef.current = window.setTimeout(() => {
-      if (preloadAbortRef.current) preloadAbortRef.current.abort()
-      const ac = new AbortController()
-      preloadAbortRef.current = ac
-      lastFetchedRef.current = canon
+    preloadDebounceRef.current = window.setTimeout(async () => {
+      const controller = new AbortController()
+      preloadAbortRef.current = controller
       setPreloadLoading(true)
-      setRemoteSuggestion(null)
 
-      buscarProcessoPorNumero(canon, ac.signal)
-        .then((row) => {
-          if (ac.signal.aborted) return
-          if (!row) {
-            setRemoteSuggestion(null)
-            return
-          }
-          const novo = mapDbRowToMapProcesso(row)
-          setRemoteSuggestion(novo)
-        })
-        .catch(() => {
-          if (ac.signal.aborted) return
-          setRemoteSuggestion(null)
-        })
-        .finally(() => {
-          if (!ac.signal.aborted) setPreloadLoading(false)
-        })
-    }, 400)
+      try {
+        const resp = await buscarProcessos(q, controller.signal)
+        if (controller.signal.aborted) return
 
-    return cancelDebounce
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        if (resp.ok) {
+          setRemoteResultados(resp.data)
+          setRemoteTotal(resp.total)
+          setRemoteTipo(resp.tipo)
+        } else {
+          setRemoteResultados([])
+          setRemoteTotal(0)
+          setRemoteTipo('vazio')
+        }
+      } catch (e) {
+        if (!(e instanceof Error) || e.name !== 'AbortError') {
+          console.error('[MapSearchBar] Erro na busca remota:', e)
+        }
+        setRemoteResultados([])
+        setRemoteTotal(0)
+        setRemoteTipo('vazio')
+      } finally {
+        if (!controller.signal.aborted) setPreloadLoading(false)
+      }
+    }, 350)
+
+    return () => {
+      if (preloadDebounceRef.current) clearTimeout(preloadDebounceRef.current)
+      if (preloadAbortRef.current) preloadAbortRef.current.abort()
+    }
   }, [local, sugestoes.length])
 
   const onChange = (v: string) => {
@@ -296,9 +315,15 @@ export function MapSearchBar({
           showFeedback('Processo não encontrado no banco')
           return
         }
-        const novo = mapDbRowToMapProcesso(resultado)
+        // Paridade com `escolherResultadoRemoto`: aceitar processos sem geom
+        // (zumbis + sem-geom não-zumbi). Sem isso, clicar num número do
+        // histórico que é zumbi dispara "Processo sem geometria mapeada"
+        // e o drawer nunca abre.
+        const novo = mapDbRowToMapProcesso(resultado as Record<string, unknown>, {
+          permitirSemGeom: true,
+        })
         if (!novo) {
-          showFeedback('Processo sem geometria mapeada')
+          showFeedback('Processo inválido')
           return
         }
         const existente = useMapStore
@@ -316,7 +341,20 @@ export function MapSearchBar({
           adicionarProcesso(novo)
         }
         selecionarProcesso(alvo)
-        requestFlyTo(alvo.lat, alvo.lng, 10, alvo.id)
+        // Fly-to apenas quando há geom real (permitirSemGeom produz NaN
+        // como sentinel). Guard com Number.isFinite para não crashar o
+        // Mapbox.
+        if (Number.isFinite(alvo.lat) && Number.isFinite(alvo.lng)) {
+          requestFlyTo(alvo.lat, alvo.lng, 10, alvo.id)
+        }
+        // Abre drawer com enrichment via callback do MapView (paridade com
+        // `escolherResultadoRemoto`). Fallback defensivo: se callback não foi
+        // injetada, abre só o drawer (sem enrichment).
+        if (onAbrirRelatorio) {
+          void onAbrirRelatorio(alvo, 'processo')
+        } else {
+          useMapStore.getState().setRelatorioDrawerAberto(true)
+        }
         recordSearch(alvo.numero)
         setFiltro('searchQuery', alvo.numero)
         setInputFocado(false)
@@ -335,6 +373,7 @@ export function MapSearchBar({
       setFiltro,
       showFeedback,
       recordSearch,
+      onAbrirRelatorio,
     ],
   )
 
@@ -347,8 +386,25 @@ export function MapSearchBar({
         digitos(p.numero) === digitos(norm),
     )
     if (alvo) {
+      const semGeomLocal =
+        !Number.isFinite(alvo.lat) || !Number.isFinite(alvo.lng)
       selecionarProcesso(alvo)
-      requestFlyTo(alvo.lat, alvo.lng, 10, alvo.id)
+      if (semGeomLocal) {
+        // Zumbis/sem-geom já em memória não têm polígono no mapa, então o
+        // drawer nunca abre "naturalmente" via popup. Precisamos abrir
+        // diretamente via callback do MapView (mesma rota usada por
+        // `buscarRemoto` / `escolherPorNumeroHistorico`). Sem esse guard,
+        // reabrir a mesma pesquisa após fechar com o X deixa o drawer
+        // fechado — o processo já está em `processos`, então o caminho
+        // remoto não é invocado.
+        if (onAbrirRelatorio) {
+          void onAbrirRelatorio(alvo, 'processo')
+        } else {
+          useMapStore.getState().setRelatorioDrawerAberto(true)
+        }
+      } else {
+        requestFlyTo(alvo.lat, alvo.lng, 10, alvo.id)
+      }
       recordSearch(alvo.numero)
       setFiltro('searchQuery', alvo.numero)
       return
@@ -362,6 +418,7 @@ export function MapSearchBar({
     buscarRemoto,
     recordSearch,
     setFiltro,
+    onAbrirRelatorio,
   ])
 
   const escolherProcesso = useCallback(
@@ -379,11 +436,41 @@ export function MapSearchBar({
   )
 
   /**
-   * Injeta no store um processo já pré-buscado (evita segundo fetch)
-   * e faz fly-to, mesmo comportamento final de `buscarRemoto`.
+   * Resolve um item do `remoteResultados[]` (CNPJ/titular/número) buscando
+   * o processo completo (com geom) pelo número, injetando no store e dando
+   * fly-to. Mesma sequência final que `buscarRemoto`.
    */
-  const escolherRemoteSuggestion = useCallback(
-    (p: Processo) => {
+  async function escolherResultadoRemoto(
+    item: ResultadoBuscaItem,
+  ): Promise<void> {
+    setPreloadLoading(true)
+    try {
+      const dados = await buscarProcessoPorNumero(item.numero)
+      if (!dados) {
+        setFeedbackErro(`Processo ${item.numero} não encontrado`)
+        if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current)
+        feedbackTimerRef.current = window.setTimeout(
+          () => setFeedbackErro(null),
+          3000,
+        )
+        return
+      }
+
+      // Busca remota aceita processos sem geom (badge "sem mapa"): drawer abre
+      // com dados cadastrais/regulatórios/fiscais, sem fly-to/popup no mapa.
+      const p = mapDbRowToMapProcesso(dados as Record<string, unknown>, {
+        permitirSemGeom: true,
+      })
+      if (!p) {
+        setFeedbackErro(`Processo ${item.numero} inválido`)
+        if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current)
+        feedbackTimerRef.current = window.setTimeout(
+          () => setFeedbackErro(null),
+          3000,
+        )
+        return
+      }
+
       const existente = useMapStore
         .getState()
         .processos.find((x) => x.numero === p.numero)
@@ -397,23 +484,42 @@ export function MapSearchBar({
         adicionarProcesso(p)
       }
       selecionarProcesso(p)
-      requestFlyTo(p.lat, p.lng, 10, p.id)
+      // Fly-to apenas se há geometria. Sem geom: drawer abre, mapa não move.
+      // Guard com `Number.isFinite` porque `permitirSemGeom` produz NaN
+      // como sentinel em lat/lng (compat com type `Processo.lat: number`).
+      if (item.tem_geom && Number.isFinite(p.lat) && Number.isFinite(p.lng)) {
+        requestFlyTo(p.lat, p.lng, 10, p.id)
+      }
+      // Abre drawer com enrichment via callback do MapView (paridade com
+      // caminho popup→"Ver relatório completo"). Fallback defensivo: se
+      // callback não foi injetada, abre só o drawer (sem enrichment).
+      if (onAbrirRelatorio) {
+        void onAbrirRelatorio(p, 'processo')
+      } else {
+        useMapStore.getState().setRelatorioDrawerAberto(true)
+      }
       recordSearch(p.numero)
       setFiltro('searchQuery', p.numero)
+      setLocal(p.numero)
+      setRemoteResultados([])
+      setRemoteTotal(0)
+      setRemoteTipo('vazio')
       setInputFocado(false)
-      setRemoteSuggestion(null)
-      lastFetchedRef.current = null
       setHighlightIdx(-1)
+      lastFetchedRef.current = null
       inputRef.current?.blur()
-    },
-    [
-      adicionarProcesso,
-      selecionarProcesso,
-      requestFlyTo,
-      recordSearch,
-      setFiltro,
-    ],
-  )
+    } catch (e) {
+      console.error('[escolherResultadoRemoto] Erro:', e)
+      setFeedbackErro('Erro ao carregar processo')
+      if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current)
+      feedbackTimerRef.current = window.setTimeout(
+        () => setFeedbackErro(null),
+        3000,
+      )
+    } finally {
+      setPreloadLoading(false)
+    }
+  }
 
   const escolherPorNumeroHistorico = useCallback(
     (texto: string) => {
@@ -429,6 +535,17 @@ export function MapSearchBar({
         return digitos(p.numero) === digitos(texto)
       })
       if (alvo) {
+        // Processos zumbi/sem-geom não podem usar o caminho `escolherProcesso`
+        // (só faz fly-to + select, não abre drawer). Como não têm polígono/
+        // popup no mapa, precisam abrir drawer diretamente. Roteia pelo
+        // mesmo caminho de `buscarRemoto` para reutilizar a sequência
+        // completa (enrichment via onAbrirRelatorio).
+        const semGeomLocal =
+          !Number.isFinite(alvo.lat) || !Number.isFinite(alvo.lng)
+        if (semGeomLocal) {
+          void buscarRemoto(texto)
+          return
+        }
         escolherProcesso(alvo)
         return
       }
@@ -482,7 +599,7 @@ export function MapSearchBar({
         escolherPorNumeroHistorico(pick)
         return
       }
-      if (sugestoes.length > 0) {
+      if (sugestoes.length > 0 && highlightIdx < sugestoes.length) {
         const pick =
           highlightIdx >= 0 && highlightIdx < sugestoes.length
             ? sugestoes[highlightIdx]
@@ -490,8 +607,18 @@ export function MapSearchBar({
         if (pick) escolherProcesso(pick)
         return
       }
-      if (remoteSuggestion) {
-        escolherRemoteSuggestion(remoteSuggestion)
+      const localIdxLimit = sugestoes.length
+      if (
+        highlightIdx >= localIdxLimit &&
+        highlightIdx < localIdxLimit + remoteResultados.length
+      ) {
+        void escolherResultadoRemoto(
+          remoteResultados[highlightIdx - localIdxLimit],
+        )
+        return
+      }
+      if (remoteResultados.length > 0) {
+        void escolherResultadoRemoto(remoteResultados[0])
         return
       }
       if (mostrarBuscaRemota) {
@@ -683,53 +810,85 @@ export function MapSearchBar({
                     </button>
                   </li>
                 ))}
-                {remoteSuggestion ? (
-                  (() => {
-                    const p = remoteSuggestion
-                    const idx = sugestoes.length
-                    return (
-                      <li key={`remote-${p.id}`} role="presentation">
-                        <button
-                          type="button"
-                          role="option"
-                          aria-selected={idx === highlightIdx}
-                          title="Resultado do banco de dados"
-                          className={`flex w-full cursor-pointer items-center gap-2 border-0 px-3 py-2.5 text-left text-[14px] leading-normal transition-colors ${
-                            idx === highlightIdx
-                              ? 'bg-[#2C2C2A] text-[#F1EFE8]'
-                              : 'bg-transparent text-[#D3D1C7] hover:bg-[#252523]'
-                          }`}
-                          onMouseDown={(e) => {
-                            e.preventDefault()
-                            escolherRemoteSuggestion(p)
-                          }}
-                          onMouseEnter={() => setHighlightIdx(idx)}
-                        >
-                          <Search
-                            size={14}
-                            strokeWidth={2}
-                            className="shrink-0 text-[#EF9F27]"
-                            aria-hidden
-                          />
-                          <span className="shrink-0 font-semibold tabular-nums text-[#F1EFE8]">
-                            {p.numero}
-                          </span>
-                          <span className="min-w-0 flex-1 truncate text-[13px] text-[#888780]">
-                            {p.municipio} · {p.uf}
-                          </span>
-                          <span
-                            className="max-w-[42%] shrink-0 truncate text-right text-[12px] font-medium"
-                            style={{
-                              color: REGIME_COLORS[p.regime] ?? '#888780',
-                            }}
-                            title={REGIME_LABELS[p.regime]}
-                          >
-                            {REGIME_LABELS[p.regime]}
-                          </span>
-                        </button>
+                {remoteResultados.length > 0 ? (
+                  <>
+                    {remoteTotal > remoteResultados.length ? (
+                      <li
+                        role="presentation"
+                        className="pointer-events-none px-3 py-1.5 text-[11px] uppercase tracking-wide text-[#5F5E5A]"
+                      >
+                        {remoteTipo === 'cnpj'
+                          ? 'Por CNPJ'
+                          : remoteTipo === 'titular'
+                            ? 'Por titular'
+                            : 'Resultados'}
+                        {' · '}
+                        {remoteTotal} resultados · mostrando{' '}
+                        {remoteResultados.length}
                       </li>
-                    )
-                  })()
+                    ) : null}
+                    {remoteResultados.map((item, idx) => {
+                      const listIdx = sugestoes.length + idx
+                      const isHighlighted = listIdx === highlightIdx
+                      const local = [item.municipio, item.uf]
+                        .filter(Boolean)
+                        .join(' · ')
+                      return (
+                        <li
+                          key={`remote-${item.id}`}
+                          role="presentation"
+                        >
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={isHighlighted}
+                            title={item.titular ?? item.numero}
+                            className={`flex w-full cursor-pointer flex-col items-start gap-0.5 border-0 px-3 py-2 text-left leading-normal transition-colors ${
+                              isHighlighted
+                                ? 'bg-[#2C2C2A] text-[#F1EFE8]'
+                                : 'bg-transparent text-[#D3D1C7] hover:bg-[#252523]'
+                            }`}
+                            onMouseDown={(e) => {
+                              e.preventDefault()
+                              void escolherResultadoRemoto(item)
+                            }}
+                            onMouseEnter={() => setHighlightIdx(listIdx)}
+                          >
+                            <div className="flex w-full items-center gap-2">
+                              <Search
+                                size={14}
+                                strokeWidth={2}
+                                className="shrink-0 text-[#EF9F27]"
+                                aria-hidden
+                              />
+                              <span className="shrink-0 font-semibold tabular-nums text-[#F1EFE8]">
+                                {item.numero}
+                              </span>
+                              {!item.tem_geom ? (
+                                <span
+                                  title="Processo sem georreferenciamento SIGMINE"
+                                  className="shrink-0 rounded px-1.5 py-[1px] text-[10px] font-medium tracking-wide text-[#888780]"
+                                  style={{
+                                    background: 'rgba(136, 135, 128, 0.15)',
+                                    letterSpacing: 0.2,
+                                  }}
+                                >
+                                  sem mapa
+                                </span>
+                              ) : null}
+                              <span className="min-w-0 flex-1 truncate text-[13px] text-[#D3D1C7]">
+                                {item.titular ?? '—'}
+                              </span>
+                            </div>
+                            <div className="w-full pl-6 text-[12px] text-[#888780]">
+                              {local}
+                              {item.substancia ? ` · ${item.substancia}` : ''}
+                            </div>
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </>
                 ) : null}
               </>
             )}

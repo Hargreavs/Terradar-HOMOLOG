@@ -1,20 +1,16 @@
 /**
- * NOTA (19/04/2026): endpoint SICONFI RGF Data Lake retorna count:0 pra todos
- * os entes/períodos testados. Investigação registrada em tmp/debug-rgf-sp.log.
- * DCA consultado anteriormente não expõe Dívida Consolidada LRF (só Dívida Ativa,
- * Amortização, Encargos). Script mantido dormant até reabilitação da carga RGF
- * ou definição de fonte alternativa (CKAN Tesouro Transparente, scraping manual,
- * upload CSV).
+ * DESATIVADO (19/04/2026): endpoint SICONFI RGF Data Lake retorna count:0 pra
+ * qualquer combinação de parâmetros. Investigação registrada em
+ * tmp/debug-rgf-sp.log. Migrado para ingest via dataset CKAN CAPAG Municípios
+ * (ver ingest-divida-consolidada-capag.ts). Este script é mantido como
+ * referência histórica e pode ser reativado se o Data Lake for corrigido.
  *
  * Backfill apenas de fiscal_municipios.divida_consolidada via SICONFI DCA
  * (mesma lógica que ingest-fiscal / utils/siconfi-dca-divida).
  * Não altera passivo_nao_circulante nem outras colunas.
  *
- * Uso (quando reativar):
+ * Uso histórico (não executar — usar CAPAG):
  *   npx tsx server/scripts/ingest-divida-consolidada-siconfi.ts --exercicio 2024
- *   npx tsx server/scripts/ingest-divida-consolidada-siconfi.ts --exercicio 2024 --only-null
- *   npx tsx server/scripts/ingest-divida-consolidada-siconfi.ts --ibge 2932002 --exercicio 2024
- *   npx tsx server/scripts/ingest-divida-consolidada-siconfi.ts --dry-run --limit 5
  */
 
 import fs from 'node:fs'
@@ -44,6 +40,10 @@ function logLine(path: string, line: string): void {
 }
 
 async function main(): Promise<void> {
+  throw new Error(
+    'DESATIVADO. Use ingest-divida-consolidada-capag.ts em vez disso.',
+  )
+
   const exercicio = Number(getArg('--exercicio') ?? '2024')
   const onlyNull = process.argv.includes('--only-null')
   const dryRun = process.argv.includes('--dry-run')

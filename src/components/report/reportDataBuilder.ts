@@ -21,18 +21,42 @@ import {
 } from '../../lib/processoApi'
 import {
   capagIndicadorResolvido,
+  fonteDividaExibicao,
   formatDividaConsolidadaExibicao,
   normalizeCapagNotaDisplay,
 } from '../../lib/fiscalDisplay'
+import {
+  formatGuStatus,
+  formatTahUltimoPagamento,
+} from '../../lib/formatters/regulatorio'
 import { piorIndicadorCapag } from '../../lib/capagPiorIndicador'
 import type { ReportLang } from '../../lib/reportLang'
 import { getCfemProcessoStatus } from '../../lib/cfemProcessoStatus'
+import {
+  detectarBloqueadorConstitucional,
+} from '../../lib/processoStatus'
 import { getReportStrings } from '../report/reportL10n'
 
 /** 1 t métrica = 32.151 oz troy (preço master em USD/t → exibição em oz). */
 const OZ_POR_TONELADA = 32_151
 /** Premissa TERRADAR: volume de massa por ha para val in-situ (30 m × 2,5 t/m³ × 10.000 m²). */
 const TONELADAS_POR_HA = 750_000
+
+/**
+ * Propaga um valor numérico de score mantendo `null` quando ausente.
+ *
+ * Substitui o padrão `Number(x ?? 0) || 0` que convertia `null` silenciosamente
+ * em `0` (bug identificado em 2026-04-21 — causava invenção de Risk Score 0
+ * em processos sem `scores` no banco; combinado com o cache Zustand do frontend
+ * isso fez a UI exibir valores residuais como "RS 18" em processos zumbis).
+ *
+ * Retorna `number` quando `valor` é um número finito; `null` caso contrário
+ * (inclusive para `undefined`, `NaN`, `string`, objetos, etc.).
+ */
+function propagarScoreNumerico(valor: unknown): number | null {
+  if (typeof valor === 'number' && Number.isFinite(valor)) return valor
+  return null
+}
 
 function riskDimFromScore(score: number, lang: ReportLang): RiskDimension {
   const color = corFaixaRiscoValor(score)
@@ -137,7 +161,7 @@ const TENURE_PT_EN: Record<string, string> = {
   'Permissão de Lavra Garimpeira': 'Garimpo mining permit',
   'Permissao de Lavra Garimpeira': 'Garimpo mining permit',
   'Pesquisa': 'Exploration',
-  'Lavra': 'Production',
+  'Lavra': 'Mining',
   'Requerimento': 'Application',
   'Concessão': 'Concession',
   'Concessao': 'Concession',
@@ -292,7 +316,7 @@ function translatePtLabel(raw: string, lang: ReportLang): string {
     'alto': 'High',
     // Fases
     'pesquisa': 'Exploration',
-    'lavra': 'Production',
+    'lavra': 'Mining',
   }
   const hit = map[s.toLowerCase()]
   return hit ?? raw
@@ -436,9 +460,16 @@ function estagioFromFase(fase: unknown): {
   estagio_index: number
 } {
   const f = String(fase ?? '').trim().toLowerCase()
-  if (f.includes('pesquisa')) return { estagio: 'Inicial', estagio_index: 1 }
-  if (f.includes('lavra')) return { estagio: 'Avançado', estagio_index: 4 }
-  return { estagio: 'Intermediário', estagio_index: 2 }
+  // Mapeamento atualizado 21/04/2026: estagio_index 1-5 agora bate
+  // diretamente com o array de maturidade em reportL10n (1-indexed).
+  // Pareado com maturidadeActiveIndex em reportPages.ts (map 1:1).
+  if (f.includes('pesquisa')) return { estagio: 'Pesquisa', estagio_index: 1 }
+  if (f.includes('requerimento')) return { estagio: 'Requerimento', estagio_index: 2 }
+  if (f.includes('lavra') && (f.includes('suspens') || f.includes('suspend')))
+    return { estagio: 'Suspensão', estagio_index: 4 }
+  if (f.includes('lavra')) return { estagio: 'Lavra', estagio_index: 3 }
+  if (f.includes('encerr') || f.includes('clos')) return { estagio: 'Encerramento', estagio_index: 5 }
+  return { estagio: 'Requerimento', estagio_index: 2 }
 }
 
 function formatIsoToBr(iso: unknown): string {
@@ -446,6 +477,51 @@ function formatIsoToBr(iso: unknown): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
   if (!m) return s
   return `${m[3]}/${m[2]}/${m[1]}`
+}
+
+/** Alvará: coluna de status não existe no cadastro; deriva da validade (ISO ou data parseável). */
+function deriveAlvaraStatus(validade: string | Date | null | undefined): string {
+  if (validade == null || validade === '') return 'N/A'
+  const d =
+    validade instanceof Date ? validade : new Date(String(validade))
+  if (Number.isNaN(d.getTime())) return 'N/A'
+  const hoje = new Date()
+  hoje.setHours(0, 0, 0, 0)
+  const dv = new Date(d)
+  dv.setHours(0, 0, 0, 0)
+  if (dv < hoje) return 'Vencido'
+  const dias = Math.floor(
+    (dv.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24),
+  )
+  if (dias < 90) return 'Vencendo'
+  return 'Vigente'
+}
+
+/** Garante linha «Sede municipal» na tabela de infra (PostGIS ou payload territorial da API). */
+function appendSedeInfraRow(
+  analise: AnaliseTerritorial | null,
+  rows: InfraData[],
+): InfraData[] {
+  if (!analise?.sede || typeof analise.sede !== 'object') return rows
+  const s = analise.sede
+  const dk = s.distancia_km
+  if (dk == null || !Number.isFinite(Number(dk))) return rows
+  const nome = String(s.nome ?? '').trim()
+  if (!nome) return rows
+  const synthetic: InfraData = {
+    tipo: 'Sede municipal',
+    nome,
+    detalhes: String(s.uf ?? '').trim(),
+    distancia_km: Number(dk),
+  }
+  if (
+    rows.some(
+      (r) => r.tipo === 'Sede municipal' && r.nome === synthetic.nome,
+    )
+  ) {
+    return rows
+  }
+  return [...rows, synthetic].sort((a, b) => a.distancia_km - b.distancia_km)
 }
 
 function formatBrlNum(n: number): string {
@@ -615,6 +691,21 @@ function buildInfraFromPostGIS(analise: AnaliseTerritorial): InfraData[] {
   )
 }
 
+/** Compacta `analise_territorial.sede` (fn_territorial_analysis) para o drawer/PDF. */
+function sedeFromAnaliseTerritorial(
+  analise: AnaliseTerritorial | null,
+): ReportData['sede'] {
+  const s = analise?.sede
+  if (!s || typeof s !== 'object') return null
+  const dk = s.distancia_km
+  if (dk == null || !Number.isFinite(Number(dk))) return null
+  return {
+    nome: String(s.nome ?? '').trim(),
+    uf: String(s.uf ?? '').trim(),
+    distancia_km: Number(dk),
+  }
+}
+
 function formatTipoInfra(tipo: string): string {
   switch (tipo) {
     case 'FERROVIA':
@@ -730,6 +821,7 @@ function indicadoresMunicipaisParaTemplate(
 ): {
   receita_propria: string
   divida: string
+  divida_fonte: 'divida_consolidada' | 'passivo_nao_circulante' | null
   dependencia_transf: string
   idh: string
   populacao: string
@@ -747,6 +839,7 @@ function indicadoresMunicipaisParaTemplate(
       : nd(null)
 
   const divida = formatDividaConsolidadaExibicao(fm)
+  const divida_fonte = fonteDividaExibicao(fm)
 
   const depPct = numFiscalOuNull(fm, 'dep_transferencias_pct')
   const dependencia_transf =
@@ -779,6 +872,7 @@ function indicadoresMunicipaisParaTemplate(
   return {
     receita_propria,
     divida,
+    divida_fonte,
     dependencia_transf,
     idh,
     populacao,
@@ -840,16 +934,27 @@ export async function buildReportData(
   const scoresAuto: ScoreAutoResult | null = api.scores_auto ?? null
   const analise = api.analise_territorial ?? null
 
+  const isTerminal =
+    typeof p.ativo_derivado === 'boolean' && p.ativo_derivado === false
+  const bloqueadorConstitucional = detectarBloqueadorConstitucional(
+    analise?.areas_protegidas,
+  )
+
   // ═══ SCORES: preferir scores_auto, fallback para seed manual ═══
-  let riskScore: number
+  //
+  // Tipos `number | null`: ausência de score é propagada até `ReportData`
+  // (em vez do antigo fallback silencioso `|| 0`). Consumidores downstream
+  // (drawer, PDF, LLM) são responsáveis por renderizar um empty state ou
+  // placeholder quando o valor é `null`.
+  let riskScore: number | null
   let rs_classificacao_final: string
   let rsGeo: RiskDimension
   let rsAmb: RiskDimension
   let rsSoc: RiskDimension
   let rsReg: RiskDimension
-  let osCons: number
-  let osMod: number
-  let osArr: number
+  let osCons: number | null
+  let osMod: number | null
+  let osArr: number | null
   let osClass: string
   let osMerc: RiskDimension
   let osViab: RiskDimension
@@ -873,11 +978,13 @@ export async function buildReportData(
     osViab = osDimFromScore(scoresAuto.os_breakdown.viabilidade, lang)
     osSeg = osDimFromScore(scoresAuto.os_breakdown.seguranca, lang)
   } else {
-    riskScore = Number(scores?.risk_score ?? 0) || 0
+    riskScore = propagarScoreNumerico(scores?.risk_score)
     const riskLabelRaw = String(scores?.risk_label ?? '').trim()
     rs_classificacao_final = riskLabelRaw
       ? translatePtLabel(riskLabelRaw, lang)
-      : rsClassificacaoLabel(riskScore, lang)
+      : riskScore != null
+        ? rsClassificacaoLabel(riskScore, lang)
+        : t.nd
 
     const dimsRisco = parseDimJson(scores?.dimensoes_risco)
     rsGeo = riskDimFromScore(
@@ -908,14 +1015,48 @@ export async function buildReportData(
       lang,
     )
 
-    osCons = Number(scores?.os_conservador ?? 0) || 0
-    osMod = Number(scores?.os_moderado ?? 0) || 0
-    osArr = Number(scores?.os_arrojado ?? 0) || 0
+    osCons = propagarScoreNumerico(scores?.os_conservador)
+    osMod = propagarScoreNumerico(scores?.os_moderado)
+    osArr = propagarScoreNumerico(scores?.os_arrojado)
     const osClassRaw =
       String(scores?.os_classificacao ?? '').trim() ||
       String(scores?.os_label ?? '').trim()
     osClass = osClassRaw ? translatePtLabel(osClassRaw, lang) : t.nd
   }
+
+  if (scores) {
+    const rl = String(scores.risk_label ?? '').trim()
+    if (rl) {
+      rs_classificacao_final = translatePtLabel(rl, lang)
+    }
+    const osl = String(scores.os_label ?? scores.os_classificacao ?? '').trim()
+    if (osl) {
+      osClass = translatePtLabel(osl, lang)
+    }
+  }
+
+  if (isTerminal && scores) {
+    const rp = propagarScoreNumerico(scores.risk_score)
+    if (rp != null) riskScore = rp
+    const oc1 = propagarScoreNumerico(scores.os_conservador)
+    if (oc1 != null) osCons = oc1
+    const oc2 = propagarScoreNumerico(scores.os_moderado)
+    if (oc2 != null) osMod = oc2
+    const oc3 = propagarScoreNumerico(scores.os_arrojado)
+    if (oc3 != null) osArr = oc3
+  }
+
+  const rsCorPersist =
+    String(scores?.risk_cor ?? '').trim() ||
+    (scoresAuto ? String(scoresAuto.risk_cor ?? '').trim() : '')
+  // Cor final só faz sentido quando há score numérico. Fica string vazia
+  // quando o score é `null` (empty state assume o controle visual).
+  const rs_cor_final =
+    rsCorPersist || (riskScore != null ? corFaixaRiscoValor(riskScore) : '')
+
+  const osCorPersist = String(scores?.os_cor ?? '').trim()
+  const os_cor_final =
+    osCorPersist || (osCons != null ? corFaixaOS(osCons) : '')
 
   const substanciaRaw = String(p.substancia ?? '')
   const areaHa = Number(p.area_ha) || 0
@@ -1090,6 +1231,34 @@ export async function buildReportData(
       ? String(capag.ano_referencia)
       : '2023'
 
+  function anoProtocoloInferido(): number | null {
+    const ap = p.ano_protocolo
+    if (ap != null && Number.isFinite(Number(ap))) return Number(ap)
+    const dp = p.data_protocolo
+    if (typeof dp === 'string' && /^\d{4}/.test(dp.trim())) {
+      return parseInt(dp.trim().slice(0, 4), 10)
+    }
+    const numero = String(p.numero ?? '')
+    const m = /\/(\d{4})$/.exec(numero)
+    return m ? parseInt(m[1], 10) : null
+  }
+
+  function anoFromIsoDataField(raw: unknown): number | null {
+    if (raw == null) return null
+    const s = String(raw).trim()
+    const m = /^(\d{4})-\d{2}-\d{2}/.exec(s)
+    return m ? parseInt(m[1], 10) : null
+  }
+
+  const anoIniProt = anoProtocoloInferido()
+  const anoFimProt = isTerminal
+    ? anoFromIsoDataField(p.ultimo_evento_data) ?? new Date().getFullYear()
+    : new Date().getFullYear()
+  const protocoloAnosCalc =
+    anoIniProt != null
+      ? Math.max(0, anoFimProt - anoIniProt)
+      : Number(p.protocolo_anos) || 0
+
   return {
     processo: String(p.numero ?? numeroProcesso),
     titular: nd(p.titular),
@@ -1111,29 +1280,50 @@ export async function buildReportData(
     alvara_validade: alvaraRaw
       ? formatIsoToBr(String(alvaraRaw))
       : nd(null),
-    alvara_status: nd(p.alvara_status),
+    alvara_status: deriveAlvaraStatus(
+      alvaraRaw != null && String(alvaraRaw).trim() !== ''
+        ? (alvaraRaw as string | Date)
+        : null,
+    ),
     ultimo_despacho: (() => {
       const ud = p.ultimo_evento_descricao
-      if (ud != null && String(ud).trim() !== '') {
-        const ue = p.ultimo_evento_data
-        const datePart =
-          ue != null && String(ue).trim() !== ''
-            ? `${formatIsoToBr(String(ue))} · `
-            : ''
-        return nd(`${datePart}${String(ud).trim()}`)
+      const ue = p.ultimo_evento_data
+      const descricaoTrim = ud != null ? String(ud).trim() : ''
+      const dataTrim = ue != null ? String(ue).trim() : ''
+
+      const temDescricao = descricaoTrim !== ''
+      const temData = dataTrim !== ''
+
+      if (temDescricao && temData) {
+        return `${formatIsoToBr(dataTrim)} · ${descricaoTrim}`
+      }
+      if (temDescricao) {
+        return descricaoTrim
+      }
+      if (temData) {
+        return formatIsoToBr(dataTrim)
       }
       return nd(p.ultimo_despacho)
     })(),
     nup_sei: nd(String(p.nup_sei ?? p.numero_sei ?? '')),
-    gu_status: nd(p.gu_status),
+    gu_status: formatGuStatus(
+      p.gu_status != null && String(p.gu_status).trim() !== ''
+        ? String(p.gu_status)
+        : null,
+      lang,
+    ),
     gu_pendencia: nd(p.gu_pendencia),
     pendencias: pendenciasFmt,
-    tah_status: (() => {
+    ...(() => {
       const dt = p.tah_ultimo_pagamento
-      if (dt != null && String(dt).trim() !== '') {
-        return `Pago em ${formatIsoToBr(String(dt))}`
+      const tahFmt = formatTahUltimoPagamento(
+        dt != null && String(dt).trim() !== '' ? String(dt) : null,
+        lang,
+      )
+      return {
+        tah_status: tahFmt.texto,
+        tah_status_tooltip: tahFmt.tooltip,
       }
-      return nd(p.tah_status)
     })(),
     licenca_ambiental: (() => {
       const dt = p.licenca_ambiental_data
@@ -1142,22 +1332,13 @@ export async function buildReportData(
       }
       return nd(p.licenca_ambiental)
     })(),
-    protocolo_anos: (() => {
-      const ap = p.ano_protocolo
-      if (ap != null && Number.isFinite(Number(ap))) {
-        return new Date().getFullYear() - Number(ap)
-      }
-      const numero = String(p.numero ?? '')
-      const match = /\/(\d{4})$/.exec(numero)
-      if (match) {
-        const anoProtocolo = parseInt(match[1], 10)
-        return new Date().getFullYear() - anoProtocolo
-      }
-      return Number(p.protocolo_anos) || 0
-    })(),
+    protocolo_anos: protocoloAnosCalc,
+    is_terminal: isTerminal,
+    bloqueador_constitucional: bloqueadorConstitucional,
 
     risk_score: riskScore,
     rs_classificacao: rs_classificacao_final,
+    rs_cor: rs_cor_final,
     rs_geo: rsGeo,
     rs_amb: rsAmb,
     rs_soc: rsSoc,
@@ -1167,11 +1348,18 @@ export async function buildReportData(
     os_moderado: osMod,
     os_arrojado: osArr,
     os_classificacao: osClass,
+    os_cor: os_cor_final,
     os_merc: osMerc,
     os_viab: osViab,
     os_seg: osSeg,
 
     preco_spot_usd_t: precoUsdPorT,
+    preco_usd_por_t:
+      mercado?.preco_usd != null && Number.isFinite(Number(mercado.preco_usd))
+        ? Number(mercado.preco_usd)
+        : null,
+    unidade_mercado: (mercado?.unidade_mercado ?? null) as
+      | 'oz' | 'ct' | 'kg' | 'lb' | 't' | 'L' | null,
     preco_oz_usd: precoOzUsd,
     preco_g_brl: precoBrlPorGrama,
     ptax: cambioRef,
@@ -1221,7 +1409,8 @@ export async function buildReportData(
         : analise
           ? buildLayersFromPostGIS(analise, t.tagSobreposto, t.tagNao)
           : [],
-    infraestrutura:
+    infraestrutura: appendSedeInfraRow(
+      analise,
       Array.isArray(api.territorial?.infra) && api.territorial.infra.length > 0
         ? buildInfraFromApi(
             api.territorial.infra as Record<string, unknown>[],
@@ -1230,6 +1419,9 @@ export async function buildReportData(
         : analise
           ? buildInfraFromPostGIS(analise)
           : [],
+    ),
+
+    sede: sedeFromAnaliseTerritorial(analise),
 
     capag_nota: capagNota,
     capag_endiv: endiv.texto,
@@ -1258,6 +1450,7 @@ export async function buildReportData(
     dados_sei: dadosSeiFromProcesso(p),
     receita_propria: templateFiscal.receita_propria,
     divida: templateFiscal.divida,
+    divida_fonte: templateFiscal.divida_fonte,
     pib_municipal: pibMunicipalStr,
     dependencia_transf: templateFiscal.dependencia_transf,
     populacao: templateFiscal.populacao,

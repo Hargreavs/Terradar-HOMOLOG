@@ -28,3 +28,6 @@ Docs/export-pdf/
 
 # Ad-hoc extraction / SQL (não versionar)
 tmp/
+data/
+node_modules/
+.env.local

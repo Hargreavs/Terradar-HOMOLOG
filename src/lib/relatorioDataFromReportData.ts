@@ -12,6 +12,7 @@ import type {
   IntelMineral,
   ObservacoesTecnicas,
   ObservacoesTecnicasItem,
+  PerfilOportunidadeMock,
   RelatorioData,
   RelatorioOportunidadeData,
   Timestamps,
@@ -36,10 +37,25 @@ import { piorIndicadorCapag } from './capagPiorIndicador'
 import { haversineKm } from './geoHaversine'
 import { centroideMunicipioSedeIbge } from './municipioSedeCentroideIbge'
 import { getCfemProcessoStatus } from './cfemProcessoStatus'
+import { formatCNPJ } from './formatCnpj'
+import { infraestruturaComOperacaoDeclarada } from './processoStatus'
+import { normalizarSeparadoresRotuloDb } from './normalizarRotuloScore'
 
 function todayIso(): string {
   const d = new Date()
   return d.toISOString().slice(0, 10)
+}
+
+/** Diferença em anos civis aproximados (protocolo → último evento), para processos extintos. */
+function anosEntreDatasIso(dataIni: string, dataFim: string): number | null {
+  const m0 = /^(\d{4})-(\d{2})-(\d{2})/.exec(dataIni.trim())
+  const m1 = /^(\d{4})-(\d{2})-(\d{2})/.exec(dataFim.trim())
+  if (!m0 || !m1) return null
+  const t0 = Date.UTC(Number(m0[1]), Number(m0[2]) - 1, Number(m0[3]))
+  const t1 = Date.UTC(Number(m1[1]), Number(m1[2]) - 1, Number(m1[3]))
+  const ms = t1 - t0
+  if (!Number.isFinite(ms) || ms < 0) return null
+  return ms / (365.25 * 24 * 60 * 60 * 1000)
 }
 
 function parsePtBrMoney(raw: string): number {
@@ -157,11 +173,25 @@ function territorialFromReport(
 
   let distancia_ferrovia_km: number | null = null
   let nome_ferrovia: string | null = null
+  let ferroviaApenasProjetoEmEstudo = false
+  let distancia_ferrovia_operacional_km: number | null = null
   let distancia_rodovia_km: number | null = null
   let nome_rodovia: string | null = null
   let distancia_porto_km: number | null = null
   let nome_porto: string | null = null
   let uf_porto = ''
+
+  const infraOp = infraestruturaComOperacaoDeclarada(rd.infraestrutura)
+  for (const inf of infraOp) {
+    if (inf.tipo === 'Ferrovia') {
+      if (
+        distancia_ferrovia_operacional_km == null ||
+        inf.distancia_km < distancia_ferrovia_operacional_km
+      ) {
+        distancia_ferrovia_operacional_km = inf.distancia_km
+      }
+    }
+  }
 
   for (const inf of rd.infraestrutura) {
     if (inf.tipo === 'Ferrovia') {
@@ -171,6 +201,8 @@ function territorialFromReport(
       ) {
         distancia_ferrovia_km = inf.distancia_km
         nome_ferrovia = inf.nome
+        ferroviaApenasProjetoEmEstudo =
+          (inf.detalhes ?? '').trim() === 'Estudo'
       }
     }
     if (inf.tipo === 'Rodovia') {
@@ -191,24 +223,34 @@ function territorialFromReport(
     }
   }
 
-  let distancia_sede_km: number | undefined
-  let nome_sede_pref = processo.municipio ?? ''
+  const sedeNomeRpc = rd.sede?.nome?.trim() ?? ''
+  let nome_sede_pref = sedeNomeRpc || (processo.municipio ?? '')
 
-  for (const L of rd.layers) {
-    if (/sede/i.test(L.tipo)) {
-      const d = L.distancia_km
-      if (distancia_sede_km === undefined || d < distancia_sede_km) {
-        distancia_sede_km = d
-        if (L.nome?.trim()) nome_sede_pref = L.nome.trim()
+  let distancia_sede_km: number | undefined
+  const rpcKm = rd.sede?.distancia_km
+  if (rpcKm != null && Number.isFinite(Number(rpcKm))) {
+    distancia_sede_km = Number(rpcKm)
+  }
+
+  if (distancia_sede_km === undefined) {
+    for (const L of rd.layers) {
+      if (/sede/i.test(L.tipo)) {
+        const d = L.distancia_km
+        if (distancia_sede_km === undefined || d < distancia_sede_km) {
+          distancia_sede_km = d
+          if (L.nome?.trim() && !sedeNomeRpc) nome_sede_pref = L.nome.trim()
+        }
       }
     }
   }
-  for (const inf of rd.infraestrutura) {
-    if (/sede/i.test(inf.tipo)) {
-      const d = inf.distancia_km
-      if (distancia_sede_km === undefined || d < distancia_sede_km) {
-        distancia_sede_km = d
-        if (inf.nome?.trim()) nome_sede_pref = inf.nome.trim()
+  if (distancia_sede_km === undefined) {
+    for (const inf of rd.infraestrutura) {
+      if (/sede/i.test(inf.tipo)) {
+        const d = inf.distancia_km
+        if (distancia_sede_km === undefined || d < distancia_sede_km) {
+          distancia_sede_km = d
+          if (inf.nome?.trim() && !sedeNomeRpc) nome_sede_pref = inf.nome.trim()
+        }
       }
     }
   }
@@ -256,6 +298,8 @@ function territorialFromReport(
     nome_sede: nome_sede_pref,
     distancia_ferrovia_km,
     nome_ferrovia,
+    ferrovia_apenas_projeto_em_estudo: ferroviaApenasProjetoEmEstudo,
+    distancia_ferrovia_operacional_km,
     situacao_ferrovia: 'Não disponível',
     bitola_ferrovia: '',
     uf_ferrovia: '',
@@ -425,6 +469,8 @@ function fiscalFromReport(rd: ReportData, processo: Processo): DadosFiscaisRicos
     capag_pior_indicador_nome: capagPiorNome,
     receita_propria_mi: receitaMi,
     divida_consolidada_mi: dividaMi,
+    divida_exibicao: rd.divida,
+    divida_fonte: rd.divida_fonte ?? null,
     pib_municipal_mi: pibMi,
     dependencia_transferencias_pct: depPct,
     idh_municipal: idhMunicipal,
@@ -440,6 +486,59 @@ function fiscalFromReport(rd: ReportData, processo: Processo): DadosFiscaisRicos
     cfem_estimada_ha: Number(rd.cfem_estimada_ha) || 0,
     observacao: '',
     contexto_referencia_fiscal: rd.fiscal_contexto_referencia,
+  }
+}
+
+function cruzamentoOportunidadeDrawer(
+  rd: ReportData,
+): RelatorioOportunidadeData['cruzamento'] {
+  const base = {
+    tipo: 'analise' as const,
+    data: rd.data_relatorio,
+    rs: rd.risk_score,
+    os: rd.os_conservador,
+    contexto: rd.municipio,
+  }
+  const rsl = normalizarSeparadoresRotuloDb(rd.rs_classificacao)
+  // Placeholders textuais para evitar "null" literal em narrativas quando o
+  // processo não tem score (zumbi, sem geom, fora de escopo do motor).
+  const rsTxt = rd.risk_score != null ? String(rd.risk_score) : 'indisponível'
+  const osTxt =
+    rd.os_conservador != null ? String(rd.os_conservador) : 'indisponível'
+  if (rd.is_terminal && rd.bloqueador_constitucional?.tipo === 'TI_REGULARIZADA') {
+    const nome = rd.bloqueador_constitucional.nome
+    return {
+      ...base,
+      abertura:
+        'Oportunidade indisponível · sobreposição constitucional a terra indígena regularizada.',
+      explicacao: `Risk Score ${rsTxt} (${rsl}) e Opportunity Score ${osTxt} permanecem como referência técnica do TERRADAR. A área sobrepõe a TI ${nome} em fase Regularizada. O art. 231, §3º da Constituição Federal exige autorização específica do Congresso Nacional para exploração mineral em terras indígenas, ausente na prática. Novo requerimento sobre a mesma área seria indeferido pelo mesmo fundamento. Não há perspectiva de reativação nem de captura de potencial operacional neste recorte.`,
+    }
+  }
+  if (
+    rd.is_terminal &&
+    rd.bloqueador_constitucional?.tipo === 'UC_PROTECAO_INTEGRAL'
+  ) {
+    const nome = rd.bloqueador_constitucional.nome
+    return {
+      ...base,
+      abertura:
+        'Oportunidade indisponível · unidade de conservação de proteção integral sobreposta.',
+      explicacao: `Scores exibidos como referência metodológica. A sobreposição a ${nome} estrutura indisponibilidade de investimento minerário na área.`,
+    }
+  }
+  if (rd.is_terminal) {
+    return {
+      ...base,
+      abertura:
+        'Processo juridicamente extinto · oportunidade apenas como referência técnica.',
+      explicacao: `Risk Score ${rsTxt} (${rsl}); Opportunity Score (conservador) ${osTxt}. Os valores não implicam disponibilidade operacional após extinção do processo.`,
+    }
+  }
+  return {
+    ...base,
+    abertura:
+      'Leitura sintética com base nos indicadores do motor de scores (TERRADAR).',
+    explicacao: `Risk Score consolidado ${rsTxt} (${rsl}); Opportunity Score (perfil conservador) ${osTxt}.`,
   }
 }
 
@@ -495,26 +594,24 @@ function oportunidadeFromReport(
     return [mkVar(labelMap[dimKey], 'Dimensão calculada automaticamente.')]
   }
 
+  // Helper: gera perfil consistente mesmo quando o OS vem `null` (processo
+  // sem score). Mantém `valor: null` para o drawer exibir empty state e
+  // preenche label/cor neutros para não quebrar estilos.
+  const perfilDe = (
+    valor: number | null,
+    perfilKey: 'conservador' | 'moderado' | 'arrojado',
+  ): PerfilOportunidadeMock => ({
+    valor,
+    label: valor != null ? labelFaixaOS(valor) : '',
+    cor: valor != null ? corFaixaOS(valor) : '',
+    pesos: PESOS_OS_POR_PERFIL[perfilKey],
+  })
+
   return {
     perfis: {
-      conservador: {
-        valor: rd.os_conservador,
-        label: labelFaixaOS(rd.os_conservador),
-        cor: corFaixaOS(rd.os_conservador),
-        pesos: PESOS_OS_POR_PERFIL.conservador,
-      },
-      moderado: {
-        valor: rd.os_moderado,
-        label: labelFaixaOS(rd.os_moderado),
-        cor: corFaixaOS(rd.os_moderado),
-        pesos: PESOS_OS_POR_PERFIL.moderado,
-      },
-      arrojado: {
-        valor: rd.os_arrojado,
-        label: labelFaixaOS(rd.os_arrojado),
-        cor: corFaixaOS(rd.os_arrojado),
-        pesos: PESOS_OS_POR_PERFIL.arrojado,
-      },
+      conservador: perfilDe(rd.os_conservador, 'conservador'),
+      moderado: perfilDe(rd.os_moderado, 'moderado'),
+      arrojado: perfilDe(rd.os_arrojado, 'arrojado'),
     },
     dimensoes: {
       atratividade: {
@@ -535,16 +632,7 @@ function oportunidadeFromReport(
       viabilidade: decompFromPersistida('viabilidade'),
       seguranca: decompFromPersistida('seguranca'),
     },
-    cruzamento: {
-      tipo: 'analise',
-      abertura:
-        'Leitura sintética com base nos indicadores do motor de scores (TERRADAR).',
-      explicacao: `Risk Score consolidado ${rd.risk_score} (${rd.rs_classificacao}); Opportunity Score (perfil conservador) ${rd.os_conservador}.`,
-      contexto: rd.municipio,
-      data: rd.data_relatorio,
-      rs: rd.risk_score,
-      os: rd.os_conservador,
-    },
+    cruzamento: cruzamentoOportunidadeDrawer(rd),
   }
 }
 
@@ -573,12 +661,26 @@ function observacoesTecnicasFromReport(
       ? processo.ano_protocolo
       : anoDoNumero
 
-  const tempoTramitacaoValor =
-    anoProt != null
-      ? `~${new Date().getFullYear() - anoProt} anos`
-      : rd.protocolo_anos != null && rd.protocolo_anos >= 0
-        ? `~${Math.round(rd.protocolo_anos * 10) / 10} anos`
-        : null
+  const extintoObs = processo.ativo_derivado === false
+  const tempoTramitacaoValor = (() => {
+    if (extintoObs) {
+      const proto = processo.data_protocolo?.trim()
+      const ult = processo.ultimo_evento_data?.trim()
+      if (proto && ult) {
+        const a = anosEntreDatasIso(proto, ult)
+        if (a != null) {
+          return `${Math.round(a)} anos (extinto)`
+        }
+      }
+    }
+    if (anoProt != null) {
+      return `~${new Date().getFullYear() - anoProt} anos`
+    }
+    if (rd.protocolo_anos != null && rd.protocolo_anos >= 0) {
+      return `~${Math.round(rd.protocolo_anos * 10) / 10} anos`
+    }
+    return null
+  })()
 
   const dataUltIso = isoDatePrefix(processo.ultimo_evento_data)
   const ultimoEventoValor =
@@ -604,7 +706,10 @@ function observacoesTecnicasFromReport(
       label: 'Tempo de tramitação',
       valor: tempoTramitacaoValor,
     },
-    { label: 'Fase atual', valor: rd.fase?.trim() ? rd.fase : null },
+    {
+      label: extintoObs ? 'Fase na extinção' : 'Fase atual',
+      valor: rd.fase?.trim() ? rd.fase : null,
+    },
     {
       label: 'Último evento',
       valor: ultimoEventoValor,
@@ -637,7 +742,7 @@ function observacoesTecnicasFromReport(
     },
     {
       label: 'CNPJ',
-      valor: cnpjExibir ? cnpjExibir : 'Não disponível',
+      valor: cnpjExibir ? formatCNPJ(cnpjExibir) : 'Não disponível',
     },
     {
       label: 'Processo SEI',
@@ -685,16 +790,35 @@ export function relatorioDataFromReportData(
       ? rd.ultimo_despacho
       : 'Não disponível')
 
+  const extintoDrawer = processo.ativo_derivado === false
+  const tempoAnosExtinto =
+    extintoDrawer &&
+    processo.data_protocolo?.trim() &&
+    processo.ultimo_evento_data?.trim()
+      ? anosEntreDatasIso(
+          processo.data_protocolo.trim(),
+          processo.ultimo_evento_data.trim(),
+        )
+      : null
+
   const tempoAnosDrawer =
-    anoProt != null
-      ? new Date().getFullYear() - anoProt
-      : rd.protocolo_anos
+    tempoAnosExtinto != null
+      ? Math.round(tempoAnosExtinto)
+      : anoProt != null
+        ? new Date().getFullYear() - anoProt
+        : rd.protocolo_anos
+
+  const tempoTramitacaoTextoDrawer =
+    extintoDrawer && tempoAnosExtinto != null
+      ? `${Math.round(tempoAnosExtinto)} anos (extinto)`
+      : null
 
   const dados_anm: DadosANM = {
     fase_atual: rd.fase,
     data_protocolo: processo.data_protocolo,
     ano_protocolo: anoProt ?? processo.ano_protocolo,
     tempo_tramitacao_anos: tempoAnosDrawer,
+    tempo_tramitacao_texto: tempoTramitacaoTextoDrawer,
     pendencias: rd.pendencias ?? [],
     ultimo_despacho: textoUltimoDrawer,
     data_ultimo_despacho: dataUltimoDrawer || '',
@@ -703,6 +827,8 @@ export function relatorioDataFromReportData(
       rd.nup_sei ||
       '',
     licenca_ambiental: rd.licenca_ambiental,
+    dados_insuficientes: Boolean(processo.dados_insuficientes),
+    classificacao_zumbi: processo.classificacao_zumbi ?? null,
   }
 
   const observacoes_tecnicas = observacoesTecnicasFromReport(rd, processo)
@@ -711,6 +837,18 @@ export function relatorioDataFromReportData(
     processo_id: processo.id,
     dados_anm,
     observacoes_tecnicas,
+    scores_exibicao_api: {
+      rs_label: normalizarSeparadoresRotuloDb(rd.rs_classificacao),
+      rs_cor: rd.rs_cor,
+      os_label: normalizarSeparadoresRotuloDb(rd.os_classificacao),
+      os_cor: rd.os_cor,
+    },
+    oportunidade_secao_titulo:
+      rd.is_terminal && rd.bloqueador_constitucional
+        ? 'Oportunidade · indisponibilidade constitucional'
+        : rd.is_terminal
+          ? 'Oportunidade · processo extinto'
+          : undefined,
     territorial: territorialFromReport(rd, processo),
     intel_mineral: intelFromReport(rd, processo),
     fiscal: fiscalFromReport(rd, processo),

@@ -137,16 +137,34 @@ const SCORE_SUBSTANCIA_FAMILIA: Record<string, number> = {
 }
 
 const FASE_MAP: Record<string, string> = {
+  // Lavra (eixo mais maduro)
   'CONCESSÃO DE LAVRA': 'lavra',
   'CONCESSAO DE LAVRA': 'lavra',
   LAVRA: 'lavra',
+  'LAVRA GARIMPEIRA': 'lavra',
+  'REGISTRO DE EXTRAÇÃO': 'lavra',
+  'REGISTRO DE EXTRACAO': 'lavra',
+
+  // Concessão (eixo intermediário, processo encaminhado)
+  'REQUERIMENTO DE LAVRA': 'concessao',
+  'DIREITO DE REQUERER A LAVRA': 'concessao',
+  LICENCIAMENTO: 'concessao',
+
+  // Pesquisa (eixo em investigação)
   'AUTORIZAÇÃO DE PESQUISA': 'pesquisa',
   'AUTORIZACAO DE PESQUISA': 'pesquisa',
   PESQUISA: 'pesquisa',
+  'RECONHECIMENTO GEOLÓGICO': 'pesquisa',
+  'RECONHECIMENTO GEOLOGICO': 'pesquisa',
+
+  // Requerimento (eixo mais precoce, sem dados geológicos)
   'REQUERIMENTO DE PESQUISA': 'requerimento',
-  'REQUERIMENTO DE LAVRA': 'concessao',
   'REQUERIMENTO DE LAVRA GARIMPEIRA': 'requerimento',
-  LICENCIAMENTO: 'concessao',
+  'REQUERIMENTO DE LICENCIAMENTO': 'requerimento',
+  'REQUERIMENTO DE REGISTRO DE EXTRAÇÃO': 'requerimento',
+  'REQUERIMENTO DE REGISTRO DE EXTRACAO': 'requerimento',
+
+  // Encerrado (processo em estado terminal ou sem titular ativo)
   DISPONIBILIDADE: 'encerrado',
   'APTO PARA DISPONIBILIDADE': 'encerrado',
 }
@@ -168,6 +186,8 @@ export interface ScoreInput {
   area_ha: number
   alvara_validade: string | null
   uf: string
+  /** Flag derivado por fn_derivar_campos_regulatorios. false = processo terminal. */
+  ativo_derivado?: boolean
 
   areas_protegidas: {
     tipo: string
@@ -625,7 +645,16 @@ function computeOsViabilidade(
   const portoProximo = input.portos.some((p) => p.distancia_km <= 200)
   if (portoProximo) b3 = Math.min(b3 + 10, 100)
 
-  const b4 = faseTerradar === 'encerrado' ? 5 : 30
+  // b4 Situação: diferencia processo ativo, terminal (fase encerrado ou ativo_derivado=false) e bloqueado.
+  // Config_scores aba 7: ativo=90, inativo=30, bloqueado=5.
+  // Sem flag de bloqueio administrativo ainda no DB, tratamos: ativo_derivado=false OU fase=encerrado -> 5 (terminal).
+  // Processo ativo_derivado=true e fase != encerrado -> 90.
+  let b4: number
+  if (input.ativo_derivado === false || faseTerradar === 'encerrado') {
+    b4 = 5
+  } else {
+    b4 = 90
+  }
 
   let b5: number
   const area = input.area_ha
@@ -709,10 +738,14 @@ function aplicarPenalidades(
   osScore: number,
   faseTerradar: string,
   riskScore: number,
+  ativoDerivado: boolean,
 ): number {
   let resultado = osScore
 
-  if (faseTerradar === 'encerrado') {
+  // Terminal por fase ANM (Disponibilidade) OU terminal por ativo_derivado=false
+  // (processo extinto/cancelado via lookup independente da fase ANM original).
+  // Padrao TERRADAR: terminal -> nao recomendado, teto 20.
+  if (faseTerradar === 'encerrado' || !ativoDerivado) {
     resultado = Math.min(resultado, 20)
   }
 
@@ -723,13 +756,23 @@ function aplicarPenalidades(
   return Math.round(resultado * 10) / 10
 }
 
-function getRiskLabel(score: number): { label: string; cor: string } {
+function getRiskLabel(
+  score: number,
+  ativoDerivado: boolean,
+): { label: string; cor: string } {
+  // Terminal: rotulo dedicado, cor cinza neutra. Ignora score numerico.
+  if (!ativoDerivado) return { label: 'Processo extinto', cor: '#6B7280' }
   if (score <= 39) return { label: 'Risco baixo', cor: '#1D9E75' }
   if (score <= 69) return { label: 'Risco médio', cor: '#E8A830' }
   return { label: 'Risco alto', cor: '#E24B4A' }
 }
 
-function getOpportunityLabel(score: number): { label: string; cor: string } {
+function getOpportunityLabel(
+  score: number,
+  ativoDerivado: boolean,
+): { label: string; cor: string } {
+  // Terminal: rotulo dedicado alinhado com risk_label "Processo extinto".
+  if (!ativoDerivado) return { label: 'N/A · Processo extinto', cor: '#6B7280' }
   if (score >= 75) return { label: 'Alta', cor: '#1D9E75' }
   if (score >= 50) return { label: 'Moderada', cor: '#E8A830' }
   if (score >= 25) return { label: 'Baixa', cor: '#888780' }
@@ -806,8 +849,10 @@ export function computeAllScores(input: ScoreInput): ScoreResult {
     rsSocial * PESOS_RS.social +
     rsRegulatorio * PESOS_RS.regulatorio
 
+  const ativoDerivado = input.ativo_derivado !== false // default true se undefined
+
   const riskScore = Math.round(riskScoreRaw)
-  const riskInfo = getRiskLabel(riskScore)
+  const riskInfo = getRiskLabel(riskScore, ativoDerivado)
 
   const atratResult = computeOsAtratividade(scoreSubstancia, input)
   const viabResult = computeOsViabilidade(faseTerradar, input)
@@ -817,7 +862,7 @@ export function computeAllScores(input: ScoreInput): ScoreResult {
     fallbacks.push('B6: fallback 35 (sem SICONFI)')
   }
 
-  fallbacks.push('B4: fallback 30 (sem campo situacao)')
+  fallbacks.push('B4: situacao via ativo_derivado + fase encerrado (config_scores aba 7)')
   if (input.dias_sem_despacho == null) {
     fallbacks.push('OS C4: sem data de último despacho (fallback 25)')
   }
@@ -829,16 +874,16 @@ export function computeAllScores(input: ScoreInput): ScoreResult {
       atratResult.score * pesos.atratividade +
       viabResult.score * pesos.viabilidade +
       segResult.score * pesos.seguranca
-    return aplicarPenalidades(Math.round(raw), faseTerradar, riskScore)
+    return aplicarPenalidades(Math.round(raw), faseTerradar, riskScore, ativoDerivado)
   }
 
   const osConservador = calcOS('conservador')
   const osModerado = calcOS('moderado')
   const osArrojado = calcOS('arrojado')
 
-  const labC = getOpportunityLabel(osConservador)
-  const labM = getOpportunityLabel(osModerado)
-  const labA = getOpportunityLabel(osArrojado)
+  const labC = getOpportunityLabel(osConservador, ativoDerivado)
+  const labM = getOpportunityLabel(osModerado, ativoDerivado)
+  const labA = getOpportunityLabel(osArrojado, ativoDerivado)
 
   return {
     risk_score: riskScore,

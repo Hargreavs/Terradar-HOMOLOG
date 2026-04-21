@@ -106,6 +106,27 @@ const CAMADAS_GEO_GROUPS: { title: string; ids: CamadaGeoId[] }[] = [
   { title: 'INFRAESTRUTURA', ids: ['rodovias', 'ferrovias', 'hidrovias', 'portos'] },
 ]
 
+type RegimeSubgroup = {
+  subheading?: string
+  regimes: Regime[]
+}
+
+type RegimeGroup = {
+  heading: string
+  subgroups: RegimeSubgroup[]
+}
+
+/** Sub-títulos dentro de CONCESSÕES (família mineral); não colapsam em separado. */
+const REGIME_SUBHEADING_STYLE: CSSProperties = {
+  fontSize: 10,
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase',
+  color: '#8B8B85',
+  marginTop: 12,
+  marginBottom: 4,
+  paddingLeft: 0,
+}
+
 const CAMADAS_GEO_ITEM: Record<
   CamadaGeoId,
   { label: string; color: string; Icon: typeof Users }
@@ -126,26 +147,48 @@ const CAMADAS_GEO_ITEM: Record<
   portos: { label: 'Portos', color: '#7EADD4', Icon: Anchor },
 }
 
-const REGIME_GROUPS: { title: string; regimes: Regime[] }[] = [
+const REGIME_GROUPS: RegimeGroup[] = [
   {
-    title: 'CONCESSÕES E AUTORIZAÇÕES',
-    regimes: [
-      'requerimento_pesquisa',
-      'concessao_lavra',
-      'autorizacao_pesquisa',
-      'req_lavra',
-      'licenciamento',
-      'lavra_garimpeira',
-      'registro_extracao',
+    heading: 'CONCESSÕES E AUTORIZAÇÕES',
+    subgroups: [
+      {
+        subheading: 'Pesquisa',
+        regimes: [
+          'autorizacao_pesquisa',
+          'requerimento_pesquisa',
+          'reconhecimento_geologico',
+        ],
+      },
+      {
+        subheading: 'Lavra',
+        regimes: ['concessao_lavra', 'req_lavra', 'direito_requerer_lavra'],
+      },
+      {
+        subheading: 'Licenciamento',
+        regimes: ['licenciamento', 'requerimento_licenciamento'],
+      },
+      {
+        subheading: 'Garimpo',
+        regimes: ['lavra_garimpeira', 'req_plg'],
+      },
+      {
+        subheading: 'Extração',
+        regimes: ['registro_extracao', 'req_registro_extracao'],
+      },
     ],
   },
   {
-    title: 'SITUAÇÃO',
-    regimes: [
-      'disponibilidade',
-      'mineral_estrategico',
-      'bloqueio_provisorio',
-      'bloqueio_permanente',
+    heading: 'SITUAÇÃO',
+    subgroups: [
+      {
+        regimes: [
+          'apto_disponibilidade',
+          'disponibilidade',
+          'mineral_estrategico',
+          'bloqueio_provisorio',
+          'bloqueio_permanente',
+        ],
+      },
     ],
   },
 ]
@@ -803,62 +846,73 @@ export function MapSidebar({
         {openRegimes ? (
           <div className="flex flex-col">
             {REGIME_GROUPS.map((group, groupIndex) => (
-              <div key={group.title}>
+              <div key={group.heading}>
                 <p
                   style={{
                     ...CAMADAS_SUB_LABEL,
                     marginTop: groupIndex === 0 ? 0 : 12,
                   }}
                 >
-                  {group.title}
+                  {group.heading}
                 </p>
-                {group.regimes.map((r) => {
-                  const on = camadas[r] !== false
-                  const color = REGIME_PILL_COLORS[r]
-                  return (
-                    <button
-                      key={r}
-                      type="button"
-                      onClick={() => toggleCamada(r)}
-                      className="flex w-full cursor-pointer items-center gap-2.5 rounded-md border-0 px-1 py-0 text-left transition-colors duration-200 hover:bg-[#1A1A18]"
-                      style={{ height: 32 }}
-                    >
-                      <span
-                        className="shrink-0 rounded-full"
-                        style={{
-                          width: 8,
-                          height: 8,
-                          backgroundColor: on ? color : '#3a3a38',
-                        }}
-                        aria-hidden
-                      />
-                      <span className={`min-w-0 flex-1 ${on ? cActive : cInactive}`}>
-                        {REGIME_LABELS[r]}
-                      </span>
-                      <span
-                        className="relative shrink-0 rounded-full transition-colors duration-200"
-                        style={{
-                          width: 32,
-                          height: 16,
-                          backgroundColor: on ? TOGGLE_ON_TRACK : '#2C2C2A',
-                        }}
-                        aria-hidden
-                      >
-                        <span
-                          className="absolute top-1/2 block rounded-full transition-all duration-200 ease-out"
-                          style={{
-                            width: 12,
-                            height: 12,
-                            marginTop: -6,
-                            left: on ? 'auto' : 2,
-                            right: on ? 2 : 'auto',
-                            backgroundColor: on ? TOGGLE_ON_KNOB : '#5F5E5A',
-                          }}
-                        />
-                      </span>
-                    </button>
-                  )
-                })}
+                {group.subgroups.map((subgroup, subIndex) => (
+                  <div key={`${group.heading}-${subIndex}`}>
+                    {subgroup.subheading ? (
+                      <div style={REGIME_SUBHEADING_STYLE}>
+                        {subgroup.subheading}
+                      </div>
+                    ) : null}
+                    {subgroup.regimes.map((r) => {
+                      const on = camadas[r] !== false
+                      const color = REGIME_PILL_COLORS[r]
+                      return (
+                        <button
+                          key={r}
+                          type="button"
+                          onClick={() => toggleCamada(r)}
+                          className="flex w-full cursor-pointer items-center gap-2.5 rounded-md border-0 px-1 py-0 text-left transition-colors duration-200 hover:bg-[#1A1A18]"
+                          style={{ height: 32 }}
+                        >
+                          <span
+                            className="shrink-0 rounded-full"
+                            style={{
+                              width: 8,
+                              height: 8,
+                              backgroundColor: on ? color : '#3a3a38',
+                            }}
+                            aria-hidden
+                          />
+                          <span
+                            className={`min-w-0 flex-1 ${on ? cActive : cInactive}`}
+                          >
+                            {REGIME_LABELS[r]}
+                          </span>
+                          <span
+                            className="relative shrink-0 rounded-full transition-colors duration-200"
+                            style={{
+                              width: 32,
+                              height: 16,
+                              backgroundColor: on ? TOGGLE_ON_TRACK : '#2C2C2A',
+                            }}
+                            aria-hidden
+                          >
+                            <span
+                              className="absolute top-1/2 block rounded-full transition-all duration-200 ease-out"
+                              style={{
+                                width: 12,
+                                height: 12,
+                                marginTop: -6,
+                                left: on ? 'auto' : 2,
+                                right: on ? 2 : 'auto',
+                                backgroundColor: on ? TOGGLE_ON_KNOB : '#5F5E5A',
+                              }}
+                            />
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                ))}
               </div>
             ))}
             <p style={{ ...s3, marginTop: 8 }}>

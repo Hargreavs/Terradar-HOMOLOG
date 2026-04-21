@@ -12,20 +12,11 @@
 import '../env'
 
 import { supabase } from '../supabase'
-
-const SICONFI_BASE = 'https://apidatalake.tesouro.gov.br/ords/siconfi/tt'
-
-interface SiconfiItem {
-  exercicio?: number
-  cod_ibge?: string | number
-  instituicao?: string
-  uf?: string
-  populacao?: number
-  coluna?: string
-  conta?: string
-  cod_conta?: string
-  valor?: number
-}
+import {
+  type SiconfiItem,
+  fetchDCA,
+  resolveDividaConsolidada,
+} from './utils/siconfi-dca-divida'
 
 /** Não sobrescrever colunas com NULL/undefined (nem string vazia). */
 function mergePreserveNonNull<T extends Record<string, unknown>>(
@@ -40,36 +31,6 @@ function mergePreserveNonNull<T extends Record<string, unknown>>(
     out[k] = v
   }
   return out as T
-}
-
-async function fetchDCA(
-  ibge: string,
-  anexo: string,
-  anos?: number[],
-): Promise<{ items: SiconfiItem[]; exercicio: number }> {
-  const years = anos ?? [2024, 2023, 2022]
-  for (const ano of years) {
-    const url = `${SICONFI_BASE}/dca?an_exercicio=${ano}&id_ente=${ibge}&no_anexo=${encodeURIComponent(anexo)}`
-    console.log(`  [SICONFI] ${anexo} ${ano} para ${ibge}...`)
-
-    const res = await fetch(url)
-    if (!res.ok) {
-      console.log(`    HTTP ${res.status}`)
-      continue
-    }
-
-    const data = (await res.json()) as { items?: SiconfiItem[] }
-    const items = data.items ?? []
-
-    if (items.length > 0) {
-      console.log(`    OK ${items.length} registros (exercicio ${ano})`)
-      return { items, exercicio: ano }
-    }
-    console.log(`    vazio para ${ano}`)
-  }
-
-  console.log(`    sem DCA para ${ibge}`)
-  return { items: [], exercicio: 0 }
 }
 
 function extrairContaReceita(items: SiconfiItem[], contaPrefixo: string): number {
@@ -96,69 +57,6 @@ function extrairContaBalanco(items: SiconfiItem[], contaPrefixo: string): number
     )
   })
   return match?.valor ?? 0
-}
-
-/** Valor de linha DCA com coluna de data (saldo em referência). */
-function extrairValorContaDataRealizada(
-  items: SiconfiItem[],
-  matchConta: (conta: string) => boolean,
-): number | null {
-  const match = items.find((item) => {
-    const conta = item.conta?.trim() ?? ''
-    const coluna = item.coluna?.trim() ?? ''
-    if (!matchConta(conta)) return false
-    return /^\d{2}\/\d{2}\/\d{4}$/.test(coluna)
-  })
-  const v = match?.valor
-  return v != null && Number.isFinite(v) ? v : null
-}
-
-const DIVIDA_CONSOLIDADA_RE =
-  /d[ií]vida\s+consolidada|d\s*c\s*\(\s*i\s*\)|\bdc\b.*consolidad/i
-
-/**
- * Dívida consolidada (DC) - procura conta explícita nos itens já carregados.
- */
-function extrairDividaConsolidadaDeItens(
-  items: SiconfiItem[],
-  rotulo: string,
-): number | null {
-  const v = extrairValorContaDataRealizada(items, (conta) => {
-    const cl = conta.toLowerCase()
-    if (/amortiza|d[ií]vida\s+ativa\s+tribut/i.test(cl)) return false
-    return DIVIDA_CONSOLIDADA_RE.test(conta)
-  })
-  if (v != null && Number.isFinite(v)) {
-    console.log(`  [divida consolidada] ${rotulo} → R$ ${v.toFixed(2)}`)
-    return v
-  }
-  return null
-}
-
-/** Só outros anexos se I-AB não tiver linha DC (evita re-download do I-AB). */
-async function buscarDividaConsolidadaAnexosExtras(
-  ibge: string,
-  exercicioBase: number,
-): Promise<number | null> {
-  const anexos = ['DCA-Anexo I-D', 'DCA-Anexo I-F']
-  const anos = [exercicioBase, exercicioBase - 1].filter((y) => y >= 2020)
-
-  for (const anexo of anexos) {
-    for (const ano of anos) {
-      const { items, exercicio } = await fetchDCA(ibge, anexo, [ano])
-      if (exercicio === 0 || items.length === 0) continue
-      const v = extrairDividaConsolidadaDeItens(
-        items,
-        `${anexo} ex.${exercicio}`,
-      )
-      if (v != null) return v
-    }
-  }
-
-  console.log(
-    `  [divida consolidada] sem linha DC nos anexos DCA (fonte indisponível)`,
-  )
-  return null
 }
 
 const IBGE_BASE = 'https://servicodados.ibge.gov.br/api/v3'
@@ -478,13 +376,12 @@ async function processarMunicipio(ibge: string): Promise<FiscalRow | null> {
       ? populacao / area
       : null
 
-  let dividaValor = extrairDividaConsolidadaDeItens(
+  const dividaValor = await resolveDividaConsolidada(
+    ibge,
+    exercicio,
     balancoItems,
-    `DCA-Anexo I-AB ex.${exBal || exercicio}`,
+    exBal,
   )
-  if (dividaValor == null) {
-    dividaValor = await buscarDividaConsolidadaAnexosExtras(ibge, exercicio)
-  }
 
   console.log(
     `  resumo ${municipioNome}/${uf} (receitas ex.${exercicio}, balanco ex.${exBal || 'n/a'}):`,

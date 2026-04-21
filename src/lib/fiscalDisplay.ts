@@ -167,6 +167,18 @@ export function valorDividaConsolidadaBrl(
   return null
 }
 
+/** Qual coluna de `fiscal_municipios` alimentou `valorDividaConsolidadaBrl` (exibição/PDF). */
+export function fonteDividaExibicao(
+  fiscalMun: Record<string, unknown> | null | undefined,
+): 'divida_consolidada' | 'passivo_nao_circulante' | null {
+  if (!fiscalMun) return null
+  const div = fiscalMun.divida_consolidada
+  if (div != null && String(div).trim() !== '') return 'divida_consolidada'
+  const p = fiscalMun.passivo_nao_circulante
+  if (p != null && String(p).trim() !== '') return 'passivo_nao_circulante'
+  return null
+}
+
 /** Texto para PDF/drawer: Mi ou "Sem dívida". */
 export function formatDividaConsolidadaExibicao(
   fiscalMun: Record<string, unknown> | null | undefined,

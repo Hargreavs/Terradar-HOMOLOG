@@ -121,6 +121,15 @@ export const REPORT_L10N_PT = {
   cfemEstSub: 'Alíquota',
   cfemEstSubSobre: 'sobre valor in-situ',
 
+  potencialTeoricoBrutoLabel: 'Potencial teórico bruto',
+  potencialTeoricoBrutoSub:
+    'Premissas fixas · 30 m × 2,5 t/m³ × teor master × preço spot',
+  potencialTeoricoBrutoAviso:
+    'Ordem de grandeza. Não constitui NI 43-101 / JORC. Valor realizável depende de cubagem técnica, recuperação metalúrgica e viabilidade operacional.',
+  cfemAliquotaLabel: 'Alíquota CFEM',
+  cfemAliquotaLinha:
+    'Alíquota CFEM: {pct}% sobre faturamento de lavra realizada',
+
   notaMetodologica:
     'Nota metodológica: valores indicativos; não constituem avaliação contábil ou garantia de receita.',
 
@@ -148,6 +157,11 @@ export const REPORT_L10N_PT = {
   indicadoresMun: 'Indicadores municipais',
   tblReceitaPropria: 'Receita própria',
   tblDivida: 'Dívida consolidada',
+  dividaRowConsolidada: 'Dívida consolidada',
+  dividaRowPassivo: 'Passivo não circulante',
+  dividaRowEndividamento: 'Endividamento',
+  dividaNotaProxy:
+    'Proxy de endividamento; dívida consolidada não disponível na série atual',
   tblPib: 'PIB municipal',
   tblDepTransf: 'Dependência de transferências',
   tblDepTransfSuffix: 'da receita corrente',
@@ -244,6 +258,38 @@ export const REPORT_L10N_PT = {
   p8NotaRodape2:
     '. Os dados foram verificados em múltiplas auditorias cruzadas, com consultas diretas a APIs oficiais (SICONFI, IBGE SIDRA), processamento de shapefiles geoespaciais e verificação processual no SEI-ANM. Nenhum dado foi inventado, inferido ou estimado sem base documental explícita.',
   p8ShareSite: 'Brasília/DF · sharetecnologia.com.br',
+
+  rodapeConf: 'Confidencial',
+
+  guSemRegistro: 'Sem registro',
+  tahSemEvento: 'Sem evento publicado',
+  tahPagoEmPrefix: 'Pago em',
+  tahTooltipSemEvento:
+    'Pagamentos em dia não geram evento autônomo na timeline pública do SCM. Verificar extrato no Cadastro Mineiro se houver suspeita de atraso.',
+
+  infraTipoFerrovia: 'Ferrovia',
+  infraTipoRodovia: 'Rodovia',
+  infraTipoHidrovia: 'Hidrovia',
+  infraTipoSedeMunicipal: 'Sede municipal',
+  infraTipoPorto: 'Porto',
+  infraTipoAeroporto: 'Aeroporto',
+
+  infraDetalheEmOperacao: 'Em Operação',
+  infraDetalheEstadual: 'Estadual',
+  infraDetalheFederal: 'Federal',
+  infraDetalheMunicipal: 'Municipal',
+  infraDetalheEmEstudo: 'Em Estudo',
+  infraDetalhePlanejada: 'Planejada',
+  infraSemOperacao: '(sem operação)',
+
+  cfemIndividualizadaIntro:
+    'A CFEM individualizada por processo não está disponível na base atual. A tabela abaixo mostra a CFEM total do município (todas as substâncias) por ano.',
+  cfemMunicipioIndisponivelTitulo:
+    'Histórico de CFEM do município indisponível',
+  cfemMunicipioIndisponivelCorpo:
+    'Os dados de arrecadação CFEM para este município ainda não foram indexados na base do TERRADAR. Consulte diretamente o portal ANM Dados Abertos para mais informações.',
+  cfemProcessoNaoProdutivoTpl: (regime: string) =>
+    `Este processo está em fase de ${regime} e não gera CFEM. A tabela traz a CFEM municipal como contexto regional.`,
 } as const
 
 export const REPORT_L10N_EN = {
@@ -364,6 +410,15 @@ export const REPORT_L10N_EN = {
   cfemEstSub: 'Rate',
   cfemEstSubSobre: 'on in-situ value',
 
+  potencialTeoricoBrutoLabel: 'Theoretical gross potential',
+  potencialTeoricoBrutoSub:
+    'Fixed assumptions · 30 m × 2.5 t/m³ × master grade × spot price',
+  potencialTeoricoBrutoAviso:
+    'Order-of-magnitude estimate. Does not constitute NI 43-101 / JORC. Realizable value depends on technical resource definition, metallurgical recovery and operational viability.',
+  cfemAliquotaLabel: 'CFEM royalty rate',
+  cfemAliquotaLinha:
+    'CFEM royalty rate: {pct}% on actual mining revenue',
+
   notaMetodologica:
     'Method note: indicative figures; not accounting advice or revenue assurance.',
 
@@ -391,6 +446,11 @@ export const REPORT_L10N_EN = {
   indicadoresMun: 'Municipal indicators',
   tblReceitaPropria: 'Own revenue',
   tblDivida: 'Consolidated debt',
+  dividaRowConsolidada: 'Consolidated debt',
+  dividaRowPassivo: 'Non-current liabilities',
+  dividaRowEndividamento: 'Indebtedness',
+  dividaNotaProxy:
+    'Proxy for indebtedness; consolidated debt not available in the current series',
   tblPib: 'Municipal GDP',
   tblDepTransf: 'Transfer dependence',
   tblDepTransfSuffix: 'of current revenue',
@@ -487,6 +547,38 @@ export const REPORT_L10N_EN = {
   p8NotaRodape2:
     '. All data points were cross-audited through direct queries to official APIs (SICONFI, IBGE SIDRA), processing of geospatial shapefiles and case review on SEI-ANM. No figure was fabricated, inferred or estimated without explicit documentary basis.',
   p8ShareSite: 'Brasília/DF · sharetecnologia.com.br',
+
+  rodapeConf: 'Confidential',
+
+  guSemRegistro: 'No record',
+  tahSemEvento: 'No event published',
+  tahPagoEmPrefix: 'Paid on',
+  tahTooltipSemEvento:
+    'On-time payments do not generate a standalone event in the public SCM timeline. Check the Mining Registry statement if a delay is suspected.',
+
+  infraTipoFerrovia: 'Railway',
+  infraTipoRodovia: 'Highway',
+  infraTipoHidrovia: 'Waterway',
+  infraTipoSedeMunicipal: 'Municipal seat',
+  infraTipoPorto: 'Port',
+  infraTipoAeroporto: 'Airport',
+
+  infraDetalheEmOperacao: 'Operational',
+  infraDetalheEstadual: 'State',
+  infraDetalheFederal: 'Federal',
+  infraDetalheMunicipal: 'Municipal',
+  infraDetalheEmEstudo: 'Under study',
+  infraDetalhePlanejada: 'Planned',
+  infraSemOperacao: '(not operational)',
+
+  cfemIndividualizadaIntro:
+    'Process-level CFEM is not available in the current dataset. The table below shows total municipal CFEM (all substances) by year.',
+  cfemMunicipioIndisponivelTitulo:
+    'Municipal CFEM history unavailable',
+  cfemMunicipioIndisponivelCorpo:
+    'CFEM collection data for this municipality has not yet been indexed in the TERRADAR database. Please consult the ANM Open Data portal directly for more information.',
+  cfemProcessoNaoProdutivoTpl: (regime: string) =>
+    `This process is in the ${regime} stage and does not generate CFEM. The table shows municipal CFEM as regional context.`,
 } as const
 
 export type ReportL10n = typeof REPORT_L10N_PT

@@ -1,19 +1,7 @@
-import type { FiltrosState, Regime } from '../types'
+import { REGIME_LAYER_ORDER } from './regimes'
+import type { FiltrosState } from '../types'
 
-const REGIMES_TODOS: Regime[] = [
-  'requerimento_pesquisa',
-  'concessao_lavra',
-  'autorizacao_pesquisa',
-  'req_lavra',
-  'licenciamento',
-  'lavra_garimpeira',
-  'registro_extracao',
-  'disponibilidade',
-  'mineral_estrategico',
-  'bloqueio_permanente',
-  'bloqueio_provisorio',
-]
-
+const REGIMES_TODOS = REGIME_LAYER_ORDER
 /** Número de filtros diferentes do padrão (badge na barra de busca). */
 export function countFiltrosAlterados(f: FiltrosState): number {
   let n = 0

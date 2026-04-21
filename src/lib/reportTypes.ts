@@ -1,5 +1,6 @@
 import type { ReportLang } from './reportLang'
 import type { CfemProcessoStatus } from './cfemProcessoStatus'
+import type { BloqueadorConstitucional } from './processoStatus'
 
 export type { ReportLang } from './reportLang'
 export type { CfemProcessoStatus } from './cfemProcessoStatus'
@@ -45,6 +46,14 @@ export interface MasterSubstancia {
   fonte_preco: string | null
   preco_brl: number | null
   unidade_preco: string
+  /**
+   * Unidade de mercado coloquial (ex.: 'oz' para ouro/prata, 'ct' para gemas,
+   * 'kg' para lítio/cobalto, 'lb' para urânio, 'L' para águas, 't' resto).
+   * Vem de `master_substancias.unidade_mercado`. Usada pelo helper
+   * `exibirPreco` para converter `preco_usd` (sempre USD/t internamente)
+   * na unidade apropriada para exibição no PDF.
+   */
+  unidade_mercado: 'oz' | 'ct' | 'kg' | 'lb' | 't' | 'L' | null
   reservas_br_pct: number | null
   producao_br_pct: number | null
   gap_pp: number | null
@@ -88,20 +97,36 @@ export interface ReportData {
   /** Strings formatadas das pendências ativas do processo (fn_pendencias_processo). */
   pendencias: string[]
   tah_status: string
+  /** Dica para PDF quando não há data de pagamento TAH na timeline pública. */
+  tah_status_tooltip?: string
   licenca_ambiental: string
   protocolo_anos: number
+  /** Cadastro ANM: `ativo_derivado === false` (efeitos regulatórios encerrados). */
+  is_terminal: boolean
+  /** Sobreposição com impedimento constitucional absoluto (ex.: TI regularizada). */
+  bloqueador_constitucional: BloqueadorConstitucional | null
 
   // Scores
-  risk_score: number
+  /**
+   * Risk Score consolidado (0–100) ou `null` quando o processo não possui
+   * score calculado no banco. Consumidores (drawer, PDF, LLM) devem renderizar
+   * um empty state / placeholder quando for `null` — NÃO cair em fallback `|| 0`.
+   */
+  risk_score: number | null
   rs_classificacao: string
+  /** Cor do rótulo Risk Score (hex); preferir valor persistido em `scores.risk_cor` quando existir. */
+  rs_cor: string
   rs_geo: RiskDimension
   rs_amb: RiskDimension
   rs_soc: RiskDimension
   rs_reg: RiskDimension
-  os_conservador: number
-  os_moderado: number
-  os_arrojado: number
+  /** Opportunity Score perfil conservador; `null` quando não há score persistido. */
+  os_conservador: number | null
+  os_moderado: number | null
+  os_arrojado: number | null
   os_classificacao: string
+  /** Cor do rótulo OS consolidado; preferir `scores.os_cor` quando existir. */
+  os_cor: string
   os_merc: RiskDimension
   os_viab: RiskDimension
   os_seg: RiskDimension
@@ -109,6 +134,17 @@ export interface ReportData {
   // Mercado
   /** Preço spot master (USD/t), `master_substancias.preco_usd` — não confundir com valor in-situ /ha. */
   preco_spot_usd_t: number
+  /**
+   * Preço canônico USD/t vindo de `master_substancias.preco_usd`, preservando
+   * `null` quando a substância não tem série publicada. Usado pelo helper
+   * `exibirPreco` para conversão de unidades em tempo de renderização.
+   */
+  preco_usd_por_t: number | null
+  /**
+   * Unidade de mercado coloquial para exibição (oz/ct/kg/lb/L/t). Vem de
+   * `master_substancias.unidade_mercado`. Pareada com `preco_usd_por_t`.
+   */
+  unidade_mercado: 'oz' | 'ct' | 'kg' | 'lb' | 't' | 'L' | null
   preco_oz_usd: number
   preco_g_brl: number
   ptax: number
@@ -137,6 +173,12 @@ export interface ReportData {
   mapa_base64: string
   layers: LayerData[]
   infraestrutura: InfraData[]
+  /** Sede municipal + distância (`fn_territorial_analysis`); opcional para PDF/UI. */
+  sede?: {
+    nome: string
+    uf: string
+    distancia_km: number
+  } | null
 
   // Fiscal
   capag_nota: string
@@ -148,6 +190,8 @@ export interface ReportData {
   capag_liquidez_nota: string
   receita_propria: string
   divida: string
+  /** Coluna usada para o valor em `divida` (texto); ex.: proxy PNC vs dívida consolidada CAPAG. */
+  divida_fonte?: 'divida_consolidada' | 'passivo_nao_circulante' | null
   pib_municipal: string
   dependencia_transf: string
   populacao: string

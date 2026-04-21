@@ -122,6 +122,81 @@ app.get('/api/processo/busca', async (req, res) => {
   }
 })
 
+/**
+ * Busca multi-canal: número ANM, CNPJ do titular, ou nome do titular.
+ * Detecta automaticamente pelo formato do input.
+ * Retorna até 15 resultados.
+ */
+app.get('/api/processo/search', async (req, res) => {
+  const raw = req.query.q
+  const q = typeof raw === 'string' ? decodeURIComponent(raw.trim()) : ''
+  if (!q || q.length < 2) {
+    return res.json({ ok: true, data: [], total: 0, tipo: 'vazio' })
+  }
+
+  try {
+    const soDigitos = q.replace(/\D/g, '')
+    const ehNumeroAnm =
+      /^\d{6}\/\d{4}$|^\d{3}\.\d{3}\/\d{4}$/.test(q) ||
+      (soDigitos.length === 10 && !q.includes(' '))
+    const ehCnpj = soDigitos.length === 14
+
+    let query = supabase
+      .from('processos')
+      .select(
+        'id, numero, titular, cnpj_titular, uf, municipio, substancia, regime, fase, area_ha, ativo_derivado, dados_insuficientes, geom',
+        { count: 'exact' },
+      )
+      .limit(15)
+
+    let tipo: 'numero' | 'cnpj' | 'titular' = 'titular'
+
+    if (ehNumeroAnm) {
+      tipo = 'numero'
+      let numeroFmt = q
+      if (soDigitos.length === 10) {
+        numeroFmt = `${soDigitos.slice(0, 3)}.${soDigitos.slice(3, 6)}/${soDigitos.slice(6, 10)}`
+      }
+      query = query.eq('numero', numeroFmt)
+    } else if (ehCnpj) {
+      tipo = 'cnpj'
+      const cnpjFmt = `${soDigitos.slice(0, 2)}.${soDigitos.slice(2, 5)}.${soDigitos.slice(5, 8)}/${soDigitos.slice(8, 12)}-${soDigitos.slice(12, 14)}`
+      query = query.eq('cnpj_titular', cnpjFmt)
+    } else {
+      tipo = 'titular'
+      query = query.ilike('titular', `%${q}%`)
+      query = query.order('numero', { ascending: false })
+    }
+
+    const { data, error, count } = await query
+
+    if (error) {
+      console.error('[api/processo/search] Erro:', error.message)
+      return res.status(500).json({ ok: false, error: error.message, tipo })
+    }
+
+    // Deriva tem_geom e remove o campo geom do payload (binário pesado).
+    const dataWithFlag = (data ?? []).map((row) => {
+      const { geom, ...rest } = row as Record<string, unknown>
+      return {
+        ...rest,
+        tem_geom: geom != null,
+      }
+    })
+
+    return res.json({
+      ok: true,
+      tipo,
+      total: count ?? data?.length ?? 0,
+      data: dataWithFlag,
+    })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Erro interno'
+    console.error('[api/processo/search] Exception:', msg)
+    return res.status(500).json({ ok: false, error: msg })
+  }
+})
+
 app.get('/api/processo', async (req, res) => {
   try {
     const raw = req.query.numero
@@ -158,7 +233,13 @@ app.get('/api/processo', async (req, res) => {
       getCfemHistorico(municipioIbge),
       getCapag(municipioIbge),
       getSubstancia(substanciaAnm),
-      getTerritoralAnalysis(numero),
+      getTerritoralAnalysis(numero).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(
+          `[/api/processo] análise territorial indisponível (processo ${numero} sem geom?): ${msg}`,
+        )
+        return null
+      }),
       getFiscal(municipioIbge),
       getIncentivosUf(String(proc.uf ?? '')),
       supabase.rpc('fn_pendencias_processo', { p_numero: numero }),
@@ -169,6 +250,28 @@ app.get('/api/processo', async (req, res) => {
         (mercado as Record<string, unknown> | null)?.mineral_critico_2025,
       ),
     )
+
+    // Classificação de arquétipo zumbi (grupamento / fantasma / disponibilidade
+    // / trâmite) quando `dados_insuficientes=true`. Chamada serial (não no
+    // Promise.all) para evitar overhead em processos normais — a RPC só roda
+    // para ~180 zumbis em toda a base. Retorna JSONB com label_regime,
+    // label_fase, explicacao_curta e arquetipo.
+    const dadosInsuficientesFlag = Boolean(
+      (proc as Record<string, unknown>).dados_insuficientes,
+    )
+    const classificacaoZumbi: Record<string, unknown> | null =
+      dadosInsuficientesFlag
+        ? await supabase
+            .rpc('fn_classificacao_zumbi', { p_numero: numero })
+            .then((r) => (r.data as Record<string, unknown> | null) ?? null)
+            .catch((err: unknown) => {
+              const msg = err instanceof Error ? err.message : String(err)
+              console.warn(
+                `[/api/processo] fn_classificacao_zumbi falhou para ${numero}: ${msg}`,
+              )
+              return null
+            })
+        : null
 
     const cfemTotal = (cfem as { valor_brl?: unknown }[]).reduce(
       (sum: number, r) => sum + Number(r.valor_brl ?? 0),
@@ -192,37 +295,53 @@ app.get('/api/processo', async (req, res) => {
     }
 
     try {
-      scores_auto = await computeScoresAuto(
-        processoParaScore,
-        analise,
-        mercado as Record<string, unknown> | null,
-        capag as Record<string, unknown> | null,
-        fiscalMun,
+      // Guard 1: processos sem geom têm `analise === null` (ver .catch no
+      // Promise.all acima). Skip scores_auto nesse caso porque
+      // computeScoresAuto depende de `analise.areas_protegidas`, `.bioma`,
+      // `.aquiferos`, `.infraestrutura`, `.portos`. Sem análise territorial
+      // não há como calcular risk_breakdown.
+      //
+      // Guard 2: processos zumbis (sem geom + sem substância + sem município)
+      // são marcados com `dados_insuficientes = true` no DB. Mesmo que algum
+      // pedaço de `analise` fosse obtido, não faz sentido calcular scores
+      // sintéticos para registros ANM fantasmas — o frontend deve mostrar
+      // só o banner de dados insuficientes.
+      const dadosInsuficientes = Boolean(
+        (proc as Record<string, unknown>).dados_insuficientes,
       )
-      if (!hasManualRiskScore(scores_final) && scores_auto) {
-        scores_final = {
-          ...(scores_final ?? {}),
-          risk_score: scores_auto.risk_score,
-          risk_label: scores_auto.risk_label,
-          risk_cor: scores_auto.risk_cor,
-          os_conservador: scores_auto.os_conservador,
-          os_moderado: scores_auto.os_moderado,
-          os_arrojado: scores_auto.os_arrojado,
-          os_label: scores_auto.os_label_conservador,
-          os_classificacao: scores_auto.os_label_conservador,
-          dimensoes_risco: {
-            geologico: scores_auto.risk_breakdown.geologico,
-            ambiental: scores_auto.risk_breakdown.ambiental,
-            social: scores_auto.risk_breakdown.social,
-            regulatorio: scores_auto.risk_breakdown.regulatorio,
-          },
-          dimensoes_oportunidade: {
-            mercado: scores_auto.os_breakdown.atratividade,
-            atratividade: scores_auto.os_breakdown.atratividade,
-            viabilidade: scores_auto.os_breakdown.viabilidade,
-            seguranca: scores_auto.os_breakdown.seguranca,
-          },
-          scores_fonte: 'auto',
+      if (analise && !dadosInsuficientes) {
+        scores_auto = await computeScoresAuto(
+          processoParaScore,
+          analise,
+          mercado as Record<string, unknown> | null,
+          capag as Record<string, unknown> | null,
+          fiscalMun,
+        )
+        if (!hasManualRiskScore(scores_final) && scores_auto) {
+          scores_final = {
+            ...(scores_final ?? {}),
+            risk_score: scores_auto.risk_score,
+            risk_label: scores_auto.risk_label,
+            risk_cor: scores_auto.risk_cor,
+            os_conservador: scores_auto.os_conservador,
+            os_moderado: scores_auto.os_moderado,
+            os_arrojado: scores_auto.os_arrojado,
+            os_label: scores_auto.os_label_conservador,
+            os_classificacao: scores_auto.os_label_conservador,
+            dimensoes_risco: {
+              geologico: scores_auto.risk_breakdown.geologico,
+              ambiental: scores_auto.risk_breakdown.ambiental,
+              social: scores_auto.risk_breakdown.social,
+              regulatorio: scores_auto.risk_breakdown.regulatorio,
+            },
+            dimensoes_oportunidade: {
+              mercado: scores_auto.os_breakdown.atratividade,
+              atratividade: scores_auto.os_breakdown.atratividade,
+              viabilidade: scores_auto.os_breakdown.viabilidade,
+              seguranca: scores_auto.os_breakdown.seguranca,
+            },
+            scores_fonte: 'auto',
+          }
         }
       }
     } catch (err) {
@@ -254,6 +373,7 @@ app.get('/api/processo', async (req, res) => {
       ok: true,
       data: {
         processo,
+        classificacao_zumbi: classificacaoZumbi,
         scores: scores_final,
         scores_auto,
         territorial: { layers, infra },

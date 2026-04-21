@@ -3,9 +3,15 @@ export type Regime =
   | 'concessao_lavra'
   | 'autorizacao_pesquisa'
   | 'req_lavra'
+  | 'req_plg'
   | 'licenciamento'
   | 'lavra_garimpeira'
   | 'registro_extracao'
+  | 'req_registro_extracao'
+  | 'requerimento_licenciamento'
+  | 'direito_requerer_lavra'
+  | 'apto_disponibilidade'
+  | 'reconhecimento_geologico'
   | 'disponibilidade'
   | 'mineral_estrategico'
   | 'bloqueio_provisorio'
@@ -87,6 +93,25 @@ export interface DadosFiscais {
   observacao: string
 }
 
+/**
+ * Arquétipos dos processos "zumbis" (dados_insuficientes=true). Cada arquétipo
+ * tem copy própria no banner vermelho + labels dinâmicas nos campos
+ * Regime/Fase da aba Processo. Populado pela SQL `fn_classificacao_zumbi`.
+ */
+export type ArquetipoZumbi =
+  | 'grupamento_mineiro'
+  | 'fantasma_cadastral'
+  | 'disponibilidade'
+  | 'tramite_administrativo'
+
+export interface ClassificacaoZumbi {
+  arquetipo: ArquetipoZumbi
+  label_regime: string
+  label_fase: string
+  explicacao_curta: string
+  ultimo_evento_codigo: number | null
+}
+
 export interface Processo {
   id: string
   numero: string
@@ -99,6 +124,20 @@ export interface Processo {
   cnpj_titular?: string
   /** CNPJ da filial operacional (fase 2 / BrasilAPI), quando existir. */
   cnpj_filial?: string
+  /**
+   * Marca processo como "dados insuficientes para análise" — requerimentos de
+   * grupamento mineiro pendentes (180 casos). Critério: geom NULL + substância
+   * NULL/SCM_NAO_INFORMADA + municipio_ibge NULL. Backend propaga em
+   * /api/processo e /api/processo/search. Drawer usa para:
+   *   - banner vermelho no topo (diferente do âmbar de sem-geom)
+   *   - esconder abas Risco/Oportunidade/Inteligência (dados são invenção)
+   */
+  dados_insuficientes?: boolean
+  /**
+   * Classificação de arquétipo para processos com dados_insuficientes=true.
+   * Populado pelo backend via fn_classificacao_zumbi. NULL para não-zumbis.
+   */
+  classificacao_zumbi?: ClassificacaoZumbi | null
   /** NUP SEI (Microdados SCM / cadastro). */
   nup_sei?: string
   /** Resumo de eventos SCM (ingestão 12.13). */
@@ -124,6 +163,8 @@ export interface Processo {
   /** Mês do protocolo (1–12) quando disponível; usado p.ex. para regra SEI pré-2019. */
   mes_protocolo?: number | null
   situacao: 'ativo' | 'inativo' | 'bloqueado'
+  /** Quando `false`, processo sem efeitos regulatórios ativos (extinto / terminal). */
+  ativo_derivado?: boolean | null
   risk_score: number | null
   risk_breakdown: RiskBreakdown | null
   /** Decomposição por variável (mock/UI). Null quando `risk_score` é null. */
@@ -152,6 +193,9 @@ export interface Processo {
   os_moderado_persistido?: number | null
   os_arrojado_persistido?: number | null
   os_label_persistido?: string | null
+  /** Rótulos persistidos em `scores` (batch/API), prioridade sobre faixa derivada do número. */
+  risk_label_persistido?: string | null
+  risk_cor_persistido?: string | null
 }
 
 export interface GeoJSONPolygon {

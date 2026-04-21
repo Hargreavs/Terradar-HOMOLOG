@@ -48,6 +48,7 @@ import {
   REGIME_COLORS,
   REGIME_COLORS_MAP,
   REGIME_LABELS,
+  REGIME_LAYER_ORDER,
 } from '../../lib/regimes'
 import { CamadaTooltipHover } from '../filters/CamadaTooltipHover'
 import {
@@ -83,7 +84,12 @@ import {
   fetchProcessoCompleto,
   type ProcessoCompleto,
 } from '../../lib/processoApi'
-import type { AlertaLegislativo, Processo, Regime } from '../../types'
+import type {
+  AlertaLegislativo,
+  ClassificacaoZumbi,
+  Processo,
+  Regime,
+} from '../../types'
 import { radarFeedIdParaAlertaProcesso } from '../../lib/radarFeedIdFromProcessoAlerta'
 import {
   MAPBOX_STYLE_SATELLITE,
@@ -115,30 +121,154 @@ function buildEnrichmentPatch(
   rd: ReportData,
   api: ProcessoCompleto,
 ): Partial<Processo> {
+  // Propagação honesta de scores: `null` em `rd.*` significa "processo sem
+  // score no banco". Temos que SOBRESCREVER o valor residual do Zustand
+  // (setando `null` no patch) em vez de silenciar o campo via guard `if`.
+  // Caso contrário, abrir o drawer de um zumbi pós-limpeza ainda mostraria
+  // o RS da sessão anterior (bug identificado 2026-04-21).
+  //
+  // O defensivo `rd.risk_score !== 0` rejeita o raro caso em que algum
+  // call-site antigo ainda retorna 0 inventado. Pode ser removido depois
+  // que o fallback silencioso for 100% extirpado.
+  const riskScoreHonesto =
+    typeof rd.risk_score === 'number' &&
+    Number.isFinite(rd.risk_score) &&
+    rd.risk_score !== 0
+      ? rd.risk_score
+      : null
+
+  const rsGeoHonesto = riskScoreHonesto != null ? rd.rs_geo.valor : null
+  const rsAmbHonesto = riskScoreHonesto != null ? rd.rs_amb.valor : null
+  const rsSocHonesto = riskScoreHonesto != null ? rd.rs_soc.valor : null
+  const rsRegHonesto = riskScoreHonesto != null ? rd.rs_reg.valor : null
+
   const patch: Partial<Processo> = {
     id: p.id,
-    risk_breakdown: {
-      geologico: rd.rs_geo.valor,
-      ambiental: rd.rs_amb.valor,
-      social: rd.rs_soc.valor,
-      regulatorio: rd.rs_reg.valor,
-    },
-  }
-  if (rd.os_conservador != null) {
-    patch.os_conservador_persistido = rd.os_conservador
-  }
-  if (rd.os_moderado != null) {
-    patch.os_moderado_persistido = rd.os_moderado
-  }
-  if (rd.os_arrojado != null) {
-    patch.os_arrojado_persistido = rd.os_arrojado
-  }
-  const osLabel = String(rd.os_classificacao ?? '').trim()
-  if (osLabel !== '') {
-    patch.os_label_persistido = osLabel
+    risk_score: riskScoreHonesto,
+    risk_breakdown:
+      riskScoreHonesto != null &&
+      rsGeoHonesto != null &&
+      rsAmbHonesto != null &&
+      rsSocHonesto != null &&
+      rsRegHonesto != null
+        ? {
+            geologico: rsGeoHonesto,
+            ambiental: rsAmbHonesto,
+            social: rsSocHonesto,
+            regulatorio: rsRegHonesto,
+          }
+        : null,
   }
 
+  // Opportunity Score persistido segue a mesma política: aceita `null`
+  // genuíno como valor válido (nunca cai em fallback `|| 0`).
+  const osConsHonesto =
+    typeof rd.os_conservador === 'number' &&
+    Number.isFinite(rd.os_conservador) &&
+    rd.os_conservador !== 0
+      ? rd.os_conservador
+      : null
+  const osModHonesto =
+    typeof rd.os_moderado === 'number' &&
+    Number.isFinite(rd.os_moderado) &&
+    rd.os_moderado !== 0
+      ? rd.os_moderado
+      : null
+  const osArrHonesto =
+    typeof rd.os_arrojado === 'number' &&
+    Number.isFinite(rd.os_arrojado) &&
+    rd.os_arrojado !== 0
+      ? rd.os_arrojado
+      : null
+  patch.os_conservador_persistido = osConsHonesto
+  patch.os_moderado_persistido = osModHonesto
+  patch.os_arrojado_persistido = osArrHonesto
+
+  const osLabel = String(rd.os_classificacao ?? '').trim()
+  patch.os_label_persistido = osLabel !== '' ? osLabel : null
+
+  const rsLab = String(rd.rs_classificacao ?? '').trim()
+  patch.risk_label_persistido =
+    rsLab !== '' && riskScoreHonesto != null ? rsLab : null
+  const rsC = String(rd.rs_cor ?? '').trim()
+  patch.risk_cor_persistido =
+    rsC !== '' && riskScoreHonesto != null ? rsC : null
+
   const proc = api.processo as Record<string, unknown> | undefined
+  if (proc && typeof proc.ativo_derivado === 'boolean') {
+    patch.ativo_derivado = proc.ativo_derivado
+  }
+
+  // Flag de "dados insuficientes" (requerimentos de grupamento mineiro
+  // pendentes — 180 casos). Sempre seta (false quando ausente) para que
+  // o drawer possa renderizar banner vermelho e ocultar abas de score.
+  patch.dados_insuficientes =
+    (proc?.dados_insuficientes as boolean | undefined) ?? false
+
+  // Classificação de arquétipo zumbi (vem de /api/processo no nível
+  // `api.classificacao_zumbi`, não dentro de `api.processo`). Usada no
+  // banner vermelho e nos labels dinâmicos de Regime/Fase da aba Processo.
+  const classZumbi = (api as Record<string, unknown>).classificacao_zumbi as
+    | ClassificacaoZumbi
+    | null
+    | undefined
+  patch.classificacao_zumbi = classZumbi ?? null
+
+  // Enriquecimento de campos-texto e datas do ciclo regulatório
+  // (resolve bug de campos "N/D" no drawer quando Processo do tile não
+  //  carrega esses campos, mas api.processo traz via .select('*'))
+  if (proc) {
+    const pickStr = (key: string): string | undefined => {
+      const v = proc[key]
+      return typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined
+    }
+    const pickDate = (key: string): string | undefined => {
+      const v = proc[key]
+      if (v == null) return undefined
+      const s = String(v).trim()
+      return s !== '' ? s : undefined
+    }
+    const pickNum = (key: string): number | undefined => {
+      const v = proc[key]
+      if (v == null) return undefined
+      const n = Number(v)
+      return Number.isFinite(n) ? n : undefined
+    }
+
+    const nupSei = pickStr('nup_sei')
+    if (nupSei !== undefined) patch.nup_sei = nupSei
+
+    const cnpjTitular = pickStr('cnpj_titular')
+    if (cnpjTitular !== undefined) patch.cnpj_titular = cnpjTitular
+
+    const cnpjFilial = pickStr('cnpj_filial')
+    if (cnpjFilial !== undefined) patch.cnpj_filial = cnpjFilial
+
+    const alvaraValidade = pickDate('alvara_validade')
+    if (alvaraValidade !== undefined) patch.alvara_validade = alvaraValidade
+
+    const ultimoEvData = pickDate('ultimo_evento_data')
+    if (ultimoEvData !== undefined) patch.ultimo_evento_data = ultimoEvData
+
+    const ultimoEvDesc = pickStr('ultimo_evento_descricao')
+    if (ultimoEvDesc !== undefined) patch.ultimo_evento_descricao = ultimoEvDesc
+
+    const ultimoEvCod = pickNum('ultimo_evento_codigo')
+    if (ultimoEvCod !== undefined) patch.ultimo_evento_codigo = ultimoEvCod
+
+    const portariaData = pickDate('portaria_lavra_data')
+    if (portariaData !== undefined) patch.portaria_lavra_data = portariaData
+
+    const portariaDou = pickStr('portaria_lavra_dou')
+    if (portariaDou !== undefined) patch.portaria_lavra_dou = portariaDou
+
+    const licencaData = pickDate('licenca_ambiental_data')
+    if (licencaData !== undefined) patch.licenca_ambiental_data = licencaData
+
+    const inicioLavra = pickDate('inicio_lavra_data')
+    if (inicioLavra !== undefined) patch.inicio_lavra_data = inicioLavra
+  }
+
   const sp = proc?.scores_persistido as
     | {
         dimensoes_risco?: Processo['dimensoes_risco_persistido']
@@ -1145,10 +1275,22 @@ export function MapView() {
   const [relatorioApiLoading, setRelatorioApiLoading] = useState(false)
   const [relatorioApiErro, setRelatorioApiErro] = useState<string | null>(null)
 
+  // Quando `processoSelecionado.id` muda, limpamos apenas `dadosApi` e `erro`
+  // (idempotente com o que `abrirRelatorioDoProcesso` já faz na abertura).
+  // Intencionalmente NÃO tocamos `relatorioApiLoading` aqui:
+  // `abrirRelatorioDoProcesso` é a única fonte autoritativa desse flag
+  // (seta `true` ao abrir, `false` no `finally` após o fetch). Se resetássemos
+  // aqui, causaríamos um flicker cruel: como este effect roda DEPOIS do
+  // commit em que `abrirRelatorioDoProcesso` fez `setRelatorioApiLoading(true)`,
+  // o `false` sobrescrito aqui provoca um render intermediário onde
+  // `loadingApi=false && dadosApi=null`, que faz o `RelatorioCompleto` cair
+  // no guard `if (!dados) return null` e desmontar o drawer no meio da
+  // animação de entrada. Quando o fetch resolve, o drawer remonta já em
+  // `aberto=true` sem CSS transition — visualmente aparece como "pisca,
+  // demora um tempinho e abre sem animação".
   useEffect(() => {
     setRelatorioDadosApi(null)
     setRelatorioApiErro(null)
-    setRelatorioApiLoading(false)
   }, [processoSelecionado?.id])
 
   useEffect(() => {
@@ -1177,6 +1319,70 @@ export function MapView() {
     return () => controller.abort()
   }, [processoSelecionado?.id])
 
+  /**
+   * Abre o drawer do relatório para o processo passado, disparando em
+   * background o enrichment completo (buildReportData + fetchProcessoCompleto
+   * → buildEnrichmentPatch → mergeProcessoSelecionado + setRelatorioDadosApi)
+   * quando `p.fromApi`. Extração da lógica que antes estava duplicada nos
+   * handlers do popup (aba Processo e aba Risco). Também usada pelo
+   * MapSearchBar via prop `onAbrirRelatorio` — necessário porque processos
+   * sem geom não têm polígono pra abrir popup clicando no mapa.
+   *
+   * O drawer abre imediatamente (síncronamente) após setar os states de
+   * loading; o enrichment roda em segundo plano. Callers podem `await` o
+   * retorno se quiserem esperar o fetch terminar.
+   */
+  const abrirRelatorioDoProcesso = useCallback(
+    async (
+      p: Processo,
+      abaInicial: 'processo' | 'risco' = 'processo',
+    ): Promise<void> => {
+      armarConsumoProximoCliqueMapa(mapDragClickGuardRef)
+      tearDownProcessoPopupRef.current?.()
+      setRelatorioAbaInicial(abaInicial)
+      if (abaInicial === 'risco') {
+        setRelatorioAbaRiscoRequestId((n) => n + 1)
+      }
+      if (p.fromApi) {
+        setRelatorioApiErro(null)
+        setRelatorioDadosApi(null)
+        setRelatorioApiLoading(true)
+      } else {
+        setRelatorioDadosApi(null)
+        setRelatorioApiErro(null)
+        setRelatorioApiLoading(false)
+      }
+      useMapStore.getState().setRelatorioDrawerAberto(true)
+
+      if (!p.fromApi) return
+      try {
+        const [rd, api] = await Promise.all([
+          buildReportData(p.numero),
+          fetchProcessoCompleto(p.numero),
+        ])
+        const patch = buildEnrichmentPatch(p, rd, api)
+        const pEnriquecido = { ...p, ...patch } as Processo
+        setRelatorioDadosApi(relatorioDataFromReportData(rd, pEnriquecido))
+        useMapStore.getState().mergeProcessoSelecionado(patch)
+      } catch (e) {
+        setRelatorioApiErro(
+          e instanceof Error
+            ? e.message
+            : 'Não foi possível carregar o relatório.',
+        )
+      } finally {
+        setRelatorioApiLoading(false)
+      }
+    },
+    [
+      setRelatorioAbaInicial,
+      setRelatorioAbaRiscoRequestId,
+      setRelatorioApiErro,
+      setRelatorioDadosApi,
+      setRelatorioApiLoading,
+    ],
+  )
+
   const verRelatorioRef = useRef<() => void>(() => {})
   verRelatorioRef.current = () => {
     if (pendingFecharProcessoTimeoutRef.current) {
@@ -1186,42 +1392,10 @@ export function MapView() {
     const st = useMapStore.getState()
     if (st.relatorioDrawerAberto) {
       st.setRelatorioDrawerAberto(false)
-    } else {
-      armarConsumoProximoCliqueMapa(mapDragClickGuardRef)
-      tearDownProcessoPopupRef.current?.()
-      setRelatorioAbaInicial('processo')
-      const p = st.processoSelecionado
-      if (p?.fromApi) {
-        setRelatorioApiErro(null)
-        setRelatorioDadosApi(null)
-        setRelatorioApiLoading(true)
-        void (async () => {
-          try {
-            const [rd, api] = await Promise.all([
-              buildReportData(p.numero),
-              fetchProcessoCompleto(p.numero),
-            ])
-            setRelatorioDadosApi(relatorioDataFromReportData(rd, p))
-            useMapStore.getState().mergeProcessoSelecionado(
-              buildEnrichmentPatch(p, rd, api),
-            )
-          } catch (e) {
-            setRelatorioApiErro(
-              e instanceof Error
-                ? e.message
-                : 'Não foi possível carregar o relatório.',
-            )
-          } finally {
-            setRelatorioApiLoading(false)
-          }
-        })()
-      } else {
-        setRelatorioDadosApi(null)
-        setRelatorioApiErro(null)
-        setRelatorioApiLoading(false)
-      }
-      st.setRelatorioDrawerAberto(true)
+      return
     }
+    const p = st.processoSelecionado
+    if (p) void abrirRelatorioDoProcesso(p, 'processo')
   }
 
   const abrirRelatorioAbaRiscoRef = useRef<() => void>(() => {})
@@ -1230,37 +1404,8 @@ export function MapView() {
       clearTimeout(pendingFecharProcessoTimeoutRef.current)
       pendingFecharProcessoTimeoutRef.current = null
     }
-    armarConsumoProximoCliqueMapa(mapDragClickGuardRef)
-    tearDownProcessoPopupRef.current?.()
-    setRelatorioAbaInicial('risco')
-    setRelatorioAbaRiscoRequestId((n) => n + 1)
     const p = useMapStore.getState().processoSelecionado
-    if (p?.fromApi) {
-      setRelatorioApiErro(null)
-      setRelatorioDadosApi(null)
-      setRelatorioApiLoading(true)
-      void (async () => {
-        try {
-          const [rd, api] = await Promise.all([
-            buildReportData(p.numero),
-            fetchProcessoCompleto(p.numero),
-          ])
-          setRelatorioDadosApi(relatorioDataFromReportData(rd, p))
-          useMapStore.getState().mergeProcessoSelecionado(
-            buildEnrichmentPatch(p, rd, api),
-          )
-        } catch (e) {
-          setRelatorioApiErro(
-            e instanceof Error
-              ? e.message
-              : 'Não foi possível carregar o relatório.',
-          )
-        } finally {
-          setRelatorioApiLoading(false)
-        }
-      })()
-    }
-    useMapStore.getState().setRelatorioDrawerAberto(true)
+    if (p) void abrirRelatorioDoProcesso(p, 'risco')
   }
 
   useEffect(() => {
@@ -3069,6 +3214,7 @@ export function MapView() {
                 m === 'risco' ? modoLegenda : 'risco',
               )
             }
+            onAbrirRelatorio={abrirRelatorioDoProcesso}
           />
         </div>
       </div>
@@ -3233,17 +3379,7 @@ export function MapView() {
               }}
             >
               <ul className="flex flex-col gap-2">
-                {(
-                  [
-                    'requerimento_pesquisa',
-                    'concessao_lavra',
-                    'autorizacao_pesquisa',
-                    'req_lavra',
-                    'licenciamento',
-                    'lavra_garimpeira',
-                    'registro_extracao',
-                  ] as Regime[]
-                ).map((r) => (
+                {REGIME_LAYER_ORDER.slice(0, 12).map((r) => (
                   <li
                     key={r}
                     className="flex items-center gap-2.5"
@@ -3280,14 +3416,7 @@ export function MapView() {
                 style={{ height: 1, backgroundColor: '#2C2C2A' }}
               />
               <ul className="flex flex-col gap-2">
-                {(
-                  [
-                    'disponibilidade',
-                    'mineral_estrategico',
-                    'bloqueio_provisorio',
-                    'bloqueio_permanente',
-                  ] as Regime[]
-                ).map((r) => (
+                {REGIME_LAYER_ORDER.slice(12).map((r) => (
                   <li
                     key={r}
                     className="flex items-center gap-2.5"

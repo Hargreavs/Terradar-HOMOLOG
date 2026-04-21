@@ -34,6 +34,14 @@ export interface TerritorialAnalysis {
   portos: Porto[]
   bioma: { nome: string }[]
   aquiferos: { nome: string; tipo: string }[]
+  /** `fn_territorial_analysis` — sede municipal e distância ao polígono do processo. */
+  sede?: {
+    nome: string
+    uf: string
+    municipio_ibge: string
+    distancia_km: number
+    fonte?: string
+  } | null
 }
 
 /** Busca processo por número (ex: "864.231/2017"). Inclui cnpj_titular, nup_sei, etc.
@@ -149,16 +157,41 @@ export async function getSubstancia(substanciaAnm: string) {
 export async function getTerritoralAnalysis(
   numeroProcesso: string,
 ): Promise<TerritorialAnalysis> {
+  // 1. Tentar cache_territorial primeiro
+  const { data: cached, error: cacheError } = await supabase
+    .from('cache_territorial')
+    .select('territorial')
+    .eq('numero', numeroProcesso)
+    .maybeSingle()
+
+  if (!cacheError && cached?.territorial) {
+    return cached.territorial as TerritorialAnalysis
+  }
+
+  // 2. Cache miss — chamar função original
   const { data, error } = await supabase.rpc('fn_territorial_analysis', {
     p_numero: numeroProcesso,
   })
-
   if (error) {
     console.error('[getTerritoralAnalysis] Erro:', error.message)
     throw new Error(`Análise territorial falhou: ${error.message}`)
   }
 
-  return data as TerritorialAnalysis
+  // 3. Popular cache para próximas chamadas (fire-and-forget, não bloqueia retorno)
+  const territorial = data as TerritorialAnalysis
+  supabase
+    .from('cache_territorial')
+    .upsert(
+      { numero: numeroProcesso, territorial, calculated_at: new Date().toISOString() },
+      { onConflict: 'numero', ignoreDuplicates: false }
+    )
+    .then(({ error: upsertError }) => {
+      if (upsertError) {
+        console.warn(`[cache_territorial] upsert falhou para ${numeroProcesso}:`, upsertError.message)
+      }
+    })
+
+  return territorial
 }
 
 /** Dados fiscais (SICONFI/IBGE) para o município - último exercício na tabela (`idh`, `divida_consolidada`, etc.). */
@@ -203,6 +236,7 @@ export async function computeScoresAuto(
     area_ha: number
     alvara_validade: string | null
     uf: string
+    ativo_derivado?: boolean
   },
   analise: TerritorialAnalysis,
   mercado: Record<string, unknown> | null,
@@ -234,6 +268,7 @@ export async function computeScoresAuto(
     area_ha: processo.area_ha,
     alvara_validade: processo.alvara_validade,
     uf: processo.uf,
+    ativo_derivado: processo.ativo_derivado !== false,
     areas_protegidas: analise.areas_protegidas,
     infraestrutura: analise.infraestrutura,
     portos: analise.portos,

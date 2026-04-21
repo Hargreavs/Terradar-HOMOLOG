@@ -17,6 +17,7 @@ import type {
   ObservacoesTecnicasItem,
   RelatorioData,
   RelatorioOportunidadeData,
+  RelatorioScoresExibicaoApi,
 } from '../../data/relatorio.mock'
 import {
   rotuloFontePublicacaoExibicao,
@@ -25,7 +26,11 @@ import {
 import { estiloBadgeRelevancia } from '../../lib/relevanciaAlerta'
 import { formatarRealBrlInteligente } from '../../lib/formatarRealBrlInteligente'
 import { formatarUsdMiInteligente } from '../../lib/formatarUsdMiInteligente'
-import { labelSubstanciaParaExibicao } from '../../lib/substancias'
+import {
+  formatarSubstancia,
+  labelSubstanciaParaExibicao,
+  substanciaDesconhecida,
+} from '../../lib/substancias'
 import {
   PREFIX_SEM_FONTE_RES_PROD,
   textoAposSemFonteOficial,
@@ -42,7 +47,14 @@ import {
   type PerfilOportunidadeOSKey,
 } from '../../lib/oportunidadeRelatorioUi'
 import { getOpportunityLabel } from '../../lib/opportunityScore'
-import type { AlertaLegislativo, Fase, Processo, Regime } from '../../types'
+import { normalizarSeparadoresRotuloDb } from '../../lib/normalizarRotuloScore'
+import type {
+  AlertaLegislativo,
+  ClassificacaoZumbi,
+  Fase,
+  Processo,
+  Regime,
+} from '../../types'
 import { ExportReportButton } from '../report/ExportReportButton'
 import { fmtCfemEstimadaBrlMiPerHa } from '../report/reportHtmlUtils'
 import { fraseDeterminadaPeloIndicadorCapag } from '../../lib/capagPiorIndicador'
@@ -229,6 +241,67 @@ function classificacaoRiscoTotal(r: number): string {
   if (r < 40) return 'Baixo risco'
   if (r <= 69) return 'Risco médio'
   return 'Alto risco'
+}
+
+const COR_BADGE_EXTINTO = '#6B7280'
+
+function isRotuloScoreTerminado(label: string): boolean {
+  return /extinto|N\/A|terminal/i.test(label)
+}
+
+function montarExibicaoScoresRelatorio(
+  processo: Processo,
+  scoresApi: RelatorioScoresExibicaoApi | undefined,
+): {
+  rsLabel: string
+  rsCorNumero: string
+  rsCorRotulo: string
+  /**
+   * `valorPerfil` aceita `null` para processos sem Opportunity Score
+   * calculado (empty state da aba Oportunidade). Retorna string vazia
+   * nesse caso — caller decide se exibe "—" ou oculta.
+   */
+  osLabel: (valorPerfil: number | null) => string
+  osCor: (valorPerfil: number | null) => string
+} {
+  const se = scoresApi
+  const rsLabel = normalizarSeparadoresRotuloDb(
+    se?.rs_label?.trim() ||
+      processo.risk_label_persistido?.trim() ||
+      (processo.risk_score != null
+        ? classificacaoRiscoTotal(processo.risk_score)
+        : ''),
+  )
+  const rsCorBase =
+    se?.rs_cor?.trim() ||
+    processo.risk_cor_persistido?.trim() ||
+    (processo.risk_score != null
+      ? corFaixaRisco(processo.risk_score)
+      : '#888780')
+  const terminadoRisco = isRotuloScoreTerminado(rsLabel)
+  const rsCorNumero = terminadoRisco ? '#888780' : rsCorBase
+  const rsCorRotulo = terminadoRisco ? COR_BADGE_EXTINTO : rsCorBase
+
+  const osPersistRaw =
+    se?.os_label?.trim() || processo.os_label_persistido?.trim()
+  const osPersist = normalizarSeparadoresRotuloDb(osPersistRaw ?? '')
+  const osCorPersist = se?.os_cor?.trim()
+
+  return {
+    rsLabel,
+    rsCorNumero,
+    rsCorRotulo,
+    osLabel: (valorPerfil: number | null) => {
+      if (osPersist && osPersist !== '') return osPersist
+      if (valorPerfil == null) return ''
+      return getOpportunityLabel(valorPerfil)
+    },
+    osCor: (valorPerfil: number | null) => {
+      if (osCorPersist && osCorPersist !== '') return osCorPersist
+      if (valorPerfil == null) return '#888780'
+      return corFaixaOS(valorPerfil)
+    },
+  }
 }
 
 /** Ícones de tendência de preço (subaba Inteligência). */
@@ -1121,10 +1194,14 @@ function TextoOportunidadeComDestaqueNumeros({
   destaques,
 }: {
   texto: string
-  destaques: readonly number[]
+  // Aceita `null` nos elementos porque scores podem vir indisponíveis
+  // (zumbis, sem geom, processos sem score). Entradas `null` são ignoradas
+  // — não geram destaque no texto renderizado.
+  destaques: readonly (number | null)[]
 }) {
   let partes: ReactNode[] = [texto]
   destaques.forEach((num, di) => {
+    if (num == null) return
     const str = String(num)
     partes = partes.flatMap((parte, pi) => {
       if (typeof parte !== 'string') return [parte]
@@ -1332,6 +1409,81 @@ export interface RelatorioCompletoProps {
   relatorioApiErro?: string | null
 }
 
+/**
+ * Banner no topo do drawer. 3 estados mutuamente exclusivos:
+ * - `dadosInsuficientes=true` → vermelho, "dados insuficientes" (prioridade
+ *   máxima: mesmo que semGeom também seja true, este banner prevalece).
+ * - `semGeom=true && !dadosInsuficientes` → âmbar, "sem georreferenciamento".
+ * - ambos false → não renderiza (return null).
+ *
+ * Renderizado no container scroll (acima do bloco `aba === ...`) para ficar
+ * visível em todas as 6 abas, não só na aba Processo.
+ */
+function RelatorioBanner({
+  dadosInsuficientes,
+  semGeom,
+  classificacaoZumbi,
+}: {
+  dadosInsuficientes: boolean
+  semGeom: boolean
+  classificacaoZumbi: ClassificacaoZumbi | null
+}) {
+  if (dadosInsuficientes) {
+    // Copy do banner vermelho vem da classificação de arquétipo. Só 33 de
+    // 180 zumbis são grupamento mineiro — os outros são fantasma cadastral,
+    // disponibilidade ou trâmite administrativo, cada um com texto próprio.
+    const tituloBanner =
+      classificacaoZumbi?.label_regime ?? 'Dados insuficientes para análise'
+    const explicacao =
+      classificacaoZumbi?.explicacao_curta ??
+      'Este processo não possui substância, município ou geometria declarados, o que impede o cálculo de Risk Score, Opportunity Score e análise de mercado.'
+    return (
+      <div
+        style={{
+          padding: '12px 14px',
+          background: 'rgba(220, 72, 72, 0.08)',
+          border: '1px solid rgba(220, 72, 72, 0.32)',
+          borderRadius: 6,
+          fontSize: 12,
+          color: '#E88080',
+          lineHeight: 1.55,
+        }}
+      >
+        <strong style={{ display: 'block', marginBottom: 4 }}>
+          {tituloBanner}
+        </strong>
+        {explicacao}{' '}
+        Dados cadastrais básicos seguem disponíveis na aba Processo. Análise
+        de risco, mercado e território estão indisponíveis para este processo.
+      </div>
+    )
+  }
+
+  if (semGeom) {
+    return (
+      <div
+        style={{
+          padding: '10px 14px',
+          background: 'rgba(232, 168, 48, 0.08)',
+          border: '1px solid rgba(232, 168, 48, 0.25)',
+          borderRadius: 6,
+          fontSize: 12,
+          color: '#D3A558',
+          lineHeight: 1.5,
+        }}
+      >
+        <strong>Processo sem georreferenciamento</strong>
+        <br />
+        Este processo está cadastrado na ANM mas não possui polígono
+        georreferenciado no SIGMINE. Dados cadastrais, regulatórios e fiscais
+        estão disponíveis. A análise territorial não pode ser gerada.
+      </div>
+    )
+  }
+
+  return null
+}
+
 export function RelatorioCompleto({
   processo,
   aberto,
@@ -1399,6 +1551,24 @@ export function RelatorioCompleto({
     )
   }, [processo])
 
+  const exibicaoScoresRelatorio = useMemo(() => {
+    if (!processo) {
+      return {
+        rsLabel: '',
+        rsCorNumero: '#888780',
+        rsCorRotulo: '#888780',
+        osLabel: (valorPerfil: number | null) =>
+          valorPerfil == null ? '' : getOpportunityLabel(valorPerfil),
+        osCor: (valorPerfil: number | null) =>
+          valorPerfil == null ? '#888780' : corFaixaOS(valorPerfil),
+      }
+    }
+    return montarExibicaoScoresRelatorio(
+      processo,
+      dadosResolved?.scores_exibicao_api,
+    )
+  }, [processo, dadosResolved])
+
   const regimeDrawerUi = useMemo((): Regime => {
     if (!processo) return 'disponibilidade'
     return regimeParaExibicaoDrawer(
@@ -1409,6 +1579,13 @@ export function RelatorioCompleto({
 
   if (!processo) return null
 
+  // Estado de loading/erro usa o MESMO container + header do return completo
+  // (abaixo). Isso é crítico para que a animação `translateX` não quebre:
+  // React reconcilia o `<div>` raiz + `<header>` (ambos têm mesmo tipo/estrutura
+  // nos dois returns) em vez de desmontar/montar uma árvore nova quando
+  // loadingApi vira false. Sem essa unificação, processos abertos via busca
+  // (sem fly-to/popup prévios — ex.: zumbis, sem-geom) mostravam flip visível
+  // entre o drawer "spinner" e o drawer "completo".
   if (loadingApi || erroApi) {
     return (
       <div
@@ -1442,20 +1619,57 @@ export function RelatorioCompleto({
             gap: 12,
           }}
         >
-          <RegimeBadge regime={regimeDrawerUi} variant="drawer" />
-          <button
-            type="button"
-            onClick={onFechar}
-            aria-label="Fechar relatório"
-            className="cursor-pointer border-0 bg-transparent p-0"
+          <div
             style={{
-              fontSize: 18,
-              lineHeight: 1,
-              color: '#888780',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              minWidth: 0,
+              flex: 1,
             }}
           >
-            ✕
-          </button>
+            <RegimeBadge regime={regimeDrawerUi} variant="drawer" />
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              flexShrink: 0,
+              gap: 8,
+            }}
+          >
+            <ExportReportButton numeroProcesso={processo.numero} />
+            <div
+              style={{
+                width: 1,
+                height: 16,
+                backgroundColor: '#2C2C2A',
+                margin: '0 12px',
+                flexShrink: 0,
+              }}
+              aria-hidden
+            />
+            <button
+              type="button"
+              onClick={onFechar}
+              aria-label="Fechar relatório"
+              className="cursor-pointer border-0 bg-transparent p-0"
+              style={{
+                fontSize: 18,
+                lineHeight: 1,
+                color: '#888780',
+                flexShrink: 0,
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = '#D3D1C7'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = '#888780'
+              }}
+            >
+              ✕
+            </button>
+          </div>
         </header>
         <div
           style={{
@@ -1508,6 +1722,67 @@ export function RelatorioCompleto({
     metadata,
     oportunidade,
   } = dados
+
+  // Processo sem georreferenciamento SIGMINE (geom null no DB). Drawer abre
+  // normalmente com dados cadastrais/regulatórios/fiscais; análise territorial
+  // não é gerável porque depende de polígono. Usa `!Number.isFinite` para
+  // detectar o sentinel NaN injetado por `mapDbRowToMapProcesso` quando
+  // chamado com `{ permitirSemGeom: true }`.
+  const semGeom =
+    processo != null &&
+    (!Number.isFinite(processo.lat) || !Number.isFinite(processo.lng))
+
+  // Processo zumbi: requerimento de grupamento mineiro pendente. Sem geom,
+  // sem substância, sem município. Não renderizar scores/mercado/fiscal
+  // em abas que dependem desses dados. Banner vermelho no topo.
+  // Nota: dadosInsuficientes é subconjunto estrito de semGeom (todo zumbi
+  // é sem-geom, mas nem todo sem-geom é zumbi — há 1.022 processos sem
+  // SIGMINE que têm substância e município válidos).
+  const dadosInsuficientes =
+    processo != null && processo.dados_insuficientes === true
+
+  // True quando o processo não tem Risk Score calculável. Ativa empty state
+  // nas abas Risco e Oportunidade (Bloco 3a/3b). Casos cobertos:
+  //   - processo é zumbi (dadosInsuficientes=true, sem score persistido)
+  //   - processo sem geom sem score (pós-limpeza 2026-04-21, 0 processos
+  //     em produção, mas resiliente a futuros casos sem re-score)
+  //   - processo não scoreado (raro, mas possível durante ingestão ou
+  //     drop/rebuild da tabela `scores`)
+  //
+  // Usa `== null` (pega null e undefined) porque o patch do MapView agora
+  // sobrescreve residuais do Zustand com `null` explícito para processos
+  // sem score no banco.
+  const scoreIndisponivel =
+    !processo ||
+    processo.risk_score == null
+
+  // Classificação de arquétipo vem do `dados_anm` (já populado no backend
+  // via fn_classificacao_zumbi). Null para processos normais.
+  const classZumbi: ClassificacaoZumbi | null =
+    dados_anm.classificacao_zumbi ?? null
+
+  // Derivações de exibição para campos da aba Processo com empty states
+  // contextuais. Resolve 3 cenários:
+  //   1. SCM_SUBSTANCIA_NAO_INFORMADA (251 processos) → travessão
+  //   2. dados_insuficientes=true → labels dinâmicas do arquétipo
+  //      (ex.: grupamento → "Requerimento de grupamento / Grupamento pendente",
+  //       não o enganoso "Concessão de Lavra / Lavra" herdado do DB)
+  //   3. area_ha=0 para zumbi → travessão em vez de "0 ha"
+  const substanciaFormatada: string | null = formatarSubstancia(
+    processo?.substancia ?? null,
+  )
+  const regimeExibicao: string = dadosInsuficientes
+    ? (classZumbi?.label_regime ?? '—')
+    : (REGIME_LABELS[regimeDrawerUi] ?? String(regimeDrawerUi))
+  const faseExibicao: string = dadosInsuficientes
+    ? (classZumbi?.label_fase ?? '—')
+    : (processo?.fase != null
+        ? (FASE_LABELS[processo.fase] ?? String(processo.fase))
+        : '—')
+  const areaExibicao: string =
+    dadosInsuficientes || !processo?.area_ha || processo.area_ha === 0
+      ? '—'
+      : `${Number(processo.area_ha).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} ha`
 
   const cambioIntel = intel_mineral.cambio_brl_usd ?? metadata?.cambio
   const areaHa = processo.area_ha
@@ -1797,6 +2072,11 @@ export function RelatorioCompleto({
             gap: 14,
           }}
         >
+          <RelatorioBanner
+            dadosInsuficientes={dadosInsuficientes}
+            semGeom={semGeom}
+            classificacaoZumbi={dados_anm.classificacao_zumbi ?? null}
+          />
         {aba === 'processo' ? (
           <>
             <Card>
@@ -1821,6 +2101,24 @@ export function RelatorioCompleto({
                   {processo.numero}
                 </p>
                 {(() => {
+                  if (processo.ativo_derivado === false) {
+                    return (
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          borderRadius: 999,
+                          padding: '4px 10px',
+                          fontSize: FS.sm,
+                          fontWeight: 700,
+                          backgroundColor: 'rgba(107, 114, 128, 0.18)',
+                          color: COR_BADGE_EXTINTO,
+                        }}
+                      >
+                        Extinto
+                      </span>
+                    )
+                  }
                   const sit = processo.situacao
                   const cfg =
                     sit === 'ativo'
@@ -1871,20 +2169,43 @@ export function RelatorioCompleto({
                   { label: 'Titular', value: processo.titular, span: 2 },
                   {
                     label: 'Substância',
-                    value: apresentarSubstanciaLabel(processo.substancia),
+                    // Usa `formatarSubstancia` para resolver o sentinel
+                    // SCM_SUBSTANCIA_NAO_INFORMADA → travessão. Fallback
+                    // em `apresentarSubstanciaLabel` para casing consistente.
+                    value:
+                      substanciaFormatada != null
+                        ? apresentarSubstanciaLabel(processo.substancia)
+                        : '—',
                   },
-                  { label: 'Regime', value: REGIME_LABELS[regimeDrawerUi] },
-                  { label: 'Área', value: `${processo.area_ha.toLocaleString('pt-BR')} ha` },
-                  { label: 'UF', value: processo.uf },
-                  { label: 'Município', value: processo.municipio },
-                  { label: 'Fase', value: FASE_LABELS[processo.fase] },
+                  { label: 'Regime', value: regimeExibicao },
+                  { label: 'Área', value: areaExibicao },
+                  {
+                    label: 'UF',
+                    value:
+                      processo.uf != null && processo.uf.trim() !== ''
+                        ? processo.uf
+                        : '—',
+                  },
+                  {
+                    label: 'Município',
+                    value:
+                      processo.municipio != null &&
+                      processo.municipio.trim() !== ''
+                        ? processo.municipio
+                        : '—',
+                  },
+                  { label: 'Fase', value: faseExibicao },
                   {
                     label: 'Ano de protocolo',
                     value: anoProtocoloRelatorio(dados_anm),
                   },
                   {
                     label: 'Tempo de tramitação',
-                    value: `${dados_anm.tempo_tramitacao_anos} anos`,
+                    value:
+                      dados_anm.tempo_tramitacao_texto != null &&
+                      dados_anm.tempo_tramitacao_texto.trim() !== ''
+                        ? dados_anm.tempo_tramitacao_texto.trim()
+                        : `${dados_anm.tempo_tramitacao_anos} anos`,
                   },
                 ].map((row) => (
                   <div
@@ -1921,12 +2242,17 @@ export function RelatorioCompleto({
                       {row.label === 'Tempo de tramitação' ? (
                         <span
                           style={{
-                            color: corTramitacaoAnos(
-                              dados_anm.tempo_tramitacao_anos,
-                            ),
+                            color:
+                              processo.ativo_derivado === false &&
+                              dados_anm.tempo_tramitacao_texto?.trim()
+                                ? COR_BADGE_EXTINTO
+                                : corTramitacaoAnos(
+                                    dados_anm.tempo_tramitacao_anos,
+                                  ),
                           }}
                         >
-                          {`${dados_anm.tempo_tramitacao_anos} anos`}
+                          {dados_anm.tempo_tramitacao_texto?.trim() ||
+                            `${dados_anm.tempo_tramitacao_anos} anos`}
                         </span>
                       ) : (
                         row.value
@@ -2160,6 +2486,60 @@ export function RelatorioCompleto({
 
         {aba === 'territorio' ? (
           <>
+            {dadosInsuficientes ? (
+              <div
+                style={{
+                  padding: '32px 20px',
+                  textAlign: 'center',
+                  background: 'rgba(255,255,255,0.02)',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                  borderRadius: 8,
+                  color: 'rgba(255,255,255,0.5)',
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 14,
+                    marginBottom: 6,
+                    color: 'rgba(255,255,255,0.75)',
+                  }}
+                >
+                  Análise territorial indisponível
+                </div>
+                Este processo não possui polígono georreferenciado no SIGMINE.
+                Sem geometria, não é possível verificar sobreposição com terras
+                indígenas, unidades de conservação, aquíferos ou infraestrutura.
+              </div>
+            ) : semGeom ? (
+              <div
+                style={{
+                  padding: '32px 20px',
+                  textAlign: 'center',
+                  background: 'rgba(255,255,255,0.02)',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                  borderRadius: 8,
+                  color: 'rgba(255,255,255,0.5)',
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 14,
+                    marginBottom: 6,
+                    color: 'rgba(255,255,255,0.75)',
+                  }}
+                >
+                  Geometria indisponível no SIGMINE
+                </div>
+                Processo cadastrado na ANM mas sem polígono georreferenciado.
+                A análise territorial será gerada quando a geometria for
+                publicada pelo SIGMINE.
+              </div>
+            ) : (
+              <>
             <Card>
               <div
                 style={{
@@ -2531,12 +2911,23 @@ export function RelatorioCompleto({
                       textoEsquerda:
                         territorial.nome_ferrovia != null &&
                         territorial.nome_ferrovia !== ''
-                          ? `Ferrovia · ${territorial.nome_ferrovia}`
+                          ? `Ferrovia · ${territorial.nome_ferrovia}${
+                              territorial.ferrovia_apenas_projeto_em_estudo
+                                ? ' (sem operação)'
+                                : ''
+                            }`
                           : 'Sem ferrovia na região monitorada',
                       km: territorial.distancia_ferrovia_km ?? null,
-                      temInfra:
-                        territorial.nome_ferrovia != null &&
-                        territorial.nome_ferrovia !== '',
+                      temInfra: (() => {
+                        const op = territorial.distancia_ferrovia_operacional_km
+                        if (op != null && !Number.isNaN(op)) return true
+                        if (territorial.ferrovia_apenas_projeto_em_estudo === true)
+                          return false
+                        return (
+                          territorial.nome_ferrovia != null &&
+                          territorial.nome_ferrovia !== ''
+                        )
+                      })(),
                     },
                     ...(territorial.nome_rodovia != null &&
                     territorial.nome_rodovia !== ''
@@ -2633,15 +3024,40 @@ export function RelatorioCompleto({
                         {distLog ? (
                           <span
                             style={{
-                              fontSize: FS.md,
-                              fontWeight: 500,
-                              color: distLog.color,
+                              fontSize:
+                                row.key === 'ferro' &&
+                                territorial.ferrovia_apenas_projeto_em_estudo
+                                  ? FS.sm
+                                  : FS.md,
+                              fontWeight:
+                                row.key === 'ferro' &&
+                                territorial.ferrovia_apenas_projeto_em_estudo
+                                  ? 400
+                                  : 500,
+                              color:
+                                row.key === 'ferro' &&
+                                territorial.ferrovia_apenas_projeto_em_estudo
+                                  ? '#6B7280'
+                                  : distLog.color,
                               flexShrink: 0,
                               marginLeft: 'auto',
                               textAlign: 'right',
                             }}
                           >
                             {distLog.text}
+                          </span>
+                        ) : row.key === 'sede' ? (
+                          <span
+                            style={{
+                              fontSize: FS.md,
+                              fontWeight: 500,
+                              color: '#8A8980',
+                              flexShrink: 0,
+                              marginLeft: 'auto',
+                              textAlign: 'right',
+                            }}
+                          >
+                            N/D
                           </span>
                         ) : null}
                       </div>
@@ -2846,11 +3262,42 @@ export function RelatorioCompleto({
                 </>
               )}
             </Card>
+              </>
+            )}
           </>
         ) : null}
 
         {aba === 'inteligencia' ? (
           <>
+            {dadosInsuficientes ||
+            substanciaDesconhecida(processo?.substancia ?? null) ? (
+              <div
+                style={{
+                  padding: '32px 20px',
+                  textAlign: 'center',
+                  background: 'rgba(255,255,255,0.02)',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                  borderRadius: 8,
+                  color: 'rgba(255,255,255,0.5)',
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 14,
+                    marginBottom: 6,
+                    color: 'rgba(255,255,255,0.75)',
+                  }}
+                >
+                  Inteligência de mercado indisponível
+                </div>
+                {dadosInsuficientes
+                  ? 'Este processo não tem substância declarada. Sem identificar o mineral, não é possível trazer dados de mercado global, preço, reservas ou demanda projetada.'
+                  : 'A substância deste processo não está mapeada na base TERRADAR de mercado. Estamos trabalhando para expandir cobertura.'}
+              </div>
+            ) : (
+              <>
             <Card>
               <SecLabel branco style={{ marginBottom: 2 }}>
                 Contexto global
@@ -3645,10 +4092,45 @@ export function RelatorioCompleto({
                 marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
               />
             </Card>
+              </>
+            )}
           </>
         ) : null}
 
         {aba === 'risco' ? (
+          scoreIndisponivel ? (
+            // Empty state honesto da aba Risco. Evita renderizar "N/A" em
+            // cards vazios quando o processo não tem Risk Score (zumbi, sem
+            // geom sem score, ou fora de escopo atual). O texto é contextual
+            // pelo motivo da ausência — coerente com o banner do topo.
+            <div
+              style={{
+                padding: '32px 20px',
+                textAlign: 'center',
+                background: 'rgba(255,255,255,0.02)',
+                border: '1px solid rgba(255,255,255,0.06)',
+                borderRadius: 8,
+                color: 'rgba(255,255,255,0.5)',
+                fontSize: 13,
+                lineHeight: 1.6,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 14,
+                  marginBottom: 6,
+                  color: 'rgba(255,255,255,0.75)',
+                }}
+              >
+                Risk Score indisponível
+              </div>
+              {dadosInsuficientes
+                ? 'Este processo não possui dados suficientes para cálculo de Risk Score. Substância, município ou geometria não foram declarados na ANM.'
+                : semGeom
+                  ? 'Este processo não possui polígono georreferenciado no SIGMINE. Sem geometria, a dimensão ambiental não pode ser avaliada e o Risk Score não é calculado.'
+                  : 'Risk Score não calculado para este processo. Pode estar em fila de processamento ou fora do escopo atual da base TERRADAR.'}
+            </div>
+          ) : (
           <>
             <Card>
               <p
@@ -3697,8 +4179,8 @@ export function RelatorioCompleto({
                       >
                         <span
                           style={{
-                            color: corFaixaRisco(processo.risk_score),
-                            borderBottom: `1px dotted ${corFaixaRisco(processo.risk_score)}`,
+                            color: exibicaoScoresRelatorio.rsCorNumero,
+                            borderBottom: `1px dotted ${exibicaoScoresRelatorio.rsCorNumero}`,
                             cursor: 'help',
                             fontVariantNumeric: 'tabular-nums',
                           }}
@@ -3708,7 +4190,9 @@ export function RelatorioCompleto({
                       </CamadaTooltipHover>
                     ) : (
                       <span
-                        style={{ color: corFaixaRisco(processo.risk_score) }}
+                        style={{
+                          color: exibicaoScoresRelatorio.rsCorNumero,
+                        }}
                       >
                         {processo.risk_score}
                       </span>
@@ -3719,12 +4203,28 @@ export function RelatorioCompleto({
                       fontSize: FS.lg,
                       fontWeight: 700,
                       textAlign: 'center',
-                      color: '#D3D1C7',
+                      color: exibicaoScoresRelatorio.rsCorRotulo,
                       margin: 0,
                     }}
                   >
-                    {classificacaoRiscoTotal(processo.risk_score)}
+                    {exibicaoScoresRelatorio.rsLabel}
                   </p>
+                  {isRotuloScoreTerminado(exibicaoScoresRelatorio.rsLabel) ? (
+                    <p
+                      style={{
+                        fontSize: FS.sm,
+                        color: '#5F5E5A',
+                        textAlign: 'center',
+                        margin: '10px 0 0 0',
+                        lineHeight: 1.45,
+                        paddingTop: 10,
+                        borderTop: '1px solid #2C2C2A',
+                      }}
+                    >
+                      ⛔ Valores numéricos são referência técnica; não indicam
+                      risco operacional para processo encerrado ou extinto.
+                    </p>
+                  ) : null}
                   {processo.risk_breakdown ? (
                     <div
                       style={{
@@ -4009,10 +4509,43 @@ export function RelatorioCompleto({
               />
             </Card>
           </>
+          )
         ) : null}
 
         {aba === 'oportunidade' ? (
-          oportunidade ? (
+          scoreIndisponivel ? (
+            // Empty state honesto da aba Oportunidade. Conteúdo (incluindo
+            // o card "Análise TERRADAR" em linha ~4705) some automaticamente
+            // porque está dentro do branch `oportunidade`. Coerente com o
+            // banner do topo e com a aba Risco (empty state do Bloco 3a).
+            <div
+              style={{
+                padding: '32px 20px',
+                textAlign: 'center',
+                background: 'rgba(255,255,255,0.02)',
+                border: '1px solid rgba(255,255,255,0.06)',
+                borderRadius: 8,
+                color: 'rgba(255,255,255,0.5)',
+                fontSize: 13,
+                lineHeight: 1.6,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 14,
+                  marginBottom: 6,
+                  color: 'rgba(255,255,255,0.75)',
+                }}
+              >
+                Opportunity Score indisponível
+              </div>
+              {dadosInsuficientes
+                ? 'Este processo não possui dados suficientes para cálculo de Opportunity Score. Sem substância, município ou geometria, não é possível avaliar atratividade, viabilidade ou segurança.'
+                : semGeom
+                  ? 'Este processo não possui polígono georreferenciado no SIGMINE. Sem geometria, a análise de viabilidade logística e atratividade não pode ser realizada.'
+                  : 'Opportunity Score não calculado para este processo. Pode estar em fila de processamento ou fora do escopo atual.'}
+            </div>
+          ) : oportunidade ? (
             <>
               <div
                 style={{
@@ -4023,7 +4556,9 @@ export function RelatorioCompleto({
                 }}
               >
                 <Card style={{ overflow: 'visible' }}>
-                  <SecLabel branco>Opportunity Score</SecLabel>
+                  <SecLabel branco>
+                    {dados.oportunidade_secao_titulo ?? 'Opportunity Score'}
+                  </SecLabel>
                   <div
                     style={{
                       display: 'grid',
@@ -4042,7 +4577,7 @@ export function RelatorioCompleto({
                       ] as const
                     ).map(([k, titulo]) => {
                       const p = oportunidade.perfis[k]
-                      const corFaixa = corFaixaOS(p.valor)
+                      const corFaixa = exibicaoScoresRelatorio.osCor(p.valor)
                       const isAtivo = perfilOportunidadeAtivo === k
                       const opacidadeConteudo = isAtivo
                         ? 1
@@ -4137,13 +4672,33 @@ export function RelatorioCompleto({
                                 marginBottom: 0,
                               }}
                             >
-                              {getOpportunityLabel(p.valor)}
+                              {exibicaoScoresRelatorio.osLabel(p.valor)}
                             </p>
                           </div>
                         </button>
                       )
                     })}
                   </div>
+                  {isRotuloScoreTerminado(
+                    exibicaoScoresRelatorio.osLabel(
+                      oportunidade.perfis.conservador.valor,
+                    ),
+                  ) ? (
+                    <p
+                      style={{
+                        fontSize: FS.sm,
+                        color: '#5F5E5A',
+                        textAlign: 'center',
+                        margin: '14px 0 0 0',
+                        lineHeight: 1.45,
+                        paddingTop: 12,
+                        borderTop: '1px solid #2C2C2A',
+                      }}
+                    >
+                      ⛔ Valores numéricos são referência técnica; oportunidade
+                      operacional não se aplica a processo extinto ou terminal.
+                    </p>
+                  ) : null}
                   <FonteLabel
                     dataIso={timestamps.cadastro_mineiro}
                     fonte="TERRADAR, com dados ANM, IBGE, Tesouro e USGS"
@@ -4194,6 +4749,39 @@ export function RelatorioCompleto({
         ) : null}
 
         {aba === 'fiscal' ? (
+          dadosInsuficientes ? (
+            // Empty state da aba Fiscal — aplicado APENAS para zumbis.
+            // Processos sem-geom (ex.: 931.006/2022) têm município/UF
+            // declarados e continuam renderizando CAPAG, fiscal municipal,
+            // CFEM histórico e incentivos UF normalmente. O card "CFEM
+            // histórico indisponível" existente já cobre sub-casos sem
+            // cobertura CFEM dentro do fluxo normal.
+            <div
+              style={{
+                padding: '32px 20px',
+                textAlign: 'center',
+                background: 'rgba(255,255,255,0.02)',
+                border: '1px solid rgba(255,255,255,0.06)',
+                borderRadius: 8,
+                color: 'rgba(255,255,255,0.5)',
+                fontSize: 13,
+                lineHeight: 1.6,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 14,
+                  marginBottom: 6,
+                  color: 'rgba(255,255,255,0.75)',
+                }}
+              >
+                Dados fiscais indisponíveis
+              </div>
+              Este processo não tem município declarado. Sem identificar
+              o município, não é possível trazer CAPAG, receitas municipais,
+              histórico de CFEM ou incentivos estaduais.
+            </div>
+          ) : (
           <>
             <Card>
               <p
@@ -4412,56 +5000,110 @@ export function RelatorioCompleto({
                 style={{
                   display: 'grid',
                   gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-                  gap: 12,
+                  columnGap: 20,
+                  rowGap: 12,
                 }}
               >
-                {[
-                  {
-                    l: 'Receita própria',
-                    v: fiscal.receita_propria_mi,
-                  },
-                  {
-                    l: 'Dívida consolidada',
-                    v: fiscal.divida_consolidada_mi,
-                  },
-                  {
-                    l: 'PIB municipal',
-                    v: fiscal.pib_municipal_mi,
-                  },
-                ].map((m) => (
-                  <div
-                    key={m.l}
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      minWidth: 0,
-                    }}
-                  >
-                    <p
+                {(() => {
+                  const dividaLbl =
+                    fiscal.divida_fonte === 'passivo_nao_circulante'
+                      ? 'Passivo não circulante'
+                      : fiscal.divida_fonte === null
+                        ? 'Endividamento'
+                        : 'Dívida consolidada'
+                  const dividaTxt =
+                    fiscal.divida_exibicao != null &&
+                    fiscal.divida_exibicao.trim() !== ''
+                      ? fiscal.divida_exibicao
+                      : formatarRealBrlInteligente(
+                          fiscal.divida_consolidada_mi * 1_000_000,
+                        )
+                  const rows: {
+                    key: string
+                    l: string
+                    v: string
+                    nota?: string
+                  }[] = [
+                    {
+                      key: 'rp',
+                      l: 'Receita própria',
+                      v: formatarRealBrlInteligente(
+                        fiscal.receita_propria_mi * 1_000_000,
+                      ),
+                    },
+                    {
+                      key: 'div',
+                      l: dividaLbl,
+                      v: dividaTxt,
+                      nota:
+                        fiscal.divida_fonte === 'passivo_nao_circulante'
+                          ? 'Proxy de endividamento; dívida consolidada não disponível na série atual'
+                          : undefined,
+                    },
+                    {
+                      key: 'pib',
+                      l: 'PIB municipal',
+                      v: formatarRealBrlInteligente(
+                        fiscal.pib_municipal_mi * 1_000_000,
+                      ),
+                    },
+                  ]
+                  return rows.map((m) => (
+                    <div
+                      key={m.key}
                       style={{
-                        ...subsecaoTituloStyle,
-                        margin: '0 0 4px 0',
-                        minHeight: 46,
-                        lineHeight: 1.25,
                         display: 'flex',
-                        alignItems: 'flex-end',
+                        flexDirection: 'column',
+                        minWidth: 0,
+                        maxWidth: '100%',
+                        overflow: 'hidden',
+                        padding: '0 4px',
+                        boxSizing: 'border-box',
                       }}
                     >
-                      {m.l}
-                    </p>
-                    <p
-                      style={{
-                        fontSize: FS.metric,
-                        fontWeight: 500,
-                        color: '#F1EFE8',
-                        margin: 0,
-                        lineHeight: 1.2,
-                      }}
-                    >
-                      {formatarRealBrlInteligente(m.v * 1_000_000)}
-                    </p>
-                  </div>
-                ))}
+                      <p
+                        style={{
+                          ...subsecaoTituloStyle,
+                          letterSpacing: '0.4px',
+                          margin: '0 0 4px 0',
+                          minHeight: 46,
+                          lineHeight: 1.25,
+                          display: 'flex',
+                          alignItems: 'flex-end',
+                          maxWidth: '100%',
+                          overflow: 'hidden',
+                          overflowWrap: 'break-word',
+                          hyphens: 'auto',
+                        }}
+                      >
+                        {m.l}
+                      </p>
+                      <p
+                        style={{
+                          fontSize: FS.metric,
+                          fontWeight: 500,
+                          color: '#F1EFE8',
+                          margin: 0,
+                          lineHeight: 1.2,
+                        }}
+                      >
+                        {m.v}
+                      </p>
+                      {m.nota ? (
+                        <p
+                          style={{
+                            fontSize: FS.sm,
+                            color: '#888780',
+                            margin: '6px 0 0 0',
+                            lineHeight: 1.35,
+                          }}
+                        >
+                          {m.nota}
+                        </p>
+                      ) : null}
+                    </div>
+                  ))
+                })()}
               </div>
               <p
                 style={{
@@ -5152,6 +5794,7 @@ export function RelatorioCompleto({
               )}
             </Card>
           </>
+          )
         ) : null}
         </div>
       </div>

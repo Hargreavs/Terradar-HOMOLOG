@@ -53,9 +53,15 @@ const REGIME_CANONICOS: ReadonlySet<Regime> = new Set<Regime>([
   'concessao_lavra',
   'autorizacao_pesquisa',
   'req_lavra',
+  'req_plg',
   'licenciamento',
   'lavra_garimpeira',
   'registro_extracao',
+  'req_registro_extracao',
+  'requerimento_licenciamento',
+  'direito_requerer_lavra',
+  'apto_disponibilidade',
+  'reconhecimento_geologico',
   'disponibilidade',
   'mineral_estrategico',
   'bloqueio_provisorio',
@@ -175,21 +181,46 @@ function buildGeojson(id: string, coords: number[][][]): GeoJSONPolygon {
 
 /**
  * Converte uma linha `processos` do Supabase no formato `Processo` do mapa.
- * Retorna `null` se não houver geometria desenhável (polígono).
+ *
+ * Por padrão retorna `null` se não houver geometria desenhável — comportamento
+ * usado pelos caminhos que renderizam no mapa (viewport, seedDemo, busca por
+ * número local).
+ *
+ * Quando `opts.permitirSemGeom === true`, aceita rows sem geom e retorna um
+ * `Processo` com `lat = NaN`, `lng = NaN` e `geojson` com ring vazio. Usado
+ * apenas pela busca remota multi-canal, que precisa abrir o drawer para
+ * processos cadastrados na ANM mas sem polígono no SIGMINE. Callers devem
+ * gatiar fly-to/popup com `Number.isFinite(lat)` antes de passar o processo
+ * para APIs geográficas (Mapbox, snapshot, etc.).
  */
-export function mapDbRowToMapProcesso(row: Record<string, unknown>): Processo | null {
+export function mapDbRowToMapProcesso(
+  row: Record<string, unknown>,
+  opts?: { permitirSemGeom?: boolean },
+): Processo | null {
   const id = String(row.id ?? row.numero ?? '')
   const numero = String(row.numero ?? '').trim()
   if (!numero) return null
 
+  const permitirSemGeom = opts?.permitirSemGeom === true
   const geom = extractGeom(row.geom)
-  if (!geom) return null
+  const polyCoords = geom ? polygonCoordsFromGeom(geom) : null
+  const temPoligono =
+    polyCoords != null && polyCoords[0] != null && polyCoords[0].length > 0
 
-  const polyCoords = polygonCoordsFromGeom(geom)
-  if (!polyCoords || !polyCoords[0]?.length) return null
+  if (!temPoligono && !permitirSemGeom) return null
 
-  const outer = polyCoords[0]!
-  const [lng, lat] = ringCentroidLngLat(outer)
+  let lat: number
+  let lng: number
+  let geojson: GeoJSONPolygon
+  if (temPoligono) {
+    const outer = polyCoords[0]!
+    ;[lng, lat] = ringCentroidLngLat(outer)
+    geojson = buildGeojson(id, polyCoords)
+  } else {
+    lat = Number.NaN
+    lng = Number.NaN
+    geojson = buildGeojson(id, [[]])
+  }
 
   const regimeStr = String(row.regime ?? '')
   const faseStr = String(row.fase ?? '')
@@ -232,6 +263,8 @@ export function mapDbRowToMapProcesso(row: Record<string, unknown>): Processo | 
   const sp = row.scores_persistido as
     | {
         risk_score?: number | null
+        risk_label?: string | null
+        risk_cor?: string | null
         os_conservador?: number | null
         os_moderado?: number | null
         os_arrojado?: number | null
@@ -324,6 +357,8 @@ export function mapDbRowToMapProcesso(row: Record<string, unknown>): Processo | 
     data_protocolo,
     ano_protocolo: anoProtFinal,
     situacao: 'ativo',
+    ativo_derivado:
+      typeof row.ativo_derivado === 'boolean' ? row.ativo_derivado : null,
     risk_score,
     risk_breakdown,
     risk_decomposicao: null,
@@ -331,7 +366,7 @@ export function mapDbRowToMapProcesso(row: Record<string, unknown>): Processo | 
     ultimo_despacho_data: isoDateOnly(row.ultimo_evento_data) || data_protocolo,
     alertas: [] as AlertaLegislativo[],
     fiscal: EMPTY_FISCAL,
-    geojson: buildGeojson(id, polyCoords),
+    geojson,
     fromApi: true,
     dimensoes_risco_persistido:
       (sp?.dimensoes_risco as Processo['dimensoes_risco_persistido']) ?? null,
@@ -341,6 +376,14 @@ export function mapDbRowToMapProcesso(row: Record<string, unknown>): Processo | 
     os_moderado_persistido: sp?.os_moderado ?? null,
     os_arrojado_persistido: sp?.os_arrojado ?? null,
     os_label_persistido: sp?.os_label ?? null,
+    risk_label_persistido:
+      sp != null && typeof sp.risk_label === 'string' && sp.risk_label.trim() !== ''
+        ? sp.risk_label.trim()
+        : undefined,
+    risk_cor_persistido:
+      sp != null && typeof sp.risk_cor === 'string' && sp.risk_cor.trim() !== ''
+        ? sp.risk_cor.trim()
+        : undefined,
   }
 }
 
@@ -390,6 +433,10 @@ export function mapViewportFeatureToProcesso(
     ...properties,
     geom: geometry,
     scores_persistido: scoresPersistido,
+    ativo_derivado:
+      typeof properties.ativo_derivado === 'boolean'
+        ? properties.ativo_derivado
+        : undefined,
   })
 }
 

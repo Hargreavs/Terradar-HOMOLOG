@@ -12,7 +12,17 @@
     "preview": "vite preview",
     "ingest:sedes": "tsx server/scripts/ingest-sedes-ibge.ts",
     "fix:sedes-encoding": "tsx server/scripts/fix-sedes-encoding.ts",
-    "ingest:divida-siconfi-disabled": "tsx server/scripts/ingest-divida-consolidada-siconfi.ts"
+    "ingest:divida-siconfi-disabled": "tsx server/scripts/ingest-divida-consolidada-siconfi.ts",
+    "ingest:divida-capag": "tsx server/scripts/ingest-divida-consolidada-capag.ts",
+    "derivar:regulatorios": "tsx server/scripts/derivar-campos-regulatorios.ts",
+    "ingest:disponibilidade": "tsx server/scripts/ingest-disponibilidade-sigmine.ts",
+    "ingest:requerimentos-microdados": "tsx server/scripts/ingest-requerimentos-microdados.ts",
+    "ingest:geom-complementar": "tsx server/scripts/ingest-geom-complementar-sigmine.ts",
+    "ingest:cfem": "tsx server/scripts/ingest-cfem-arrecadacao.ts",
+    "ingest:tah": "tsx server/scripts/ingest-tah.ts",
+    "ingest:autuacao": "tsx server/scripts/ingest-cfem-autuacao.ts",
+    "ingest:tier1": "npm run ingest:autuacao && npm run ingest:tah && npm run ingest:cfem",
+    "batch:scores": "tsx server/scripts/batch-scores.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",
@@ -20,6 +30,7 @@
     "@supabase/supabase-js": "^2.103.0",
     "@types/pg": "^8.20.0",
     "cors": "^2.8.6",
+    "csv-parse": "^6.2.1",
     "d3-geo": "^3.1.1",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",

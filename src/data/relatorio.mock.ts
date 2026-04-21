@@ -3,6 +3,8 @@
  * Alinhado a `processos.mock.ts`: não importa esse ficheiro para manter o módulo isolado.
  */
 
+import type { ClassificacaoZumbi } from '../types'
+
 /** Chave-valor para card Observações técnicas (SIGMINE / SEI-ANM; Config-Scores v5). */
 export interface ObservacoesTecnicasItem {
   label: string
@@ -20,6 +22,8 @@ export interface DadosANM {
   /** Ano do protocolo (SIGMINE pode expor só o ano); prioridade no card. */
   ano_protocolo?: number
   tempo_tramitacao_anos: number
+  /** Quando definido (ex.: processo extinto), substitui `tempo_tramitacao_anos` + «anos» na UI. */
+  tempo_tramitacao_texto?: string | null
   pendencias: string[]
   ultimo_despacho: string
   data_ultimo_despacho: string
@@ -36,6 +40,19 @@ export interface DadosANM {
   ral_pendente?: string
   taxa_anual_paga?: string
   licenca_ambiental?: string
+  /**
+   * Quando true, processo é requerimento de grupamento mineiro pendente:
+   * sem geom, sem substância e sem município (180 casos). Drawer deve
+   * renderizar banner vermelho + ocultar abas que dependem desses dados.
+   * Backend preenche via coluna `processos.dados_insuficientes`.
+   */
+  dados_insuficientes?: boolean
+  /**
+   * Arquétipo do processo quando `dados_insuficientes=true`. Usado no
+   * banner vermelho (copy dinâmica) e nos campos Regime/Fase da aba
+   * Processo. NULL para processos normais.
+   */
+  classificacao_zumbi?: ClassificacaoZumbi | null
 }
 
 export type BiomaRelatorio =
@@ -98,6 +115,10 @@ export interface DadosTerritoriais {
   uf_sede?: string
   distancia_ferrovia_km?: number | null
   nome_ferrovia?: string | null
+  /** Ferrovia mais próxima é apenas projeto em estudo (sem operação). */
+  ferrovia_apenas_projeto_em_estudo?: boolean
+  /** Menor distância entre ferrovias com operação declarada (exclui categoria "Estudo"). */
+  distancia_ferrovia_operacional_km?: number | null
   situacao_ferrovia?: string
   bitola_ferrovia?: string
   uf_ferrovia?: string
@@ -233,6 +254,10 @@ export interface DadosFiscaisRicos {
   capag_estruturado?: CapagEstruturado
   receita_propria_mi: number
   divida_consolidada_mi: number
+  /** Texto alinhado ao PDF (`ReportData.divida`), ex.: «R$ 7,47 Mi» ou «Não disponível». */
+  divida_exibicao?: string
+  /** Coluna de origem em `fiscal_municipios` para o valor da dívida. */
+  divida_fonte?: 'divida_consolidada' | 'passivo_nao_circulante' | null
   pib_municipal_mi: number
   dependencia_transferencias_pct: number
   /** IDH municipal (IBGE), texto pt-BR ex.: «0,620»; opcional quando só há mock. */
@@ -299,7 +324,8 @@ export interface RelatorioMetadata {
 export type PerfilOportunidadeId = 'conservador' | 'moderado' | 'arrojado'
 
 export interface PerfilOportunidadeMock {
-  valor: number
+  /** `null` quando o processo não tem Opportunity Score calculado (drawer exibe empty state). */
+  valor: number | null
   label: string
   cor: string
   pesos: { atratividade: number; viabilidade: number; seguranca: number }
@@ -344,9 +370,19 @@ export interface RelatorioOportunidadeData {
     contexto: string
     /** Data da assinatura (ex.: DD/MM/AAAA). */
     data: string
-    rs: number
-    os: number
+    /** `null` quando não há Risk Score calculado (empty state assume o drawer). */
+    rs: number | null
+    /** `null` quando não há Opportunity Score calculado. */
+    os: number | null
   }
+}
+
+/** Rótulos/cores de scores alinhados ao `ReportData` / banco (substituem faixa só pelo número). */
+export interface RelatorioScoresExibicaoApi {
+  rs_label: string
+  rs_cor: string
+  os_label: string
+  os_cor: string
 }
 
 export interface RelatorioData {
@@ -359,6 +395,10 @@ export interface RelatorioData {
   timestamps: Timestamps
   metadata?: RelatorioMetadata
   oportunidade?: RelatorioOportunidadeData
+  /** Preenchido por `relatorioDataFromReportData` quando o relatório vem da API. */
+  scores_exibicao_api?: RelatorioScoresExibicaoApi
+  /** Título do card principal da aba Oportunidade (substitui "Opportunity Score" quando definido). */
+  oportunidade_secao_titulo?: string
 }
 
 const PROF_M = 30

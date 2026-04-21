@@ -65,3 +65,41 @@ export function labelSubstanciaParaExibicao(raw: string): string {
 
 /** Chaves dos elementos de terras raras (para toggle em grupo). */
 export const RARE_KEYS = ['NEODIMIO', 'PRASEODIMIO', 'TERBIO', 'DISPRÓSIO'] as const
+
+/**
+ * Sentinel do campo `processos.substancia` no DB quando a substância não foi
+ * declarada no Microdados SCM. Afeta ~251 processos (todos os 180 zumbis + 71
+ * outros sem-geom). Não exibir para o usuário.
+ */
+const SENTINEL_SUBSTANCIA_NAO_INFORMADA = 'SCM_SUBSTANCIA_NAO_INFORMADA'
+
+/**
+ * Formata substância para exibição no UI. Resolve o sentinel
+ * `SCM_SUBSTANCIA_NAO_INFORMADA` retornando `null` para que o caller possa
+ * renderizar travessão ou empty state. Também normaliza casing via
+ * `labelSubstanciaParaExibicao`.
+ *
+ * @returns null quando substância é ausente/sentinel, string formatada caso contrário.
+ */
+export function formatarSubstancia(
+  raw: string | null | undefined,
+): string | null {
+  if (!raw) return null
+  const trimmed = raw.trim()
+  if (trimmed === '') return null
+  // Normaliza para comparar com o sentinel ignorando caixa/acentos.
+  if (normalizeSubstanciaKey(trimmed) === SENTINEL_SUBSTANCIA_NAO_INFORMADA) {
+    return null
+  }
+  return labelSubstanciaParaExibicao(trimmed)
+}
+
+/**
+ * True se a substância é o sentinel SCM ou ausente. Útil para renderizar
+ * empty states em abas que dependem de substância (Inteligência, Oportunidade).
+ */
+export function substanciaDesconhecida(
+  raw: string | null | undefined,
+): boolean {
+  return formatarSubstancia(raw) === null
+}

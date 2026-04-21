@@ -1,36 +1,15 @@
 import { useEffect, useLayoutEffect, useState } from 'react'
 import type { Regime } from '../../types'
+import { REGIME_COLORS, REGIME_LAYER_ORDER } from '../../lib/regimes'
 
 export const MIN_Y = 1960
 export const MAX_Y = 2026
 
-export const REGIME_PILL_ORDER: Regime[] = [
-  'requerimento_pesquisa',
-  'concessao_lavra',
-  'autorizacao_pesquisa',
-  'req_lavra',
-  'licenciamento',
-  'lavra_garimpeira',
-  'registro_extracao',
-  'disponibilidade',
-  'mineral_estrategico',
-  'bloqueio_provisorio',
-  'bloqueio_permanente',
-]
+/** Ordem canônica dos toggles do sidebar e contador "N de N tipos visíveis". */
+export const REGIME_PILL_ORDER: Regime[] = REGIME_LAYER_ORDER
 
-export const REGIME_PILL_COLORS: Record<Regime, string> = {
-  requerimento_pesquisa: '#8FB4E0',
-  concessao_lavra: '#4A90B8',
-  autorizacao_pesquisa: '#5B9A6F',
-  req_lavra: '#8B7CB8',
-  licenciamento: '#7A9B5A',
-  lavra_garimpeira: '#8B6F47',
-  registro_extracao: '#6B8A9A',
-  disponibilidade: '#5AB8B8',
-  mineral_estrategico: '#2D8B70',
-  bloqueio_provisorio: '#C4915A',
-  bloqueio_permanente: '#A85C5C',
-}
+/** Cores das bolinhas do sidebar (alinhadas a `REGIME_COLORS` em `lib/regimes.ts`). */
+export const REGIME_PILL_COLORS: Record<Regime, string> = REGIME_COLORS
 
 export function hexToRgba(hex: string, alpha: number): string {
   const h = hex.replace('#', '')
