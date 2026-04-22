@@ -218,6 +218,14 @@ export interface IntelMineral {
   var_1a_pct?: number
   /** CAGR 5 anos (%). Fonte: IMF PCPS ou USGS MCS. */
   cagr_5a_pct?: number
+  /** `master_substancias.tipo_mercado` — `BR_ONLY` → card «Contexto Brasil». */
+  tipo_mercado?: string | null
+  producao_br_absoluta_t?: number | null
+  valor_producao_br_brl?: number | null
+  preco_medio_br_brl_t?: number | null
+  top_uf_produtora?: string | null
+  top_uf_pct?: number | null
+  ano_referencia_amb?: number | null
 }
 
 export interface CfemHistorico {
@@ -288,6 +296,22 @@ export interface DadosFiscaisRicos {
   capag_pior_indicador_letra?: string
   /** Nome do indicador limitante (ex.: poupança corrente). */
   capag_pior_indicador_nome?: string
+  /** Tier 1: totais da view (para subtítulo do painel). */
+  cfem_num_lancamentos?: number
+  cfem_total_historico_brl?: number | null
+  cfem_ultimo_ano?: number | null
+  /** Tier 1: detalhe CFEM por município (ANM dados abertos), quando houver lançamentos. */
+  cfem_por_municipio_tier1?: Array<{
+    ano: number
+    municipio_nome: string
+    total_anual_brl: number
+    num_lancamentos: number
+  }>
+  /** Tier 1: autuações fiscais ANM agregadas ao processo. */
+  autuacoes_anm?: {
+    num: number
+    valor_total_brl: number | null
+  } | null
 }
 
 export interface Timestamps {

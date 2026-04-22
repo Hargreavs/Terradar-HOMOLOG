@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { cloneFiltrosState } from '../lib/intelMapDrill'
 import { mapDbRowToMapProcesso } from '../lib/mapProcessoFromDbRow'
+import { processoEhInativoParaCamadaMapa } from '../lib/processoStatus'
 import { buscarProcessoPorNumero } from '../lib/processoApi'
 import {
   type CamadaGeoId,
@@ -26,6 +27,12 @@ export type PendingNavigation =
 
 const REGIMES: Regime[] = REGIME_LAYER_ORDER
 
+/** Alinhado a `DEMO_NUMEROS` em `MapView.tsx` — mantidos fora do lote substitutivo do viewport. */
+const NUMEROS_PROCESSO_SEED_MAPA: readonly string[] = [
+  '864.231/2017',
+  '860.232/1990',
+] as const
+
 function defaultCamadas(): Record<Regime, boolean> {
   return REGIMES.reduce(
     (acc, r) => {
@@ -46,6 +53,8 @@ function defaultFiltros(): FiltrosState {
     riskScoreMin: 0,
     riskScoreMax: 100,
     searchQuery: '',
+    exibirProcessosAtivos: true,
+    exibirProcessosInativos: false,
   }
 }
 
@@ -86,6 +95,22 @@ function mergeRiskRange(saved: Partial<FiltrosState> | undefined) {
   hi = Math.max(0, Math.min(100, hi))
   if (lo > hi) [lo, hi] = [hi, lo]
   return { riskScoreMin: lo, riskScoreMax: hi }
+}
+
+function mergeExibirAtividade(saved: Partial<FiltrosState> | undefined) {
+  const d = defaultFiltros()
+  const a = saved?.exibirProcessosAtivos
+  const i = saved?.exibirProcessosInativos
+  let ativos = typeof a === 'boolean' ? a : d.exibirProcessosAtivos
+  let inativos = typeof i === 'boolean' ? i : d.exibirProcessosInativos
+  if (!ativos && !inativos) {
+    ativos = true
+    inativos = false
+  }
+  return {
+    exibirProcessosAtivos: ativos,
+    exibirProcessosInativos: inativos,
+  }
 }
 
 function loadProcessos(): Processo[] {
@@ -178,6 +203,10 @@ function applyFilters(
 
     if (f.camadas[p.regime] === false) return false
 
+    const inativoReg = processoEhInativoParaCamadaMapa(p)
+    if (inativoReg && !f.exibirProcessosInativos) return false
+    if (!inativoReg && !f.exibirProcessosAtivos) return false
+
     const [y0, y1] = f.periodo
     if (p.ano_protocolo < y0 || p.ano_protocolo > y1) return false
 
@@ -226,7 +255,12 @@ function applyFilters(
 /** Só isto vai para o localStorage; evita F5 com busca/UF/etc. que zera o mapa. */
 type FiltrosPersistidos = Pick<
   FiltrosState,
-  'camadas' | 'periodo' | 'riskScoreMin' | 'riskScoreMax'
+  | 'camadas'
+  | 'periodo'
+  | 'riskScoreMin'
+  | 'riskScoreMax'
+  | 'exibirProcessosAtivos'
+  | 'exibirProcessosInativos'
 >
 
 export const useMapStore = create<MapStore>()(
@@ -262,9 +296,19 @@ export const useMapStore = create<MapStore>()(
         })),
 
       setFiltro: (key, value) =>
-        set((s) => ({
-          filtros: { ...s.filtros, [key]: value },
-        })),
+        set((s) => {
+          const filtros = { ...s.filtros, [key]: value }
+          let processos = s.processos
+          if (
+            (key === 'exibirProcessosInativos' ||
+              key === 'exibirProcessosAtivos') &&
+            filtros.exibirProcessosAtivos &&
+            !filtros.exibirProcessosInativos
+          ) {
+            processos = s.processos.filter((p) => !processoEhInativoParaCamadaMapa(p))
+          }
+          return { filtros, processos }
+        }),
 
       toggleCamada: (regime) =>
         set((s) => ({
@@ -300,10 +344,61 @@ export const useMapStore = create<MapStore>()(
       mergeViewportProcessos: (lista) =>
         set((state) => {
           if (!lista.length) return state
+          const { exibirProcessosAtivos: ea, exibirProcessosInativos: ei } =
+            state.filtros
+          /** RPC já filtra `ativo_derivado`; não acumular tiles de um modo "todos" anterior. */
+          const modoTodos = ea && ei
+          const numsLista = new Set(lista.map((p) => p.numero))
+
+          if (!modoTodos) {
+            const seedsForaDoLote = state.processos.filter(
+              (p) =>
+                NUMEROS_PROCESSO_SEED_MAPA.includes(p.numero) &&
+                !numsLista.has(p.numero),
+            )
+            const sel = state.processoSelecionado
+            const selForaDoLote =
+              sel &&
+              !numsLista.has(sel.numero) &&
+              !seedsForaDoLote.some((p) => p.numero === sel.numero)
+                ? [sel]
+                : []
+            return {
+              processos: [...seedsForaDoLote, ...selForaDoLote, ...lista],
+            }
+          }
+
+          const incomingByNumero = new Map(lista.map((p) => [p.numero, p]))
+          let changed = false
+          const atualizados = state.processos.map((cur) => {
+            const incoming = incomingByNumero.get(cur.numero)
+            if (!incoming) return cur
+            if (
+              cur.ativo_derivado === incoming.ativo_derivado &&
+              cur.fase === incoming.fase &&
+              cur.risk_label_persistido === incoming.risk_label_persistido &&
+              cur.os_label_persistido === incoming.os_label_persistido &&
+              cur.risk_score === incoming.risk_score &&
+              cur.situacao === incoming.situacao
+            ) {
+              return cur
+            }
+            changed = true
+            return {
+              ...cur,
+              ativo_derivado: incoming.ativo_derivado,
+              fase: incoming.fase,
+              risk_label_persistido: incoming.risk_label_persistido,
+              os_label_persistido: incoming.os_label_persistido,
+              risk_score: incoming.risk_score,
+              situacao: incoming.situacao,
+            }
+          })
           const existentes = new Set(state.processos.map((p) => p.numero))
           const novos = lista.filter((p) => !existentes.has(p.numero))
-          if (!novos.length) return state
-          return { processos: [...state.processos, ...novos] }
+          if (novos.length) changed = true
+          if (!changed) return state
+          return { processos: [...atualizados, ...novos] }
         }),
 
       seedDemoProcessos: async (numeros) => {
@@ -407,6 +502,8 @@ export const useMapStore = create<MapStore>()(
           periodo: s.filtros.periodo,
           riskScoreMin: s.filtros.riskScoreMin,
           riskScoreMax: s.filtros.riskScoreMax,
+          exibirProcessosAtivos: s.filtros.exibirProcessosAtivos,
+          exibirProcessosInativos: s.filtros.exibirProcessosInativos,
         },
       }),
       merge: (persistedState, currentState) => {
@@ -417,12 +514,16 @@ export const useMapStore = create<MapStore>()(
           | undefined
         const s = box?.filtros
         const { riskScoreMin, riskScoreMax } = mergeRiskRange(s)
+        const { exibirProcessosAtivos, exibirProcessosInativos } =
+          mergeExibirAtividade(s)
         const filtros: FiltrosState = {
           ...defaultFiltros(),
           camadas: mergeCamadas(s?.camadas),
           periodo: mergePeriodo(s?.periodo),
           riskScoreMin,
           riskScoreMax,
+          exibirProcessosAtivos,
+          exibirProcessosInativos,
         }
         return {
           ...currentState,

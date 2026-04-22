@@ -51,7 +51,7 @@ export const REGIME_LABELS: Record<Regime, string> = {
   lavra_garimpeira: 'Lavra Garimpeira',
   registro_extracao: 'Registro de Extração',
   req_registro_extracao: 'Req. de Registro de Extração',
-  requerimento_licenciamento: 'Requerimento de Licenciamento',
+  requerimento_licenciamento: 'Req. de Licenciamento',
   direito_requerer_lavra: 'Direito de Requerer a Lavra',
   apto_disponibilidade: 'Apto para Disponibilidade',
   reconhecimento_geologico: 'Reconhecimento Geológico',
@@ -81,6 +81,22 @@ export const REGIME_LAYER_ORDER: Regime[] = [
   'bloqueio_provisorio',
   'bloqueio_permanente',
 ]
+
+/**
+ * Slugs de regime em que a TAH não se aplica (Concessão de Lavra, Manifesto/PLG,
+ * Registro de Extração, Lavra Garimpeira).
+ */
+export const REGIMES_SEM_TAH_SLUGS = new Set<string>([
+  'concessao_lavra',
+  'registro_extracao',
+  'lavra_garimpeira',
+  'req_plg',
+])
+
+export function regimeNaoPagaTah(regime: string | null | undefined): boolean {
+  const r = regime != null ? String(regime).trim() : ''
+  return r !== '' && REGIMES_SEM_TAH_SLUGS.has(r)
+}
 
 /** Textos explicativos dos badges de regime (popup, relatório, dashboard, legenda). */
 export const REGIME_BADGE_TOOLTIP: Record<Regime, string> = {

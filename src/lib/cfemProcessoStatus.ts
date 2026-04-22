@@ -21,10 +21,18 @@ export function processoGeraCfem(regime: string | null | undefined): boolean {
   return r !== '' && REGIMES_CFEM_PRODUTIVOS.has(r)
 }
 
-/** Enquanto nao existir fonte oficial de CFEM por processo, fase produtiva => sem dado individualizado. */
+/**
+ * `cfemNumLancamentos`: total de lançamentos CFEM atribuíveis ao processo (Tier 1 / view).
+ */
 export function getCfemProcessoStatus(
   regime: string | null | undefined,
+  cfemNumLancamentos?: number | null,
 ): CfemProcessoStatus {
-  if (processoGeraCfem(regime)) return 'SEM_DADO_INDIVIDUALIZADO'
-  return 'PROCESSO_NAO_PRODUTIVO'
+  if (!processoGeraCfem(regime)) return 'PROCESSO_NAO_PRODUTIVO'
+  const n =
+    cfemNumLancamentos != null && Number.isFinite(Number(cfemNumLancamentos))
+      ? Number(cfemNumLancamentos)
+      : 0
+  if (n > 0) return 'OK'
+  return 'SEM_DADO_INDIVIDUALIZADO'
 }

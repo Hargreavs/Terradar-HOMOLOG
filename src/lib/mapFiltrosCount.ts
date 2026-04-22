@@ -12,5 +12,7 @@ export function countFiltrosAlterados(f: FiltrosState): number {
   if (f.uf !== null) n++
   if (f.municipio && f.municipio.trim()) n++
   n += f.substancias.length
+  if (!f.exibirProcessosAtivos) n++
+  if (f.exibirProcessosInativos) n++
   return n
 }

@@ -7,6 +7,7 @@ import type {
   Regime,
   RiskBreakdown,
 } from '../types'
+import { isProcessoTerminal, parseAtivoDerivado } from './processoStatus'
 
 const EMPTY_FISCAL: DadosFiscais = {
   capag: 'C',
@@ -103,10 +104,17 @@ function coerceRegime(raw: string): Regime {
 
 function coerceFase(raw: string): Fase {
   const r = raw.toLowerCase()
+  if (r.includes('encerr')) return 'encerrado'
+  if (
+    /\b(arquivad|cassad|caducid|cancelad|extint|revogad|anulad|baixad|nulidad)\b/.test(
+      r,
+    )
+  ) {
+    return 'encerrado'
+  }
   if (r.includes('lavra')) return 'lavra'
   if (r.includes('pesquis')) return 'pesquisa'
   if (r.includes('concess')) return 'concessao'
-  if (r.includes('encerr')) return 'encerrado'
   return 'requerimento'
 }
 
@@ -316,6 +324,21 @@ export function mapDbRowToMapProcesso(
     }
   }
 
+  const risk_label_persistido =
+    sp != null && typeof sp.risk_label === 'string' && sp.risk_label.trim() !== ''
+      ? sp.risk_label.trim()
+      : undefined
+
+  const ativoDerivado = parseAtivoDerivado(row.ativo_derivado)
+  const terminal = isProcessoTerminal({
+    ativo_derivado: ativoDerivado,
+    fase,
+    risk_label_persistido,
+    os_label_persistido: sp?.os_label ?? null,
+  })
+  const situacao: Processo['situacao'] =
+    risk_score === null ? 'bloqueado' : terminal ? 'inativo' : 'ativo'
+
   return {
     id,
     numero,
@@ -356,9 +379,8 @@ export function mapDbRowToMapProcesso(
     lng,
     data_protocolo,
     ano_protocolo: anoProtFinal,
-    situacao: 'ativo',
-    ativo_derivado:
-      typeof row.ativo_derivado === 'boolean' ? row.ativo_derivado : null,
+    situacao,
+    ativo_derivado: ativoDerivado,
     risk_score,
     risk_breakdown,
     risk_decomposicao: null,
@@ -376,10 +398,7 @@ export function mapDbRowToMapProcesso(
     os_moderado_persistido: sp?.os_moderado ?? null,
     os_arrojado_persistido: sp?.os_arrojado ?? null,
     os_label_persistido: sp?.os_label ?? null,
-    risk_label_persistido:
-      sp != null && typeof sp.risk_label === 'string' && sp.risk_label.trim() !== ''
-        ? sp.risk_label.trim()
-        : undefined,
+    risk_label_persistido,
     risk_cor_persistido:
       sp != null && typeof sp.risk_cor === 'string' && sp.risk_cor.trim() !== ''
         ? sp.risk_cor.trim()
@@ -415,28 +434,30 @@ export function mapViewportFeatureToProcesso(
   const riskScore = properties.risk_score
   const riskLabel = properties.risk_label
   const osModerado = properties.os_moderado
-  const scoresPersistido =
-    typeof riskScore === 'number'
-      ? {
-          risk_score: riskScore,
-          risk_label: typeof riskLabel === 'string' ? riskLabel : null,
-          os_moderado: typeof osModerado === 'number' ? osModerado : null,
-          os_conservador: null, // não vem no viewport (só /api/processo)
-          os_arrojado: null,
-          os_label: null,
-          dimensoes_risco: null, // idem — breakdown só em /api/processo
-          dimensoes_oportunidade: null,
-        }
-      : null
+  const osLabelProp = properties.os_label
+  const hasPlanoScores =
+    typeof riskScore === 'number' ||
+    (typeof riskLabel === 'string' && riskLabel.trim() !== '') ||
+    typeof osModerado === 'number' ||
+    (typeof osLabelProp === 'string' && osLabelProp.trim() !== '')
+  const scoresPersistido = hasPlanoScores
+    ? {
+        risk_score: typeof riskScore === 'number' ? riskScore : null,
+        risk_label: typeof riskLabel === 'string' ? riskLabel : null,
+        os_moderado: typeof osModerado === 'number' ? osModerado : null,
+        os_conservador: null,
+        os_arrojado: null,
+        os_label: typeof osLabelProp === 'string' ? osLabelProp : null,
+        dimensoes_risco: null,
+        dimensoes_oportunidade: null,
+      }
+    : null
 
   return mapDbRowToMapProcesso({
     ...properties,
     geom: geometry,
     scores_persistido: scoresPersistido,
-    ativo_derivado:
-      typeof properties.ativo_derivado === 'boolean'
-        ? properties.ativo_derivado
-        : undefined,
+    ativo_derivado: parseAtivoDerivado(properties.ativo_derivado),
   })
 }
 

@@ -36,6 +36,22 @@ export interface CfemHistoricoItem {
   substancias: string
 }
 
+/** Linha de `fn_cfem_processo_municipio` (CFEM por processo e município). */
+export interface CfemPorMunicipioRow {
+  ano: number
+  municipio_ibge: string
+  municipio_nome: string
+  total_anual: number
+  num_lancamentos: number
+}
+
+/** Linha de `fn_cfem_municipio_historico` (contexto municipal, sem vínculo por processo). */
+export interface CfemMunicipioHistoricoRow {
+  ano: number
+  valor_brl: number
+  substancias?: string
+}
+
 /** Linha de `master_substancias` em `GET /api/processo` → `data.mercado`. */
 export interface MasterSubstancia {
   id: number
@@ -73,6 +89,17 @@ export interface MasterSubstancia {
   demanda_projetada_2030: string | null
   cambio_referencia: number
   updated_at: string
+  /**
+   * `GLOBAL` vs `BR_ONLY` (minerais de consumo majoritariamente domésticos).
+   * Colunas BR opcionais: `producao_br_absoluta_t`, `valor_producao_br_brl`, etc.
+   */
+  tipo_mercado?: string | null
+  producao_br_absoluta_t?: number | null
+  valor_producao_br_brl?: number | null
+  preco_medio_br_brl_t?: number | null
+  top_uf_produtora?: string | null
+  top_uf_pct?: number | null
+  ano_referencia_amb?: number | null
 }
 
 export interface ReportData {
@@ -159,6 +186,14 @@ export interface ReportData {
   demanda_global_t: number
   reservas_mundiais_pct: number
   producao_mundial_pct: number
+  /** Espelha `master_substancias.tipo_mercado` (ex.: `BR_ONLY` → card nacional na UI). */
+  tipo_mercado?: string | null
+  producao_br_absoluta_t?: number | null
+  valor_producao_br_brl?: number | null
+  preco_medio_br_brl_t?: number | null
+  top_uf_produtora?: string | null
+  top_uf_pct?: number | null
+  ano_referencia_amb?: number | null
   /** `master_substancias.fonte_res_prod` (marker `SEM_FONTE_OFICIAL:` = sem estatística comparável). */
   fonte_res_prod: string | null
   /** PNM e políticas setoriais (master_substâncias). */
@@ -207,6 +242,16 @@ export interface ReportData {
   cfem_historico: CfemHistoricoItem[]
   /** Atribuicao CFEM ao processo: nunca OK ate haver fonte por processo na base. */
   cfem_processo_status?: CfemProcessoStatus
+  /** Tier 1: colunas agregadas em `v_processo_enriquecido`. */
+  cfem_num_lancamentos?: number
+  cfem_total_historico?: number | null
+  cfem_ultimo_ano?: number | null
+  cfem_por_municipio?: CfemPorMunicipioRow[]
+  cfem_municipio_historico_tier1?: CfemMunicipioHistoricoRow[]
+  tah_ultima_data?: string | null
+  tah_ultimo_valor?: number | null
+  autuacoes_num?: number
+  autuacoes_valor_total?: number | null
 
   // Maturidade
   estagio: string

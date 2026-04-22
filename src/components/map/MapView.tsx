@@ -86,6 +86,7 @@ import {
 } from '../../lib/processoApi'
 import type {
   AlertaLegislativo,
+  CfemBreakdownMunicipio,
   ClassificacaoZumbi,
   Processo,
   Regime,
@@ -303,6 +304,13 @@ function buildEnrichmentPatch(
       }
     }
   }
+
+  const br = proc?.cfem_por_municipio_breakdown
+  patch.cfem_por_municipio_breakdown =
+    Array.isArray(br) && br.length > 0
+      ? (br as CfemBreakdownMunicipio[])
+      : null
+
   return patch
 }
 
@@ -2214,6 +2222,8 @@ export function MapView() {
     zoom: viewportZoom,
     limit: getViewportProcessosLimit(viewportZoom ?? 5),
     debounceMs: 800,
+    exibirProcessosAtivos: filtros.exibirProcessosAtivos,
+    exibirProcessosInativos: filtros.exibirProcessosInativos,
   })
 
   const mergeViewportProcessos = useMapStore((s) => s.mergeViewportProcessos)

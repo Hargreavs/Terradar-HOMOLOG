@@ -3,11 +3,14 @@ import { corFaixaOS } from '../../lib/oportunidadeRelatorioUi'
 import {
   REGIME_ANM_PARA_TERRADAR,
   REGIME_LABELS,
+  regimeNaoPagaTah,
 } from '../../lib/regimes'
 import { labelSubstanciaParaExibicao } from '../../lib/substancias'
 import type { Regime } from '../../types'
 import type {
   CfemHistoricoItem,
+  CfemMunicipioHistoricoRow,
+  CfemPorMunicipioRow,
   InfraData,
   LayerData,
   MasterSubstancia,
@@ -31,11 +34,36 @@ import {
 } from '../../lib/formatters/regulatorio'
 import { piorIndicadorCapag } from '../../lib/capagPiorIndicador'
 import type { ReportLang } from '../../lib/reportLang'
-import { getCfemProcessoStatus } from '../../lib/cfemProcessoStatus'
+import {
+  getCfemProcessoStatus,
+  type CfemProcessoStatus,
+} from '../../lib/cfemProcessoStatus'
 import {
   detectarBloqueadorConstitucional,
 } from '../../lib/processoStatus'
 import { getReportStrings } from '../report/reportL10n'
+
+function masterNumericField(
+  mercado: MasterSubstancia | null,
+  key: string,
+): number | null {
+  if (!mercado) return null
+  const raw = (mercado as Record<string, unknown>)[key]
+  if (raw == null || raw === '') return null
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : null
+}
+
+function masterStringField(
+  mercado: MasterSubstancia | null,
+  key: string,
+): string | null {
+  if (!mercado) return null
+  const raw = (mercado as Record<string, unknown>)[key]
+  if (raw == null) return null
+  const s = String(raw).trim()
+  return s === '' ? null : s
+}
 
 /** 1 t métrica = 32.151 oz troy (preço master em USD/t → exibição em oz). */
 const OZ_POR_TONELADA = 32_151
@@ -150,6 +178,7 @@ const TENURE_PT_EN: Record<string, string> = {
   'Concessao de Lavra': 'Mining concession',
   'Requerimento de Pesquisa': 'Exploration application',
   'Requerimento de Lavra': 'Mining application',
+  'Req. de Licenciamento': 'Licensing application',
   'Requerimento de Licenciamento': 'Licensing application',
   'Requerimento de Registro de Extração': 'Extraction registration application',
   'Requerimento de Lavra Garimpeira': 'Garimpo permit application',
@@ -719,6 +748,105 @@ function formatTipoInfra(tipo: string): string {
   }
 }
 
+function normalizeCfemPorMunicipioFromApi(rows: unknown[]): CfemPorMunicipioRow[] {
+  const out: CfemPorMunicipioRow[] = []
+  for (const raw of rows) {
+    if (!raw || typeof raw !== 'object') continue
+    const r = raw as Record<string, unknown>
+    const ano = Number(r.ano ?? r.Ano)
+    if (!Number.isFinite(ano) || ano <= 0) continue
+    const ibge = String(r.municipio_ibge ?? r.municipioIbge ?? '').trim()
+    const nome = String(r.municipio_nome ?? r.municipioNome ?? ibge).trim()
+    const total = Number(r.total_anual ?? r.totalAnual ?? r.valor_brl ?? 0)
+    const nl = Number(r.num_lancamentos ?? r.numLancamentos ?? 0)
+    out.push({
+      ano,
+      municipio_ibge: ibge,
+      municipio_nome: nome || ibge,
+      total_anual: Number.isFinite(total) ? total : 0,
+      num_lancamentos: Number.isFinite(nl) ? nl : 0,
+    })
+  }
+  return out.sort((a, b) =>
+    a.ano !== b.ano ? a.ano - b.ano : a.municipio_nome.localeCompare(b.municipio_nome),
+  )
+}
+
+function normalizeCfemMunicipioHistoricoFromApi(
+  rows: unknown[],
+): CfemMunicipioHistoricoRow[] {
+  const out: CfemMunicipioHistoricoRow[] = []
+  for (const raw of rows) {
+    if (!raw || typeof raw !== 'object') continue
+    const r = raw as Record<string, unknown>
+    const ano = Number(r.ano ?? r.Ano)
+    if (!Number.isFinite(ano) || ano <= 0) continue
+    const v = Number(r.valor_brl ?? r.valorBrl ?? r.total_anual ?? 0)
+    const subst = r.substancias != null ? String(r.substancias) : undefined
+    out.push({
+      ano,
+      valor_brl: Number.isFinite(v) ? v : 0,
+      substancias: subst,
+    })
+  }
+  return out.sort((a, b) => a.ano - b.ano)
+}
+
+function buildTahReportFields(
+  p: Record<string, unknown>,
+  regimeSlug: string | null,
+  lang: ReportLang,
+  isoToBr: (iso: unknown) => string,
+): { tah_status: string; tah_status_tooltip?: string; tah_sei_line: string } {
+  const en = lang === 'en'
+  if (regimeNaoPagaTah(regimeSlug)) {
+    const status = en ? 'Not applicable to tenure' : 'Não aplicável ao regime'
+    return { tah_status: status, tah_sei_line: status }
+  }
+  const tierRaw = p.tah_ultima_data
+  const tierData =
+    tierRaw != null && String(tierRaw).trim() !== ''
+      ? String(tierRaw).trim()
+      : ''
+  if (tierData !== '') {
+    const brlNRaw = p.tah_ultimo_valor
+    const brlN =
+      brlNRaw != null &&
+      String(brlNRaw).trim() !== '' &&
+      Number.isFinite(Number(brlNRaw))
+        ? Number(brlNRaw)
+        : null
+    const dataBr = isoToBr(tierData)
+    const dEn = new Date(tierData).toLocaleDateString('en-US')
+    let texto: string
+    if (brlN != null && brlN > 0) {
+      texto = en
+        ? `Paid on ${dEn} · R$ ${brlN.toLocaleString('en-US')}`
+        : `Pago em ${dataBr} · R$ ${brlN.toLocaleString('pt-BR')}`
+    } else {
+      texto = en ? `Paid on ${dEn}` : `Pago em ${dataBr}`
+    }
+    return { tah_status: texto, tah_sei_line: texto }
+  }
+  const legacy = p.tah_ultimo_pagamento
+  const tahFmt = formatTahUltimoPagamento(
+    legacy != null && String(legacy).trim() !== '' ? String(legacy) : null,
+    lang,
+  )
+  const fallbackTxt = tahFmt.texto
+  const semRegistro = en ? 'No TAH on record' : 'Sem TAH registrada'
+  const textoFinal =
+    fallbackTxt === 'Sem evento publicado' ||
+    fallbackTxt === 'No event published'
+      ? semRegistro
+      : fallbackTxt
+  return {
+    tah_status: textoFinal,
+    tah_status_tooltip: tahFmt.tooltip,
+    tah_sei_line: textoFinal,
+  }
+}
+
 /**
  * Número máximo de linhas exibidas no quadro «Arrecadação CFEM (histórico)».
  * Mantemos os 5 anos mais recentes com arrecadação > 0 — descarta anos zerados e trunca a
@@ -730,19 +858,28 @@ function cfemHistoricoFromApi(
   cfem: Record<string, unknown>[],
   nd: (s: unknown) => string,
   lang: ReportLang,
-  regime: string | null | undefined,
+  cfemProcessoStatus: CfemProcessoStatus,
+  cfemPorMunicipio?: CfemPorMunicipioRow[],
 ): CfemHistoricoItem[] {
   const en = lang === 'en'
-  const status = getCfemProcessoStatus(regime)
-  const processoValorCell = (): string => {
-    if (status === 'SEM_DADO_INDIVIDUALIZADO') {
+  const procPorAno = new Map<number, number>()
+  if (cfemProcessoStatus === 'OK' && cfemPorMunicipio?.length) {
+    for (const row of cfemPorMunicipio) {
+      procPorAno.set(row.ano, (procPorAno.get(row.ano) ?? 0) + row.total_anual)
+    }
+  }
+  const processoValorCellForAno = (ano: number): string => {
+    if (cfemProcessoStatus === 'OK') {
+      const v = procPorAno.get(ano)
+      if (v != null && v > 0) return formatBrlNum(v)
+      return nd(null)
+    }
+    if (cfemProcessoStatus === 'SEM_DADO_INDIVIDUALIZADO') {
       return en
         ? 'Not available per process in current database'
         : 'Não individualizado na base'
     }
-    if (status === 'PROCESSO_NAO_PRODUTIVO') {
-      return nd(null)
-    }
+    if (cfemProcessoStatus === 'PROCESSO_NAO_PRODUTIVO') return nd(null)
     return nd(null)
   }
   const mapped = cfem.map((r) => {
@@ -767,7 +904,7 @@ function cfemHistoricoFromApi(
 
   return topRecent.map((r) => ({
     ano: r.ano,
-    processo_valor: processoValorCell(),
+    processo_valor: processoValorCellForAno(r.ano),
     municipio_valor: r.municipio_valor,
     substancias: r.substancias,
   }))
@@ -1072,6 +1209,20 @@ export async function buildReportData(
     p.regime == null || String(p.regime).trim() === ''
       ? null
       : String(p.regime)
+  const cfemNumLanc =
+    p.cfem_num_lancamentos != null && String(p.cfem_num_lancamentos).trim() !== ''
+      ? Number(p.cfem_num_lancamentos)
+      : 0
+  const cfemPorMunicipioNorm = normalizeCfemPorMunicipioFromApi(
+    (p.cfem_por_municipio as unknown[]) ?? [],
+  )
+  const cfemMunHistTier1 = normalizeCfemMunicipioHistoricoFromApi(
+    (p.cfem_municipio_historico as unknown[]) ?? [],
+  )
+  const cfemStatusFinal = getCfemProcessoStatus(
+    regimeParaCfem,
+    Number.isFinite(cfemNumLanc) && cfemNumLanc > 0 ? cfemNumLanc : null,
+  )
   const cfemTotal = Number(fiscal.cfem_total_4anos) || 0
   const cfemEstHaMunicipal =
     areaHa > 0 && cfemTotal > 0
@@ -1259,6 +1410,8 @@ export async function buildReportData(
       ? Math.max(0, anoFimProt - anoIniProt)
       : Number(p.protocolo_anos) || 0
 
+  const tahBuilt = buildTahReportFields(p, regimeParaCfem, lang, formatIsoToBr)
+
   return {
     processo: String(p.numero ?? numeroProcesso),
     titular: nd(p.titular),
@@ -1314,17 +1467,8 @@ export async function buildReportData(
     ),
     gu_pendencia: nd(p.gu_pendencia),
     pendencias: pendenciasFmt,
-    ...(() => {
-      const dt = p.tah_ultimo_pagamento
-      const tahFmt = formatTahUltimoPagamento(
-        dt != null && String(dt).trim() !== '' ? String(dt) : null,
-        lang,
-      )
-      return {
-        tah_status: tahFmt.texto,
-        tah_status_tooltip: tahFmt.tooltip,
-      }
-    })(),
+    tah_status: tahBuilt.tah_status,
+    tah_status_tooltip: tahBuilt.tah_status_tooltip,
     licenca_ambiental: (() => {
       const dt = p.licenca_ambiental_data
       if (dt != null && String(dt).trim() !== '') {
@@ -1376,6 +1520,16 @@ export async function buildReportData(
     demanda_global_t: 0,
     reservas_mundiais_pct: Number(mercado?.reservas_br_pct ?? 0) || 0,
     producao_mundial_pct: Number(mercado?.producao_br_pct ?? 0) || 0,
+    tipo_mercado: masterStringField(mercado, 'tipo_mercado'),
+    producao_br_absoluta_t: masterNumericField(
+      mercado,
+      'producao_br_absoluta_t',
+    ),
+    valor_producao_br_brl: masterNumericField(mercado, 'valor_producao_br_brl'),
+    preco_medio_br_brl_t: masterNumericField(mercado, 'preco_medio_br_brl_t'),
+    top_uf_produtora: masterStringField(mercado, 'top_uf_produtora'),
+    top_uf_pct: masterNumericField(mercado, 'top_uf_pct'),
+    ano_referencia_amb: masterNumericField(mercado, 'ano_referencia_amb'),
     fonte_res_prod:
       mercado?.fonte_res_prod != null &&
       String(mercado.fonte_res_prod).trim() !== ''
@@ -1447,7 +1601,15 @@ export async function buildReportData(
     },
     capag_pior_indicador_nome: piorCap.indicador,
     capag_pior_indicador_letra: piorCap.letra,
-    dados_sei: dadosSeiFromProcesso(p),
+    dados_sei: (() => {
+      const base = dadosSeiFromProcesso(p)
+      if (!base) return undefined
+      const line = String(tahBuilt.tah_sei_line ?? '').trim()
+      return {
+        ...base,
+        tah_pago: line !== '' ? line : base.tah_pago,
+      }
+    })(),
     receita_propria: templateFiscal.receita_propria,
     divida: templateFiscal.divida,
     divida_fonte: templateFiscal.divida_fonte,
@@ -1470,8 +1632,43 @@ export async function buildReportData(
         0,
       linhas_bndes_nomes: linhasBndesNomes,
     },
-    cfem_historico: cfemHistoricoFromApi(cfemRows, nd, lang, regimeParaCfem),
-    cfem_processo_status: getCfemProcessoStatus(regimeParaCfem),
+    cfem_historico: cfemHistoricoFromApi(
+      cfemRows,
+      nd,
+      lang,
+      cfemStatusFinal,
+      cfemPorMunicipioNorm,
+    ),
+    cfem_processo_status: cfemStatusFinal,
+    cfem_num_lancamentos: Number.isFinite(cfemNumLanc) ? cfemNumLanc : 0,
+    cfem_total_historico:
+      p.cfem_total_historico != null &&
+      String(p.cfem_total_historico).trim() !== ''
+        ? Number(p.cfem_total_historico)
+        : null,
+    cfem_ultimo_ano:
+      p.cfem_ultimo_ano != null && String(p.cfem_ultimo_ano).trim() !== ''
+        ? Number(p.cfem_ultimo_ano)
+        : null,
+    cfem_por_municipio: cfemPorMunicipioNorm,
+    cfem_municipio_historico_tier1: cfemMunHistTier1,
+    tah_ultima_data:
+      p.tah_ultima_data != null && String(p.tah_ultima_data).trim() !== ''
+        ? String(p.tah_ultima_data).trim()
+        : null,
+    tah_ultimo_valor:
+      p.tah_ultimo_valor != null && String(p.tah_ultimo_valor).trim() !== ''
+        ? Number(p.tah_ultimo_valor)
+        : null,
+    autuacoes_num:
+      p.autuacoes_num != null && String(p.autuacoes_num).trim() !== ''
+        ? Number(p.autuacoes_num)
+        : 0,
+    autuacoes_valor_total:
+      p.autuacoes_valor_total != null &&
+      String(p.autuacoes_valor_total).trim() !== ''
+        ? Number(p.autuacoes_valor_total)
+        : null,
 
     estagio,
     estagio_index,

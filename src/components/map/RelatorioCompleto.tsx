@@ -18,6 +18,7 @@ import type {
   RelatorioData,
   RelatorioOportunidadeData,
   RelatorioScoresExibicaoApi,
+  Timestamps,
 } from '../../data/relatorio.mock'
 import {
   rotuloFontePublicacaoExibicao,
@@ -35,6 +36,13 @@ import {
   PREFIX_SEM_FONTE_RES_PROD,
   textoAposSemFonteOficial,
 } from '../../lib/reportFonteResProd'
+import {
+  formatarPctTopUf,
+  formatarPrecoMedioBrBrlPorT,
+  formatarProducaoNacionalT,
+  formatarValorProducaoBrBrl,
+  isTipoMercadoBrOnly,
+} from '../../lib/formatContextoBrasilIntel'
 import { REGIME_LABELS } from '../../lib/regimes'
 import { RegimeBadge } from '../ui/RegimeBadge'
 import { AlertaItemImpactoBar } from '../legislativo/AlertaItemImpactoBar'
@@ -50,6 +58,7 @@ import { getOpportunityLabel } from '../../lib/opportunityScore'
 import { normalizarSeparadoresRotuloDb } from '../../lib/normalizarRotuloScore'
 import type {
   AlertaLegislativo,
+  CfemBreakdownMunicipio,
   ClassificacaoZumbi,
   Fase,
   Processo,
@@ -1105,6 +1114,261 @@ function RelatorioCfemBarrasComTooltip({
         </div>
       )}
     </>
+  )
+}
+
+/** Um card «processo vs. município» com denominador municipal alinhado ao IBGE do card. */
+function CfemVsMunicipioBreakdownCard({
+  item,
+  timestamps,
+}: {
+  item: CfemBreakdownMunicipio
+  timestamps: Timestamps
+}) {
+  const ANO_ATUAL = new Date().getFullYear()
+  const ANO_MIN_CFEM = ANO_ATUAL - 4
+  const serie5y = item.serie_anual.filter((s) => s.ano >= ANO_MIN_CFEM)
+  const procPorAno = new Map(serie5y.map((s) => [s.ano, s.processo]))
+  const munPorAno = new Map(serie5y.map((s) => [s.ano, s.municipio]))
+  const anos = [...new Set(serie5y.map((s) => s.ano))].sort((a, b) => a - b)
+  const processoTemCfem = serie5y.some((s) => s.processo > 0)
+  const maxProc = Math.max(...anos.map((y) => procPorAno.get(y) ?? 0), 1)
+  const maxMun = Math.max(...anos.map((y) => munPorAno.get(y) ?? 0), 1)
+  const trackH = 80
+
+  const pctRaw = item.percentual_do_municipio
+  const pct = Number.isFinite(pctRaw) ? Math.min(pctRaw, 100) : 0
+  const muitoBaixa = pct > 0 && pct < 1
+  const pctTexto = muitoBaixa
+    ? '< 1%'
+    : `${pct.toLocaleString('pt-BR', {
+        maximumFractionDigits: 1,
+        minimumFractionDigits: 0,
+      })}%`
+
+  const linhaPct =
+    item.municipio_total > 0 ? (
+      <p
+        style={{
+          ...CFEM_CARD_SUBTITLE_STYLE,
+          color: '#D3D1C7',
+          margin: '10px 0 0 0',
+        }}
+      >
+        {pct >= 1 ? (
+          <>
+            Este processo representa{' '}
+            <strong
+              style={{
+                fontWeight: 700,
+                color: '#EF9F27',
+              }}
+            >
+              {pctTexto}
+            </strong>{' '}
+            da CFEM de {item.municipio_nome}.
+          </>
+        ) : (
+          <>
+            Este processo representa menos de 1% da CFEM de {item.municipio_nome}.
+          </>
+        )}
+      </p>
+    ) : (
+      <p
+        style={{
+          fontSize: FS.min,
+          color: '#5F5E5A',
+          margin: '10px 0 0 0',
+          lineHeight: 1.5,
+        }}
+      >
+        Dados municipais indisponíveis
+      </p>
+    )
+
+  const ufPart = item.uf.trim() !== '' ? `/${item.uf}` : ''
+  const dataIsoCfem = [timestamps.cfem, timestamps.cfem_municipal].reduce(
+    (a, b) => (a > b ? a : b),
+  )
+
+  return (
+    <Card>
+      <SecLabel branco style={{ marginBottom: 4 }}>
+        CFEM: processo vs. {item.municipio_nome}
+        {ufPart}
+      </SecLabel>
+      <p
+        style={{
+          ...CFEM_CARD_SUBTITLE_STYLE,
+          margin: '0 0 28px 0',
+          textTransform: 'none',
+          letterSpacing: 'normal',
+          fontWeight: 400,
+        }}
+      >
+        Arrecadação deste processo em {item.municipio_nome}, comparada à CFEM
+        total do município.
+      </p>
+      {serie5y.length > 0 || processoTemCfem ? (
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: 16,
+            marginBottom: 18,
+          }}
+        >
+          {processoTemCfem ? (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+              }}
+            >
+              <span
+                style={{
+                  width: 12,
+                  height: 12,
+                  borderRadius: 2,
+                  backgroundColor: '#4A90B8',
+                  flexShrink: 0,
+                }}
+                aria-hidden
+              />
+              <span style={{ fontSize: FS.sm, color: '#D3D1C7' }}>
+                Este processo
+              </span>
+            </div>
+          ) : null}
+          {serie5y.some((s) => s.municipio > 0) ? (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+              }}
+            >
+              <span
+                style={{
+                  width: 12,
+                  height: 12,
+                  borderRadius: 2,
+                  backgroundColor: '#EF9F27',
+                  flexShrink: 0,
+                }}
+                aria-hidden
+              />
+              <span style={{ fontSize: FS.sm, color: '#D3D1C7' }}>
+                {item.municipio_nome}
+              </span>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      <RelatorioCfemBarrasComTooltip
+        processoTemCfem={processoTemCfem}
+        anos={anos}
+        procPorAno={procPorAno}
+        munPorAno={munPorAno}
+        maxProc={maxProc}
+        maxMun={maxMun}
+        trackH={trackH}
+      />
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'stretch',
+          marginTop: 4,
+          marginBottom: 28,
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 0, paddingRight: 8 }}>
+          <p
+            style={{
+              fontSize: 11,
+              fontWeight: 500,
+              letterSpacing: '1px',
+              textTransform: 'uppercase',
+              color: '#888780',
+              margin: '0 0 6px 0',
+              lineHeight: 1.3,
+            }}
+          >
+            Este processo ({item.municipio_nome})
+          </p>
+          {item.processo_total > 0 ? (
+            <p
+              style={{
+                fontSize: 20,
+                fontWeight: 700,
+                color: '#4A90B8',
+                margin: 0,
+                lineHeight: 1.2,
+              }}
+            >
+              {formatarRealBrlInteligente(item.processo_total)}
+            </p>
+          ) : (
+            <p
+              style={{
+                fontSize: FS.sm,
+                color: '#5F5E5A',
+                margin: 0,
+                lineHeight: 1.2,
+                fontWeight: 400,
+              }}
+            >
+              Sem arrecadação
+            </p>
+          )}
+        </div>
+        <div
+          style={{
+            width: 1,
+            flexShrink: 0,
+            backgroundColor: '#2C2C2A',
+            alignSelf: 'stretch',
+            margin: '0 8px',
+          }}
+          aria-hidden
+        />
+        <div style={{ flex: 1, minWidth: 0, paddingLeft: 8 }}>
+          <p
+            style={{
+              fontSize: 11,
+              fontWeight: 500,
+              letterSpacing: '1px',
+              textTransform: 'uppercase',
+              color: '#888780',
+              margin: '0 0 6px 0',
+              lineHeight: 1.3,
+            }}
+          >
+            {item.municipio_nome} total
+          </p>
+          <p
+            style={{
+              fontSize: 20,
+              fontWeight: 700,
+              color: '#EF9F27',
+              margin: 0,
+              lineHeight: 1.2,
+            }}
+          >
+            {formatarRealBrlInteligente(item.municipio_total)}
+          </p>
+        </div>
+      </div>
+      {linhaPct}
+      <FonteLabel
+        dataIso={dataIsoCfem}
+        fonte="ANM / CFEM"
+        marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
+      />
+    </Card>
   )
 }
 
@@ -3299,6 +3563,141 @@ export function RelatorioCompleto({
             ) : (
               <>
             <Card>
+              {isTipoMercadoBrOnly(intel_mineral.tipo_mercado) ? (
+                (() => {
+                  const anoRef =
+                    intel_mineral.ano_referencia_amb != null &&
+                    Number.isFinite(intel_mineral.ano_referencia_amb)
+                      ? Math.round(intel_mineral.ano_referencia_amb)
+                      : 2024
+                  const uf = (intel_mineral.top_uf_produtora ?? '').trim()
+                  const pctFmt = formatarPctTopUf(intel_mineral.top_uf_pct)
+                  const topUfLinha =
+                    uf !== ''
+                      ? pctFmt !== '—'
+                        ? `${uf} ${pctFmt}`
+                        : uf
+                      : pctFmt
+                  return (
+                    <>
+                      <SecLabel branco style={{ marginBottom: 2 }}>
+                        {`CONTEXTO BRASIL · ${processo.substancia.toUpperCase()}`}
+                      </SecLabel>
+                      <p
+                        style={{
+                          fontSize: FS.md,
+                          color: '#888780',
+                          margin: '0 0 16px 0',
+                          lineHeight: 1.5,
+                        }}
+                      >
+                        Mineral de consumo majoritariamente doméstico · sem
+                        estatística USGS global
+                      </p>
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 2,
+                        }}
+                      >
+                        <div style={{ marginBottom: 10 }}>
+                          <p
+                            style={{
+                              ...subsecaoTituloStyle,
+                              margin: '0 0 4px 0',
+                            }}
+                          >
+                            {`Produção Nacional ${anoRef}`}
+                          </p>
+                          <p
+                            style={{
+                              fontSize: FS.lg,
+                              fontWeight: 500,
+                              color: '#F1EFE8',
+                              margin: 0,
+                            }}
+                          >
+                            {formatarProducaoNacionalT(
+                              intel_mineral.producao_br_absoluta_t,
+                            )}
+                          </p>
+                        </div>
+                        <div style={{ marginBottom: 10 }}>
+                          <p
+                            style={{
+                              ...subsecaoTituloStyle,
+                              margin: '0 0 4px 0',
+                            }}
+                          >
+                            Valor produção BR
+                          </p>
+                          <p
+                            style={{
+                              fontSize: FS.lg,
+                              fontWeight: 500,
+                              color: '#F1EFE8',
+                              margin: 0,
+                            }}
+                          >
+                            {formatarValorProducaoBrBrl(
+                              intel_mineral.valor_producao_br_brl,
+                            )}
+                          </p>
+                        </div>
+                        <div style={{ marginBottom: 10 }}>
+                          <p
+                            style={{
+                              ...subsecaoTituloStyle,
+                              margin: '0 0 4px 0',
+                            }}
+                          >
+                            Preço médio nacional
+                          </p>
+                          <p
+                            style={{
+                              fontSize: FS.lg,
+                              fontWeight: 500,
+                              color: '#F1EFE8',
+                              margin: 0,
+                            }}
+                          >
+                            {formatarPrecoMedioBrBrlPorT(
+                              intel_mineral.preco_medio_br_brl_t,
+                            )}
+                          </p>
+                        </div>
+                        <div style={{ marginBottom: 4 }}>
+                          <p
+                            style={{
+                              ...subsecaoTituloStyle,
+                              margin: '0 0 4px 0',
+                            }}
+                          >
+                            Top UF produtora
+                          </p>
+                          <p
+                            style={{
+                              fontSize: FS.lg,
+                              fontWeight: 500,
+                              color: '#F1EFE8',
+                              margin: 0,
+                            }}
+                          >
+                            {topUfLinha}
+                          </p>
+                        </div>
+                      </div>
+                      <FonteLabel
+                        dataIso=""
+                        fonte={`ANM Anuário Mineral Brasileiro ${anoRef}`}
+                        marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
+                      />
+                    </>
+                  )
+                })()
+              ) : (
+                <>
               <SecLabel branco style={{ marginBottom: 2 }}>
                 Contexto global
               </SecLabel>
@@ -3523,6 +3922,8 @@ export function RelatorioCompleto({
                     }
                     marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
                   />
+                </>
+              )}
                 </>
               )}
             </Card>
@@ -5144,9 +5545,187 @@ export function RelatorioCompleto({
               />
             </Card>
 
+            {(fiscal.cfem_num_lancamentos ?? 0) > 0 &&
+            fiscal.cfem_por_municipio_tier1 &&
+            fiscal.cfem_por_municipio_tier1.length > 0 ? (
+              <Card>
+                <SecLabel branco style={{ marginBottom: 6 }}>
+                  CFEM por município
+                </SecLabel>
+                <p
+                  style={{
+                    fontSize: FS.sm,
+                    color: '#888780',
+                    margin: '0 0 14px 0',
+                    lineHeight: 1.45,
+                  }}
+                >
+                  {fiscal.cfem_num_lancamentos} lançamentos ·{' '}
+                  {fiscal.cfem_total_historico_brl != null &&
+                  Number.isFinite(fiscal.cfem_total_historico_brl)
+                    ? formatarRealBrlInteligente(fiscal.cfem_total_historico_brl)
+                    : 'Não disponível'}{' '}
+                  · último: {fiscal.cfem_ultimo_ano ?? '—'}
+                </p>
+                <table
+                  style={{
+                    width: '100%',
+                    borderCollapse: 'collapse',
+                    fontSize: FS.sm,
+                    color: '#D3D1C7',
+                  }}
+                >
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid rgba(241,239,232,0.15)' }}>
+                      <th style={{ textAlign: 'left', padding: '8px 6px', fontWeight: 600 }}>
+                        Ano
+                      </th>
+                      <th style={{ textAlign: 'left', padding: '8px 6px', fontWeight: 600 }}>
+                        Município
+                      </th>
+                      <th style={{ textAlign: 'right', padding: '8px 6px', fontWeight: 600 }}>
+                        Total anual
+                      </th>
+                      <th style={{ textAlign: 'right', padding: '8px 6px', fontWeight: 600 }}>
+                        Lançamentos
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...fiscal.cfem_por_municipio_tier1]
+                      .sort((a, b) => {
+                        if (b.ano !== a.ano) return b.ano - a.ano
+                        return b.total_anual_brl - a.total_anual_brl
+                      })
+                      .map((r) => (
+                        <tr
+                          key={`${r.ano}-${r.municipio_nome}`}
+                          style={{
+                            borderBottom: '1px solid rgba(80,78,72,0.35)',
+                          }}
+                        >
+                          <td style={{ padding: '8px 6px' }}>{r.ano}</td>
+                          <td style={{ padding: '8px 6px' }}>{r.municipio_nome}</td>
+                          <td style={{ padding: '8px 6px', textAlign: 'right' }}>
+                            {formatarRealBrlInteligente(r.total_anual_brl)}
+                          </td>
+                          <td style={{ padding: '8px 6px', textAlign: 'right' }}>
+                            {r.num_lancamentos}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+                <FonteLabel
+                  dataIso={timestamps.cfem}
+                  fonte="ANM Dados Abertos (CFEM)"
+                  marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
+                />
+              </Card>
+            ) : null}
+
+            {fiscal.autuacoes_anm != null && fiscal.autuacoes_anm.num > 0 ? (
+              <Card
+                style={{
+                  borderColor: 'rgba(217, 165, 91, 0.35)',
+                  background: 'rgba(217, 165, 91, 0.06)',
+                }}
+              >
+                <SecLabel branco style={{ marginBottom: 8 }}>
+                  Autuações fiscais ANM
+                </SecLabel>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: 12,
+                    marginBottom: 12,
+                  }}
+                >
+                  <div>
+                    <p
+                      style={{
+                        fontSize: FS.metric,
+                        fontWeight: 700,
+                        color: '#EF9F27',
+                        margin: 0,
+                      }}
+                    >
+                      {fiscal.autuacoes_anm.num}
+                    </p>
+                    <p style={{ fontSize: FS.sm, color: '#888780', margin: '4px 0 0 0' }}>
+                      autuação(ões) históricas
+                    </p>
+                  </div>
+                  <div>
+                    <p
+                      style={{
+                        fontSize: FS.metric,
+                        fontWeight: 700,
+                        color: '#F1EFE8',
+                        margin: 0,
+                      }}
+                    >
+                      {fiscal.autuacoes_anm.valor_total_brl != null &&
+                      Number.isFinite(fiscal.autuacoes_anm.valor_total_brl)
+                        ? formatarRealBrlInteligente(
+                            fiscal.autuacoes_anm.valor_total_brl,
+                          )
+                        : 'Não disponível'}
+                    </p>
+                    <p style={{ fontSize: FS.sm, color: '#888780', margin: '4px 0 0 0' }}>
+                      valor total autuado
+                    </p>
+                  </div>
+                </div>
+                <p style={{ fontSize: FS.min, color: '#5F5E5A', margin: 0, lineHeight: 1.45 }}>
+                  Fonte: ANM Dados Abertos · CFEM_Autuacao. Não substitui consulta
+                  processual direta.
+                </p>
+              </Card>
+            ) : null}
+
+            {fiscal.cfem_processo_status === 'OK' &&
+            processo != null &&
+            Array.isArray(processo.cfem_por_municipio_breakdown) &&
+            processo.cfem_por_municipio_breakdown.length > 0 ? (
+              <>
+                {processo.cfem_por_municipio_breakdown.map((item) => (
+                  <CfemVsMunicipioBreakdownCard
+                    key={item.municipio_ibge}
+                    item={item}
+                    timestamps={timestamps}
+                  />
+                ))}
+                {processo.cfem_por_municipio_breakdown.length > 1 ? (
+                  <p
+                    style={{
+                      fontSize: FS.sm,
+                      color: '#888780',
+                      margin: '4px 0 16px 0',
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    Este processo cruza{' '}
+                    {processo.cfem_por_municipio_breakdown.length} municípios
+                    (poligonal em divisa). Total consolidado:{' '}
+                    {formatarRealBrlInteligente(
+                      processo.cfem_por_municipio_breakdown.reduce(
+                        (s, b) => s + b.processo_total,
+                        0,
+                      ),
+                    )}
+                    .
+                  </p>
+                ) : null}
+              </>
+            ) : (
             <Card>
               <SecLabel branco style={{ marginBottom: 4 }}>
-                CFEM: processo vs. município
+                CFEM: processo vs.{' '}
+                {processo?.municipio?.trim()
+                  ? `${processo.municipio.trim()}/${(processo.uf ?? '').trim() || '—'}`
+                  : 'Município'}
               </SecLabel>
               {temCfemHistoricoMunicipal ? (
                 <>
@@ -5526,6 +6105,7 @@ export function RelatorioCompleto({
                 </div>
               )}
             </Card>
+            )}
 
             <Card>
               <SecLabel branco>Incentivos estaduais</SecLabel>

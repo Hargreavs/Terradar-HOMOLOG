@@ -19,6 +19,8 @@ export function fingerprintDrillFiltros(
     riskScoreMin: f.riskScoreMin,
     riskScoreMax: f.riskScoreMax,
     searchQuery: f.searchQuery,
+    exibirProcessosAtivos: f.exibirProcessosAtivos,
+    exibirProcessosInativos: f.exibirProcessosInativos,
     intelTitularFilter: intelTitularFilter ?? '',
   })
 }

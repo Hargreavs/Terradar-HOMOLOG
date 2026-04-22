@@ -14,6 +14,7 @@ import {
   readSearchHistory,
 } from '../../lib/processoApi'
 import { REGIME_COLORS, REGIME_LABELS } from '../../lib/regimes'
+import { processoEhInativoParaCamadaMapa } from '../../lib/processoStatus'
 import { useMapStore } from '../../store/useMapStore'
 import type { Processo } from '../../types'
 import type { ResultadoBuscaItem } from '../../types/busca'
@@ -151,6 +152,14 @@ export function MapSearchBar({
   const adicionarProcesso = useMapStore((s) => s.adicionarProcesso)
   const requestFlyTo = useMapStore((s) => s.requestFlyTo)
   const selecionarProcesso = useMapStore((s) => s.selecionarProcesso)
+
+  const aplicarSelecaoNaBusca = useCallback((p: Processo) => {
+    const st = useMapStore.getState()
+    if (processoEhInativoParaCamadaMapa(p) && !st.filtros.exibirProcessosInativos) {
+      st.setFiltro('exibirProcessosInativos', true)
+    }
+    st.selecionarProcesso(p)
+  }, [])
 
   const sugestoes = useMemo(
     () => filtrarSugestoesPorNumero(processos, local),
@@ -340,7 +349,7 @@ export function MapSearchBar({
         } else {
           adicionarProcesso(novo)
         }
-        selecionarProcesso(alvo)
+        aplicarSelecaoNaBusca(alvo)
         // Fly-to apenas quando há geom real (permitirSemGeom produz NaN
         // como sentinel). Guard com Number.isFinite para não crashar o
         // Mapbox.
@@ -369,7 +378,7 @@ export function MapSearchBar({
     [
       adicionarProcesso,
       requestFlyTo,
-      selecionarProcesso,
+      aplicarSelecaoNaBusca,
       setFiltro,
       showFeedback,
       recordSearch,
@@ -388,7 +397,7 @@ export function MapSearchBar({
     if (alvo) {
       const semGeomLocal =
         !Number.isFinite(alvo.lat) || !Number.isFinite(alvo.lng)
-      selecionarProcesso(alvo)
+      aplicarSelecaoNaBusca(alvo)
       if (semGeomLocal) {
         // Zumbis/sem-geom já em memória não têm polígono no mapa, então o
         // drawer nunca abre "naturalmente" via popup. Precisamos abrir
@@ -414,7 +423,7 @@ export function MapSearchBar({
     local,
     processos,
     requestFlyTo,
-    selecionarProcesso,
+    aplicarSelecaoNaBusca,
     buscarRemoto,
     recordSearch,
     setFiltro,
@@ -426,13 +435,13 @@ export function MapSearchBar({
       const texto = p.numero
       setLocal(texto)
       setFiltro('searchQuery', texto)
-      selecionarProcesso(p)
+      aplicarSelecaoNaBusca(p)
       requestFlyTo(p.lat, p.lng, 10, p.id)
       recordSearch(p.numero)
       setHighlightIdx(-1)
       inputRef.current?.blur()
     },
-    [setFiltro, requestFlyTo, selecionarProcesso, recordSearch],
+    [setFiltro, requestFlyTo, aplicarSelecaoNaBusca, recordSearch],
   )
 
   /**
@@ -483,7 +492,7 @@ export function MapSearchBar({
       } else {
         adicionarProcesso(p)
       }
-      selecionarProcesso(p)
+      aplicarSelecaoNaBusca(p)
       // Fly-to apenas se há geometria. Sem geom: drawer abre, mapa não move.
       // Guard com `Number.isFinite` porque `permitirSemGeom` produz NaN
       // como sentinel em lat/lng (compat com type `Processo.lat: number`).

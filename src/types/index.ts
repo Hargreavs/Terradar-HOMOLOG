@@ -112,6 +112,18 @@ export interface ClassificacaoZumbi {
   ultimo_evento_codigo: number | null
 }
 
+/** CFEM do processo vs. total municipal, por município (divisas / poligonal). */
+export interface CfemBreakdownMunicipio {
+  municipio_nome: string
+  municipio_ibge: string
+  uf: string
+  processo_total: number
+  municipio_total: number
+  percentual_do_municipio: number
+  num_lancamentos: number
+  serie_anual: Array<{ ano: number; processo: number; municipio: number }>
+}
+
 export interface Processo {
   id: string
   numero: string
@@ -196,6 +208,11 @@ export interface Processo {
   /** Rótulos persistidos em `scores` (batch/API), prioridade sobre faixa derivada do número. */
   risk_label_persistido?: string | null
   risk_cor_persistido?: string | null
+  /**
+   * Tier 1: comparação CFEM processo vs. município por código IBGE (um item por
+   * município onde o processo tem lançamento). Populado por `/api/processo`.
+   */
+  cfem_por_municipio_breakdown?: CfemBreakdownMunicipio[] | null
 }
 
 export interface GeoJSONPolygon {
@@ -219,6 +236,10 @@ export interface FiltrosState {
   riskScoreMin: number
   riskScoreMax: number
   searchQuery: string
+  /** Polígonos de processos com efeito regulatório ativo (`ativo_derivado !== false`). */
+  exibirProcessosAtivos: boolean
+  /** Polígonos de processos extintos/terminais; desligado por defeito (só ativos no mapa). */
+  exibirProcessosInativos: boolean
 }
 
 /** Dados territoriais do relatório (alias de `DadosTerritoriais` no mock). */
