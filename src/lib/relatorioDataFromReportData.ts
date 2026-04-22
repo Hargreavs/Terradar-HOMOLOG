@@ -345,6 +345,13 @@ function intelFromReport(rd: ReportData, _processo: Processo): IntelMineral {
   return {
     substancia_contexto: rd.substancia_anm,
     fonte_res_prod: rd.fonte_res_prod,
+    tipo_mercado: rd.tipo_mercado ?? null,
+    producao_br_absoluta_t: rd.producao_br_absoluta_t ?? null,
+    valor_producao_br_brl: rd.valor_producao_br_brl ?? null,
+    preco_medio_br_brl_t: rd.preco_medio_br_brl_t ?? null,
+    top_uf_produtora: rd.top_uf_produtora ?? null,
+    top_uf_pct: rd.top_uf_pct ?? null,
+    ano_referencia_amb: rd.ano_referencia_amb ?? null,
     reservas_brasil_mundial_pct: rd.reservas_mundiais_pct,
     producao_brasil_mundial_pct: rd.producao_mundial_pct,
     demanda_projetada_2030:
@@ -389,17 +396,45 @@ function fiscalFromReport(rd: ReportData, processo: Processo): DadosFiscaisRicos
   const capagPrincipal = badge ?? notaNorm
 
   const cfemProcStatus =
-    rd.cfem_processo_status ?? getCfemProcessoStatus(processo.regime)
-  const cfemProc: CfemHistorico[] = []
-  const cfemMun: CfemHistorico[] = rd.cfem_historico.map((h) => ({
-    ano: h.ano,
-    valor_recolhido_brl: parsePtBrMoney(h.municipio_valor),
-  }))
-  const cfemMunRico: CfemMunicipalHistorico[] = rd.cfem_historico.map((h) => ({
-    ano: h.ano,
-    valor_total_municipio_brl: parsePtBrMoney(h.municipio_valor),
-    substancias: h.substancias,
-  }))
+    rd.cfem_processo_status ??
+    getCfemProcessoStatus(
+      processo.regime,
+      rd.cfem_num_lancamentos != null && rd.cfem_num_lancamentos > 0
+        ? rd.cfem_num_lancamentos
+        : null,
+    )
+  const cfemProc: CfemHistorico[] = (() => {
+    if (cfemProcStatus !== 'OK' || !rd.cfem_por_municipio?.length) return []
+    const byAno = new Map<number, number>()
+    for (const row of rd.cfem_por_municipio) {
+      byAno.set(row.ano, (byAno.get(row.ano) ?? 0) + row.total_anual)
+    }
+    return [...byAno.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([ano, valor]) => ({ ano, valor_recolhido_brl: valor }))
+  })()
+  const cfemMun: CfemHistorico[] =
+    rd.cfem_historico.length > 0
+      ? rd.cfem_historico.map((h) => ({
+          ano: h.ano,
+          valor_recolhido_brl: parsePtBrMoney(h.municipio_valor),
+        }))
+      : (rd.cfem_municipio_historico_tier1 ?? []).map((h) => ({
+          ano: h.ano,
+          valor_recolhido_brl: h.valor_brl,
+        }))
+  const cfemMunRico: CfemMunicipalHistorico[] =
+    rd.cfem_historico.length > 0
+      ? rd.cfem_historico.map((h) => ({
+          ano: h.ano,
+          valor_total_municipio_brl: parsePtBrMoney(h.municipio_valor),
+          substancias: h.substancias,
+        }))
+      : (rd.cfem_municipio_historico_tier1 ?? []).map((h) => ({
+          ano: h.ano,
+          valor_total_municipio_brl: h.valor_brl,
+          substancias: h.substancias ?? '',
+        }))
   const pibMi = parsePibMunicipalMiFromTexto(rd.pib_municipal)
 
   const programaInc = rd.incentivos.programa_estadual
@@ -486,6 +521,25 @@ function fiscalFromReport(rd: ReportData, processo: Processo): DadosFiscaisRicos
     cfem_estimada_ha: Number(rd.cfem_estimada_ha) || 0,
     observacao: '',
     contexto_referencia_fiscal: rd.fiscal_contexto_referencia,
+    cfem_num_lancamentos: rd.cfem_num_lancamentos,
+    cfem_total_historico_brl: rd.cfem_total_historico ?? null,
+    cfem_ultimo_ano: rd.cfem_ultimo_ano ?? null,
+    cfem_por_municipio_tier1:
+      rd.cfem_por_municipio && rd.cfem_por_municipio.length > 0
+        ? rd.cfem_por_municipio.map((r) => ({
+            ano: r.ano,
+            municipio_nome: r.municipio_nome,
+            total_anual_brl: r.total_anual,
+            num_lancamentos: r.num_lancamentos,
+          }))
+        : undefined,
+    autuacoes_anm:
+      rd.autuacoes_num != null && rd.autuacoes_num > 0
+        ? {
+            num: rd.autuacoes_num,
+            valor_total_brl: rd.autuacoes_valor_total ?? null,
+          }
+        : null,
   }
 }
 
@@ -717,6 +771,13 @@ function observacoesTecnicasFromReport(
     {
       label: 'Código do evento',
       valor: codigoEventoValor,
+    },
+    {
+      label: 'TAH',
+      valor:
+        rd.tah_status != null && String(rd.tah_status).trim() !== ''
+          ? String(rd.tah_status).trim()
+          : null,
     },
   ]
 

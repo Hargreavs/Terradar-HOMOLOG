@@ -32,6 +32,9 @@ export interface UseProcessosViewportOptions {
   limit?: number
   /** Debounce ms aplicado ao bbox/zoom (evita spam em pan contínuo). */
   debounceMs?: number
+  /** Alinhado à sidebar; entra na query string e no RPC `situacao_regulatoria`. */
+  exibirProcessosAtivos: boolean
+  exibirProcessosInativos: boolean
 }
 
 /**
@@ -45,8 +48,10 @@ export function useProcessosViewport({
   enabled,
   bbox,
   zoom,
-  limit = 2000,
+  limit = 5000,
   debounceMs = 300,
+  exibirProcessosAtivos,
+  exibirProcessosInativos,
 }: UseProcessosViewportOptions): GeoJSONFeatureCollection | null {
   const [data, setData] = useState<GeoJSONFeatureCollection | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -72,9 +77,14 @@ export function useProcessosViewport({
         bbox: bbox.join(','),
         zoom: String(Math.round(zoom)),
         limit: String(limit),
+        exibirProcessosAtivos: String(exibirProcessosAtivos),
+        exibirProcessosInativos: String(exibirProcessosInativos),
       })
 
-      fetch(`/api/processos/viewport?${qs.toString()}`, { signal: ctrl.signal })
+      fetch(`/api/processos/viewport?${qs.toString()}`, {
+        signal: ctrl.signal,
+        cache: 'no-store',
+      })
         .then((r) => {
           if (!r.ok) throw new Error(`HTTP ${r.status}`)
           return r.json()
@@ -103,7 +113,18 @@ export function useProcessosViewport({
         timerRef.current = null
       }
     }
-  }, [enabled, bbox?.[0], bbox?.[1], bbox?.[2], bbox?.[3], zoom, limit, debounceMs])
+  }, [
+    enabled,
+    bbox?.[0],
+    bbox?.[1],
+    bbox?.[2],
+    bbox?.[3],
+    zoom,
+    limit,
+    debounceMs,
+    exibirProcessosAtivos,
+    exibirProcessosInativos,
+  ])
 
   useEffect(() => {
     return () => {

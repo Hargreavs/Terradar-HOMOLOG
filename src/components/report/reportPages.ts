@@ -451,13 +451,19 @@ export function buildPage5_Fiscal(
 ): string {
   const cfemTemDados =
     Array.isArray(data.cfem_historico) && data.cfem_historico.length > 0
+  const tier1Num = data.cfem_num_lancamentos ?? 0
+  const tier1PorMun = data.cfem_por_municipio ?? []
+  const tier1MunHist = data.cfem_municipio_historico_tier1 ?? []
+  const isEnP5 = t.locale.startsWith('en')
 
   const cfemDisclaimerFiscal =
-    data.cfem_processo_status === 'SEM_DADO_INDIVIDUALIZADO'
-      ? `<p style="font-size:8.5pt;color:var(--text-muted);margin:0 0 8px 0;line-height:1.45;">${sanitizeReportText(t.cfemIndividualizadaIntro)}</p>`
-      : data.cfem_processo_status === 'PROCESSO_NAO_PRODUTIVO'
-        ? `<p style="font-size:8.5pt;color:var(--text-muted);margin:0 0 8px 0;line-height:1.45;">${sanitizeReportText(t.cfemProcessoNaoProdutivoTpl(String(data.regime_display ?? '').trim()))}</p>`
-        : ''
+    tier1Num > 0 && tier1PorMun.length > 0
+      ? ''
+      : data.cfem_processo_status === 'SEM_DADO_INDIVIDUALIZADO'
+        ? `<p style="font-size:8.5pt;color:var(--text-muted);margin:0 0 8px 0;line-height:1.45;">${sanitizeReportText(t.cfemIndividualizadaIntro)}</p>`
+        : data.cfem_processo_status === 'PROCESSO_NAO_PRODUTIVO'
+          ? `<p style="font-size:8.5pt;color:var(--text-muted);margin:0 0 8px 0;line-height:1.45;">${sanitizeReportText(t.cfemProcessoNaoProdutivoTpl(String(data.regime_display ?? '').trim()))}</p>`
+          : ''
 
   const cfemRows = data.cfem_historico
     .map(
@@ -471,7 +477,7 @@ export function buildPage5_Fiscal(
     )
     .join('')
 
-  const cfemBlocoHistorico = cfemTemDados
+  const cfemBlocoHistoricoLegacy = cfemTemDados
     ? `<table class="cfem" style="font-size:8.5pt;table-layout:fixed;">
     <thead><tr><th style="width:12%;">${sanitizeReportText(t.thAno)}</th><th style="width:25%;">${sanitizeReportText(t.thCfemProcesso)}</th><th style="width:25%;">${sanitizeReportText(t.thCfemMunicipio)}</th><th style="width:38%;">${sanitizeReportText(t.thCfemSubst)}</th></tr></thead>
     <tbody>${cfemRows}</tbody>
@@ -480,6 +486,77 @@ export function buildPage5_Fiscal(
     <p style="margin:0;font-size:9pt;font-weight:600;color:var(--text);">${sanitizeReportText(t.cfemMunicipioIndisponivelTitulo)}</p>
     <p style="margin:0;font-size:8pt;color:var(--text-muted);line-height:1.45;max-width:420px;">${sanitizeReportText(t.cfemMunicipioIndisponivelCorpo)}</p>
   </div>`
+
+  let cfemBlocoHistorico = cfemBlocoHistoricoLegacy
+  if (tier1Num > 0 && tier1PorMun.length > 0) {
+    const anos = tier1PorMun.map((r) => r.ano).filter((a) => a > 0)
+    const anoMin = anos.length ? Math.min(...anos) : 0
+    const anoMax = anos.length ? Math.max(...anos) : 0
+    const totalHist =
+      data.cfem_total_historico != null &&
+      Number.isFinite(Number(data.cfem_total_historico))
+        ? Number(data.cfem_total_historico)
+        : tier1PorMun.reduce((s, r) => s + r.total_anual, 0)
+    const headline = isEnP5
+      ? `The process generated R$ ${fmtNum(totalHist, t.locale)} in CFEM between ${anoMin} and ${anoMax}.`
+      : `O processo gerou R$ ${fmtNum(totalHist, t.locale)} em CFEM entre ${anoMin} e ${anoMax}.`
+    const rowsTier = tier1PorMun
+      .map(
+        (r) =>
+          `<tr>
+      <td><strong>${r.ano}</strong></td>
+      <td>${sanitizeReportText(r.municipio_nome)}</td>
+      <td class="mono">R$ ${fmtNum(r.total_anual, t.locale)}</td>
+      <td class="mono">${r.num_lancamentos}</td>
+    </tr>`,
+      )
+      .join('')
+    const thMun = sanitizeReportText(t.tblMunicipio)
+    const thTot = isEnP5
+      ? sanitizeReportText('Annual total (BRL)')
+      : sanitizeReportText('Total anual (R$)')
+    const thNl = isEnP5
+      ? sanitizeReportText('Payments')
+      : sanitizeReportText('Lançamentos')
+    cfemBlocoHistorico = `<p style="font-size:8.5pt;color:var(--text-light);margin:0 0 10px 0;line-height:1.45;">${sanitizeReportText(headline)}</p>
+  <table class="cfem" style="font-size:8.5pt;table-layout:fixed;">
+    <thead><tr><th style="width:12%;">${sanitizeReportText(t.thAno)}</th><th style="width:32%;">${thMun}</th><th style="width:28%;">${thTot}</th><th style="width:18%;">${thNl}</th></tr></thead>
+    <tbody>${rowsTier}</tbody>
+  </table>`
+  } else if (
+    tier1Num <= 0 &&
+    tier1MunHist.length > 0
+  ) {
+    const sumMun = tier1MunHist.reduce((s, r) => s + r.valor_brl, 0)
+    const nAnos = tier1MunHist.length
+    const headline = isEnP5
+      ? `No process-level CFEM in the database; the municipality collected R$ ${fmtNum(sumMun, t.locale)} across ${nAnos} years on record (last 10 years window).`
+      : `Processo sem CFEM individualizada; o município arrecadou R$ ${fmtNum(sumMun, t.locale)} em ${nAnos} ano(s) com registro (janela de 10 anos).`
+    const rowsMun = tier1MunHist
+      .map(
+        (r) =>
+          `<tr>
+      <td><strong>${r.ano}</strong></td>
+      <td class="mono">R$ ${fmtNum(r.valor_brl, t.locale)}</td>
+      <td>${sanitizeReportText(r.substancias ?? '')}</td>
+    </tr>`,
+      )
+      .join('')
+    const thVal = isEnP5
+      ? sanitizeReportText('Municipal total (BRL)')
+      : sanitizeReportText('Total municipal (R$)')
+    const thSub = sanitizeReportText(t.thCfemSubst)
+    cfemBlocoHistorico = `<p style="font-size:8.5pt;color:var(--text-light);margin:0 0 10px 0;line-height:1.45;">${sanitizeReportText(headline)}</p>
+  <table class="cfem" style="font-size:8.5pt;table-layout:fixed;">
+    <thead><tr><th style="width:14%;">${sanitizeReportText(t.thAno)}</th><th style="width:30%;">${thVal}</th><th style="width:56%;">${thSub}</th></tr></thead>
+    <tbody>${rowsMun}</tbody>
+  </table>`
+  } else if (!cfemTemDados) {
+    cfemBlocoHistorico = `<div style="min-height:140px;margin:8px 0 12px 0;padding:18px 16px;border:1px solid rgba(80,78,72,0.35);border-radius:6px;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:8px;">
+    <p style="margin:0;font-size:9pt;font-weight:600;color:var(--text);">${isEnP5 ? sanitizeReportText('CFEM history unavailable for this municipality') : sanitizeReportText('Histórico de CFEM indisponível para este município')}</p>
+    <p style="margin:0;font-size:8pt;color:var(--text-muted);line-height:1.45;max-width:420px;">${sanitizeReportText(t.cfemMunicipioIndisponivelCorpo)}</p>
+  </div>`
+  }
 
   const linhasBndesCell =
     data.incentivos.linhas_bndes_nomes &&
@@ -596,7 +673,20 @@ export function buildPage6_Risco(
     </div>
   </div>
 
-  <div class="imp" style="margin-top:8px;"><strong>${sanitizeReportText(t.leituraIntegrada)}</strong> ${sanitizeReportText(String(llm.leitura ?? '').replace(/\s+/g, ' ').trim())}</div>
+  <div class="imp" style="margin-top:8px;"><strong>${sanitizeReportText(t.leituraIntegrada)}</strong> ${sanitizeReportText((() => {
+    const base = String(llm.leitura ?? '').replace(/\s+/g, ' ').trim()
+    const nAut = data.autuacoes_num ?? 0
+    if (nAut <= 0) return base
+    const vAut = data.autuacoes_valor_total
+    const valTxt =
+      vAut != null && Number.isFinite(Number(vAut))
+        ? fmtNum(Number(vAut), t.locale)
+        : sanitizeReportText(t.nd)
+    const extra = t.locale.startsWith('en')
+      ? ` The titleholder has ${nAut} ANM fiscal assessment(s) on record (total R$ ${valTxt}), signaling a compliance-history alert.`
+      : ` O titular possui ${nAut} autuação(ões) fiscal(is) ANM registradas (soma R$ ${valTxt}), sinal de atenção no histórico de compliance.`
+    return base + extra
+  })())}</div>
 
   <div class="src">${sanitizeReportText(t.fontesP6)} ${sanitizeReportText(data.data_relatorio)}</div>
   ${reportFooter(6, data, t)}

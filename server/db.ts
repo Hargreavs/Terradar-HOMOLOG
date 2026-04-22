@@ -4,6 +4,7 @@ import {
   type ScoreInput,
   type ScoreResult,
 } from './scoreEngine'
+import type { CfemBreakdownMunicipio } from '../src/types/index'
 
 // ── Territorial Analysis (PostGIS automático) ──────────────────
 export interface AreaProtegida {
@@ -54,6 +55,160 @@ export async function getProcesso(numero: string) {
     .single()
   if (error) throw new Error(`Processo não encontrado: ${numero}`)
   return data
+}
+
+/** View agregando CFEM, TAH e autuações por processo (Tier 1). */
+export async function getProcessoEnriquecido(numero: string) {
+  const { data, error } = await supabase
+    .from('v_processo_enriquecido')
+    .select('*')
+    .eq('numero', numero)
+    .single()
+  if (error) throw new Error(`Processo não encontrado: ${numero}`)
+  return data
+}
+
+function cfemMunicipioRowValor(row: Record<string, unknown>): number {
+  const v =
+    row.valor_brl ?? row.total_anual ?? row.valorBrl ?? row.totalAnual
+  const n = Number(v)
+  return Number.isFinite(n) ? n : 0
+}
+
+function cfemMunicipioRowAno(row: Record<string, unknown>): number {
+  const n = Number(row.ano ?? row.Ano)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+/**
+ * Agrega `fn_cfem_processo_municipio` por município e cruza com
+ * `fn_cfem_municipio_historico` por IBGE (percentual coerente: processo ⊆ município).
+ */
+export async function getCfemBreakdownPorMunicipio(
+  numero: string,
+  linhasProcessoPre: unknown[] | null | undefined,
+  ufFallback: string,
+): Promise<CfemBreakdownMunicipio[]> {
+  let linhas = linhasProcessoPre
+  if (!linhas || linhas.length === 0) {
+    const { data, error } = await supabase.rpc('fn_cfem_processo_municipio', {
+      p_numero: numero,
+    })
+    if (error || !data?.length) return []
+    linhas = data as unknown[]
+  }
+
+  type Bucket = {
+    municipio_nome: string
+    processo_total: number
+    num_lancamentos: number
+    byAnoProc: Map<number, number>
+  }
+
+  const porMuni = new Map<string, Bucket>()
+  for (const raw of linhas) {
+    if (!raw || typeof raw !== 'object') continue
+    const r = raw as Record<string, unknown>
+    const ibge = String(r.municipio_ibge ?? r.municipioIbge ?? '').trim()
+    if (!ibge) continue
+    const nome = String(r.municipio_nome ?? r.municipioNome ?? ibge).trim()
+    const ano = Number(r.ano ?? r.Ano) || 0
+    const totalAnualProc = Number(r.total_anual ?? r.totalAnual ?? 0) || 0
+    const nl = Number(r.num_lancamentos ?? r.numLancamentos ?? 0) || 0
+
+    let b = porMuni.get(ibge)
+    if (!b) {
+      b = {
+        municipio_nome: nome || ibge,
+        processo_total: 0,
+        num_lancamentos: 0,
+        byAnoProc: new Map(),
+      }
+      porMuni.set(ibge, b)
+    }
+    b.processo_total += totalAnualProc
+    b.num_lancamentos += nl
+    if (ano > 0) {
+      b.byAnoProc.set(ano, (b.byAnoProc.get(ano) ?? 0) + totalAnualProc)
+    }
+    if (nome) b.municipio_nome = nome
+  }
+
+  if (porMuni.size === 0) return []
+
+  const ibges = [...porMuni.keys()]
+  const histResults = await Promise.all(
+    ibges.map((ibge) =>
+      supabase.rpc('fn_cfem_municipio_historico', {
+        p_ibge: ibge,
+        p_anos_atras: 10,
+      }),
+    ),
+  )
+  const ufResults = await Promise.all(
+    ibges.map((ibge) =>
+      supabase
+        .from('cfem_arrecadacao')
+        .select('uf')
+        .eq('municipio_ibge', ibge)
+        .limit(1)
+        .maybeSingle(),
+    ),
+  )
+
+  const breakdown: CfemBreakdownMunicipio[] = []
+  for (let i = 0; i < ibges.length; i++) {
+    const ibge = ibges[i]
+    const bucket = porMuni.get(ibge)!
+    const histRpc = histResults[i]
+    const histRows = (histRpc.error ? [] : (histRpc.data ?? [])) as Record<
+      string,
+      unknown
+    >[]
+
+    const municipio_total = histRows.reduce(
+      (s, row) => s + cfemMunicipioRowValor(row),
+      0,
+    )
+    const mapaMuni = new Map<number, number>()
+    for (const row of histRows) {
+      const a = cfemMunicipioRowAno(row)
+      if (a > 0) mapaMuni.set(a, cfemMunicipioRowValor(row))
+    }
+
+    const anosUnion = new Set<number>()
+    for (const a of bucket.byAnoProc.keys()) anosUnion.add(a)
+    for (const row of histRows) {
+      const a = cfemMunicipioRowAno(row)
+      if (a > 0) anosUnion.add(a)
+    }
+    const serie_anual = [...anosUnion].sort((a, b) => a - b).map((ano) => ({
+      ano,
+      processo: bucket.byAnoProc.get(ano) ?? 0,
+      municipio: mapaMuni.get(ano) ?? 0,
+    }))
+
+    const ufRow = ufResults[i]?.data as { uf?: string } | null
+    const uf =
+      (ufRow?.uf != null ? String(ufRow.uf).trim() : '') || ufFallback
+
+    const pct =
+      municipio_total > 0 ? (bucket.processo_total / municipio_total) * 100 : 0
+
+    breakdown.push({
+      municipio_nome: bucket.municipio_nome,
+      municipio_ibge: ibge,
+      uf,
+      processo_total: bucket.processo_total,
+      municipio_total,
+      percentual_do_municipio: pct,
+      num_lancamentos: bucket.num_lancamentos,
+      serie_anual,
+    })
+  }
+
+  breakdown.sort((a, b) => b.processo_total - a.processo_total)
+  return breakdown
 }
 
 /** Busca scores do processo. */

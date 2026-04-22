@@ -16,6 +16,8 @@ import {
   getInfraestrutura,
   getLinhasBndes,
   getProcesso,
+  getProcessoEnriquecido,
+  getCfemBreakdownPorMunicipio,
   getScores,
   getSubstancia,
   getTerritoralAnalysis,
@@ -209,10 +211,37 @@ app.get('/api/processo', async (req, res) => {
       })
     }
 
-    const processo = await getProcesso(numero)
+    const processoRow = await getProcessoEnriquecido(numero)
+    const procRow = processoRow as Record<string, unknown>
+    const municipioIbge = String(procRow.municipio_ibge ?? '')
+    const [cfemPorMunRpc, cfemMunHistRpc] = await Promise.all([
+      supabase.rpc('fn_cfem_processo_municipio', { p_numero: numero }),
+      municipioIbge
+        ? supabase.rpc('fn_cfem_municipio_historico', {
+            p_ibge: municipioIbge,
+            p_anos_atras: 10,
+          })
+        : Promise.resolve({ data: null as unknown, error: null }),
+    ])
+    const cfemPorMunicipio = cfemPorMunRpc.error
+      ? []
+      : ((cfemPorMunRpc.data ?? []) as unknown[])
+    const cfemMunicipioHistorico = cfemMunHistRpc.error
+      ? []
+      : ((cfemMunHistRpc.data ?? []) as unknown[])
+    const cfemPorMunicipioBreakdown = await getCfemBreakdownPorMunicipio(
+      numero,
+      cfemPorMunicipio,
+      String(procRow.uf ?? ''),
+    )
+    const processo = {
+      ...procRow,
+      cfem_por_municipio: cfemPorMunicipio,
+      cfem_municipio_historico: cfemMunicipioHistorico,
+      cfem_por_municipio_breakdown: cfemPorMunicipioBreakdown,
+    }
     const proc = processo as Record<string, unknown>
     const processoId = String(proc.id ?? '')
-    const municipioIbge = String(proc.municipio_ibge ?? '')
     const substanciaAnm = String(proc.substancia ?? '')
 
     const [
@@ -261,16 +290,20 @@ app.get('/api/processo', async (req, res) => {
     )
     const classificacaoZumbi: Record<string, unknown> | null =
       dadosInsuficientesFlag
-        ? await supabase
-            .rpc('fn_classificacao_zumbi', { p_numero: numero })
-            .then((r) => (r.data as Record<string, unknown> | null) ?? null)
-            .catch((err: unknown) => {
+        ? await (async (): Promise<Record<string, unknown> | null> => {
+            try {
+              const r = await supabase.rpc('fn_classificacao_zumbi', {
+                p_numero: numero,
+              })
+              return (r.data as Record<string, unknown> | null) ?? null
+            } catch (err: unknown) {
               const msg = err instanceof Error ? err.message : String(err)
               console.warn(
                 `[/api/processo] fn_classificacao_zumbi falhou para ${numero}: ${msg}`,
               )
               return null
-            })
+            }
+          })()
         : null
 
     const cfemTotal = (cfem as { valor_brl?: unknown }[]).reduce(

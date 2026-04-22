@@ -231,6 +231,7 @@ export function MapSidebar({
   const processos = useMapStore((s) => s.processos)
 
   const [openRegimes, setOpenRegimes] = useState(true)
+  const [openSituacaoRegulatoria, setOpenSituacaoRegulatoria] = useState(true)
   const [openSubst, setOpenSubst] = useState(true)
   const [openPeriodo, setOpenPeriodo] = useState(true)
   const [openCamadas, setOpenCamadas] = useState(false)
@@ -917,6 +918,92 @@ export function MapSidebar({
             ))}
             <p style={{ ...s3, marginTop: 8 }}>
               {visiveis} de {REGIME_PILL_ORDER.length} tipos visíveis
+            </p>
+          </div>
+        ) : null}
+
+        <div
+          className="my-4"
+          style={{ borderTop: '1px solid #2C2C2A' }}
+          aria-hidden
+        />
+
+        <button
+          type="button"
+          onClick={() => setOpenSituacaoRegulatoria((o) => !o)}
+          className="flex w-full cursor-pointer items-center justify-between border-0 bg-transparent p-0 text-left"
+          style={{ padding: '0 0 16px 0' }}
+        >
+          <span style={s1}>SITUAÇÃO REGULATÓRIA</span>
+          {openSituacaoRegulatoria ? (
+            <ChevronDown size={14} className="shrink-0 text-[#5F5E5A]" aria-hidden />
+          ) : (
+            <ChevronRight size={14} className="shrink-0 text-[#5F5E5A]" aria-hidden />
+          )}
+        </button>
+        {openSituacaoRegulatoria ? (
+          <div className="flex flex-col" style={{ marginBottom: 4 }}>
+            {(
+              [
+                {
+                  key: 'exibirProcessosAtivos' as const,
+                  label: 'Processos ativos',
+                  on: filtros.exibirProcessosAtivos,
+                },
+                {
+                  key: 'exibirProcessosInativos' as const,
+                  label: 'Processos inativos',
+                  on: filtros.exibirProcessosInativos,
+                },
+              ] as const
+            ).map((row) => (
+              <button
+                key={row.key}
+                type="button"
+                onClick={() => setFiltro(row.key, !row.on)}
+                className="flex w-full cursor-pointer items-center gap-2.5 rounded-md border-0 px-1 py-0 text-left transition-colors duration-200 hover:bg-[#1A1A18]"
+                style={{ height: 32 }}
+              >
+                <span
+                  className="shrink-0 rounded-full"
+                  style={{
+                    width: 8,
+                    height: 8,
+                    backgroundColor: row.on ? '#6BBF59' : '#3a3a38',
+                  }}
+                  aria-hidden
+                />
+                <span
+                  className={`min-w-0 flex-1 ${row.on ? cActive : cInactive}`}
+                >
+                  {row.label}
+                </span>
+                <span
+                  className="relative shrink-0 rounded-full transition-colors duration-200"
+                  style={{
+                    width: 32,
+                    height: 16,
+                    backgroundColor: row.on ? TOGGLE_ON_TRACK : '#2C2C2A',
+                  }}
+                  aria-hidden
+                >
+                  <span
+                    className="absolute top-1/2 block rounded-full transition-all duration-200 ease-out"
+                    style={{
+                      width: 12,
+                      height: 12,
+                      marginTop: -6,
+                      left: row.on ? 'auto' : 2,
+                      right: row.on ? 2 : 'auto',
+                      backgroundColor: row.on ? TOGGLE_ON_KNOB : '#5F5E5A',
+                    }}
+                  />
+                </span>
+              </button>
+            ))}
+            <p style={{ ...s3, marginTop: 8 }}>
+              Inativos: processos sem efeito regulatório ativo (extintos /
+              encerrados).
             </p>
           </div>
         ) : null}
