@@ -1,0 +1,109 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Terra Indígena Kayapó",
+        "etnia": "Kayapó",
+        "situacao": "Regularizada",
+        "area_ha": 3284000
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-56.35, -8.85], [-48.45, -8.85], [-48.45, -1.85], [-56.35, -1.85], [-56.35, -8.85]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Terra Indígena Xingu",
+        "etnia": "Multiétnica",
+        "situacao": "Regularizada",
+        "area_ha": 2650000
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-54.2, -14.5], [-51.5, -14.5], [-51.5, -11.8], [-54.2, -11.8], [-54.2, -14.5]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Terra Indígena Yanomami",
+        "etnia": "Yanomami",
+        "situacao": "Regularizada",
+        "area_ha": 9600000
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-64.5, 2.5], [-61.0, 2.5], [-61.0, 5.2], [-64.5, 5.2], [-64.5, 2.5]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Terra Indígena Apinajé",
+        "etnia": "Apinajé",
+        "situacao": "Regularizada",
+        "area_ha": 141000
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-48.5, -6.2], [-47.2, -6.2], [-47.2, -5.1], [-48.5, -5.1], [-48.5, -6.2]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Terra Indígena Avá-Canoeiro",
+        "etnia": "Avá-Canoeiro",
+        "situacao": "Regularizada",
+        "area_ha": 127600
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-51.28, -18.62], [-47.62, -18.62], [-47.62, -12.92], [-51.28, -12.92], [-51.28, -18.62]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Terra Indígena Rio Negro (trecho demo)",
+        "etnia": "Multiétnica",
+        "situacao": "Regularizada",
+        "area_ha": 280000
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-63.25, -4.35], [-58.25, -4.35], [-58.25, -0.35], [-63.25, -0.35], [-63.25, -4.35]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Terra Indígena Pankararu (trecho demo)",
+        "etnia": "Pankararu",
+        "situacao": "Regularizada",
+        "area_ha": 95000
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-42.95, -14.75], [-40.15, -14.75], [-40.15, -10.85], [-42.95, -10.85], [-42.95, -14.75]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Terra Indígena Apiaká (trecho demo)",
+        "etnia": "Apiaká",
+        "situacao": "Regularizada",
+        "area_ha": 72000
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-56.25, -11.4], [-54.45, -11.4], [-54.45, -9.4], [-56.25, -9.4], [-56.25, -11.4]]]
+      }
+    }
+  ]
+}

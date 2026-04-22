@@ -1,0 +1,14 @@
+---
+description: Truncamento com reticências e tooltip completo (padrão Terrae)
+globs: "**/*.{tsx,jsx}"
+---
+
+# Texto que não cabe no espaço
+
+1. **Truncar** com reticências: `overflow: hidden`, `text-overflow: ellipsis`, e numa única linha `white-space: nowrap` (ou `line-clamp` + estilos equivalentes para várias linhas, quando aplicável).
+
+2. **Tooltip obrigatório** quando o utilizador vê texto truncado (`…`): o hover deve mostrar o **conteúdo completo** com o mesmo padrão visual do tooltip acima do alvo (`placement="above"`), seta e estilo `TerraSideTooltip` — **não** substituir por `title=""` sozinho para esse caso.
+
+3. **Componente:** usar `TextoTruncadoComTooltip` de `src/components/ui/TextoTruncadoComTooltip.tsx`, que só abre o tooltip se `scrollWidth > clientWidth` (há truncagem real).
+
+4. **Conflitos:** se existir outro tooltip na mesma área (ex. explicação de camada), evitar dois hovers no mesmo alvo — isolar o truncado numa zona ou o tooltip secundário noutro elemento (ex. só no switch).

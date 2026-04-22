@@ -1,0 +1,423 @@
+import './env'
+
+import cors from 'cors'
+import express from 'express'
+
+import mapRouter from './routes/map'
+import processosViewportRouter from './routes/processos-viewport'
+import { POST } from '../app/api/generate-report/route'
+import { supabase } from './supabase'
+import {
+  computeScoresAuto,
+  getCapag,
+  getCfemHistorico,
+  getFiscal,
+  getIncentivosUf,
+  getInfraestrutura,
+  getLinhasBndes,
+  getProcesso,
+  getScores,
+  getSubstancia,
+  getTerritoralAnalysis,
+  getTerritoralLayers,
+  type ScoreResult,
+} from './db'
+
+const app = express()
+app.use(cors())
+app.use(express.json({ limit: '50mb' }))
+app.use(mapRouter)
+app.use(processosViewportRouter)
+
+function hasManualRiskScore(
+  scores: Record<string, unknown> | null,
+): boolean {
+  if (scores == null) return false
+  const rs = scores.risk_score
+  return typeof rs === 'number' && !Number.isNaN(rs)
+}
+
+/**
+ * Número ANM pode conter "/" (ex.: 864.231/2017). Não usar path `.../:numero`,
+ * porque `%2F` vira "/" e o Express parte o path em vários segmentos (404).
+ */
+/**
+ * Busca leve de processo por número — retorna só cadastro + geometria (linha `processos`).
+ * Usado pela barra de busca do mapa.
+ */
+app.get('/api/processo/busca', async (req, res) => {
+  const raw = req.query.numero
+  const numero =
+    typeof raw === 'string' ? decodeURIComponent(raw.trim()) : ''
+  if (!numero) {
+    return res.json({ ok: false, error: 'Número não informado' })
+  }
+  try {
+    const processo = await getProcesso(numero)
+    const proc = processo as Record<string, unknown>
+    const municipioIbge = String(proc.municipio_ibge ?? '')
+    const substanciaAnm = String(proc.substancia ?? '')
+
+    let scores_persistido: Record<string, unknown> | null = null
+    try {
+      const processoId = proc.id
+      if (processoId != null && String(processoId).trim() !== '') {
+        const row = await getScores(String(processoId))
+        if (row) scores_persistido = row as Record<string, unknown>
+      }
+    } catch (spErr) {
+      console.error('[api/processo/busca] scores_persistido:', spErr)
+    }
+
+    let scores_auto: ScoreResult | null = null
+    try {
+      const [capag, mercado, analise, fiscalMun] = await Promise.all([
+        getCapag(municipioIbge),
+        getSubstancia(substanciaAnm),
+        getTerritoralAnalysis(numero),
+        getFiscal(municipioIbge),
+      ])
+
+      const processoParaScore = {
+        numero: String(proc.numero ?? numero),
+        substancia: String(proc.substancia ?? ''),
+        substancia_familia: String(proc.substancia_familia ?? 'outros'),
+        fase: String(proc.fase ?? ''),
+        regime: proc.regime != null ? String(proc.regime) : null,
+        area_ha: Number(proc.area_ha) || 0,
+        alvara_validade:
+          proc.alvara_validade != null ? String(proc.alvara_validade) : null,
+        uf: String(proc.uf ?? ''),
+      }
+
+      scores_auto = await computeScoresAuto(
+        processoParaScore,
+        analise,
+        mercado as Record<string, unknown> | null,
+        capag as Record<string, unknown> | null,
+        fiscalMun,
+      )
+    } catch (scoreErr) {
+      console.error('[api/processo/busca] scores_auto:', scoreErr)
+    }
+
+    return res.json({
+      ok: true,
+      data: {
+        ...(processo as Record<string, unknown>),
+        scores_auto,
+        scores_persistido,
+      },
+    })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Erro interno'
+    const notFound =
+      msg.includes('não encontrado') ||
+      msg.includes('PGRST116') ||
+      msg.toLowerCase().includes('not found')
+    if (notFound) {
+      return res.json({ ok: false, error: 'Processo não encontrado' })
+    }
+    return res.json({ ok: false, error: msg })
+  }
+})
+
+/**
+ * Busca multi-canal: número ANM, CNPJ do titular, ou nome do titular.
+ * Detecta automaticamente pelo formato do input.
+ * Retorna até 15 resultados.
+ */
+app.get('/api/processo/search', async (req, res) => {
+  const raw = req.query.q
+  const q = typeof raw === 'string' ? decodeURIComponent(raw.trim()) : ''
+  if (!q || q.length < 2) {
+    return res.json({ ok: true, data: [], total: 0, tipo: 'vazio' })
+  }
+
+  try {
+    const soDigitos = q.replace(/\D/g, '')
+    const ehNumeroAnm =
+      /^\d{6}\/\d{4}$|^\d{3}\.\d{3}\/\d{4}$/.test(q) ||
+      (soDigitos.length === 10 && !q.includes(' '))
+    const ehCnpj = soDigitos.length === 14
+
+    let query = supabase
+      .from('processos')
+      .select(
+        'id, numero, titular, cnpj_titular, uf, municipio, substancia, regime, fase, area_ha, ativo_derivado, dados_insuficientes, geom',
+        { count: 'exact' },
+      )
+      .limit(15)
+
+    let tipo: 'numero' | 'cnpj' | 'titular' = 'titular'
+
+    if (ehNumeroAnm) {
+      tipo = 'numero'
+      let numeroFmt = q
+      if (soDigitos.length === 10) {
+        numeroFmt = `${soDigitos.slice(0, 3)}.${soDigitos.slice(3, 6)}/${soDigitos.slice(6, 10)}`
+      }
+      query = query.eq('numero', numeroFmt)
+    } else if (ehCnpj) {
+      tipo = 'cnpj'
+      const cnpjFmt = `${soDigitos.slice(0, 2)}.${soDigitos.slice(2, 5)}.${soDigitos.slice(5, 8)}/${soDigitos.slice(8, 12)}-${soDigitos.slice(12, 14)}`
+      query = query.eq('cnpj_titular', cnpjFmt)
+    } else {
+      tipo = 'titular'
+      query = query.ilike('titular', `%${q}%`)
+      query = query.order('numero', { ascending: false })
+    }
+
+    const { data, error, count } = await query
+
+    if (error) {
+      console.error('[api/processo/search] Erro:', error.message)
+      return res.status(500).json({ ok: false, error: error.message, tipo })
+    }
+
+    // Deriva tem_geom e remove o campo geom do payload (binário pesado).
+    const dataWithFlag = (data ?? []).map((row) => {
+      const { geom, ...rest } = row as Record<string, unknown>
+      return {
+        ...rest,
+        tem_geom: geom != null,
+      }
+    })
+
+    return res.json({
+      ok: true,
+      tipo,
+      total: count ?? data?.length ?? 0,
+      data: dataWithFlag,
+    })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Erro interno'
+    console.error('[api/processo/search] Exception:', msg)
+    return res.status(500).json({ ok: false, error: msg })
+  }
+})
+
+app.get('/api/processo', async (req, res) => {
+  try {
+    const raw = req.query.numero
+    const numero =
+      typeof raw === 'string' ? decodeURIComponent(raw.trim()) : ''
+    if (!numero) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Parâmetro query "numero" é obrigatório (ex.: ?numero=864.231/2017).',
+      })
+    }
+
+    const processo = await getProcesso(numero)
+    const proc = processo as Record<string, unknown>
+    const processoId = String(proc.id ?? '')
+    const municipioIbge = String(proc.municipio_ibge ?? '')
+    const substanciaAnm = String(proc.substancia ?? '')
+
+    const [
+      scores,
+      layers,
+      infra,
+      cfem,
+      capag,
+      mercado,
+      analise,
+      fiscalMun,
+      incentivosUfRaw,
+      pendenciasRpc,
+    ] = await Promise.all([
+      getScores(processoId),
+      getTerritoralLayers(processoId),
+      getInfraestrutura(processoId),
+      getCfemHistorico(municipioIbge),
+      getCapag(municipioIbge),
+      getSubstancia(substanciaAnm),
+      getTerritoralAnalysis(numero).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(
+          `[/api/processo] análise territorial indisponível (processo ${numero} sem geom?): ${msg}`,
+        )
+        return null
+      }),
+      getFiscal(municipioIbge),
+      getIncentivosUf(String(proc.uf ?? '')),
+      supabase.rpc('fn_pendencias_processo', { p_numero: numero }),
+    ])
+
+    const linhasBndesData = await getLinhasBndes(
+      Boolean(
+        (mercado as Record<string, unknown> | null)?.mineral_critico_2025,
+      ),
+    )
+
+    // Classificação de arquétipo zumbi (grupamento / fantasma / disponibilidade
+    // / trâmite) quando `dados_insuficientes=true`. Chamada serial (não no
+    // Promise.all) para evitar overhead em processos normais — a RPC só roda
+    // para ~180 zumbis em toda a base. Retorna JSONB com label_regime,
+    // label_fase, explicacao_curta e arquetipo.
+    const dadosInsuficientesFlag = Boolean(
+      (proc as Record<string, unknown>).dados_insuficientes,
+    )
+    const classificacaoZumbi: Record<string, unknown> | null =
+      dadosInsuficientesFlag
+        ? await supabase
+            .rpc('fn_classificacao_zumbi', { p_numero: numero })
+            .then((r) => (r.data as Record<string, unknown> | null) ?? null)
+            .catch((err: unknown) => {
+              const msg = err instanceof Error ? err.message : String(err)
+              console.warn(
+                `[/api/processo] fn_classificacao_zumbi falhou para ${numero}: ${msg}`,
+              )
+              return null
+            })
+        : null
+
+    const cfemTotal = (cfem as { valor_brl?: unknown }[]).reduce(
+      (sum: number, r) => sum + Number(r.valor_brl ?? 0),
+      0,
+    )
+
+    let scores_auto: ScoreResult | null = null
+    let scores_final: Record<string, unknown> | null =
+      scores as Record<string, unknown> | null
+
+    const processoParaScore = {
+      numero: String(proc.numero ?? numero),
+      substancia: String(proc.substancia ?? ''),
+      substancia_familia: String(proc.substancia_familia ?? 'outros'),
+      fase: String(proc.fase ?? ''),
+      regime: proc.regime != null ? String(proc.regime) : null,
+      area_ha: Number(proc.area_ha) || 0,
+      alvara_validade:
+        proc.alvara_validade != null ? String(proc.alvara_validade) : null,
+      uf: String(proc.uf ?? ''),
+    }
+
+    try {
+      // Guard 1: processos sem geom têm `analise === null` (ver .catch no
+      // Promise.all acima). Skip scores_auto nesse caso porque
+      // computeScoresAuto depende de `analise.areas_protegidas`, `.bioma`,
+      // `.aquiferos`, `.infraestrutura`, `.portos`. Sem análise territorial
+      // não há como calcular risk_breakdown.
+      //
+      // Guard 2: processos zumbis (sem geom + sem substância + sem município)
+      // são marcados com `dados_insuficientes = true` no DB. Mesmo que algum
+      // pedaço de `analise` fosse obtido, não faz sentido calcular scores
+      // sintéticos para registros ANM fantasmas — o frontend deve mostrar
+      // só o banner de dados insuficientes.
+      const dadosInsuficientes = Boolean(
+        (proc as Record<string, unknown>).dados_insuficientes,
+      )
+      if (analise && !dadosInsuficientes) {
+        scores_auto = await computeScoresAuto(
+          processoParaScore,
+          analise,
+          mercado as Record<string, unknown> | null,
+          capag as Record<string, unknown> | null,
+          fiscalMun,
+        )
+        if (!hasManualRiskScore(scores_final) && scores_auto) {
+          scores_final = {
+            ...(scores_final ?? {}),
+            risk_score: scores_auto.risk_score,
+            risk_label: scores_auto.risk_label,
+            risk_cor: scores_auto.risk_cor,
+            os_conservador: scores_auto.os_conservador,
+            os_moderado: scores_auto.os_moderado,
+            os_arrojado: scores_auto.os_arrojado,
+            os_label: scores_auto.os_label_conservador,
+            os_classificacao: scores_auto.os_label_conservador,
+            dimensoes_risco: {
+              geologico: scores_auto.risk_breakdown.geologico,
+              ambiental: scores_auto.risk_breakdown.ambiental,
+              social: scores_auto.risk_breakdown.social,
+              regulatorio: scores_auto.risk_breakdown.regulatorio,
+            },
+            dimensoes_oportunidade: {
+              mercado: scores_auto.os_breakdown.atratividade,
+              atratividade: scores_auto.os_breakdown.atratividade,
+              viabilidade: scores_auto.os_breakdown.viabilidade,
+              seguranca: scores_auto.os_breakdown.seguranca,
+            },
+            scores_fonte: 'auto',
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[computeScoresAuto] Erro:', err)
+    }
+
+    if (pendenciasRpc.error) {
+      console.error('[fn_pendencias_processo] Erro:', pendenciasRpc.error)
+    }
+    const pendenciasRaw = (pendenciasRpc.error
+      ? []
+      : (pendenciasRpc.data ?? [])) as Array<Record<string, unknown>>
+    const pendencias = pendenciasRaw.map((row) => ({
+      tipo: String(row.out_tipo ?? ''),
+      fase: (row.out_fase as string | null) ?? null,
+      categoria: (row.out_categoria as string | null) ?? null,
+      data_origem: (row.out_data_origem as string | null) ?? null,
+      dias_em_aberto: (row.out_dias_em_aberto as number | null) ?? null,
+      prazo_original_dias: (row.out_prazo_original_dias as number | null) ?? null,
+      status: (row.out_status as string | null) ?? null,
+      gravidade: (row.out_gravidade as string | null) ?? null,
+      risco_caducidade: (row.out_risco_caducidade as boolean | null) ?? null,
+      descricao: (row.out_descricao as string | null) ?? null,
+      evento_codigo: (row.out_evento_codigo as number | null) ?? null,
+      evento_descricao: (row.out_evento_descricao as string | null) ?? null,
+    }))
+
+    res.json({
+      ok: true,
+      data: {
+        processo,
+        classificacao_zumbi: classificacaoZumbi,
+        scores: scores_final,
+        scores_auto,
+        territorial: { layers, infra },
+        fiscal: {
+          cfem_historico: cfem,
+          cfem_total_4anos: cfemTotal,
+          capag,
+        },
+        mercado,
+        analise_territorial: analise,
+        fiscal_municipio: fiscalMun,
+        incentivos_uf: incentivosUfRaw,
+        linhas_bndes: linhasBndesData,
+        pendencias,
+      },
+    })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Erro ao carregar processo'
+    const notFound =
+      msg.includes('não encontrado') ||
+      msg.includes('sem geometria') ||
+      msg.toLowerCase().includes('not found') ||
+      msg.includes('PGRST116')
+    res.status(notFound ? 404 : 500).json({
+      ok: false,
+      error: notFound
+        ? 'Dados ainda não disponíveis para este processo.'
+        : msg,
+    })
+  }
+})
+
+app.post('/api/generate-report', async (req, res) => {
+  const r = new Request(`http://127.0.0.1/api/generate-report`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req.body ?? {}),
+  })
+  const out = await POST(r)
+  const text = await out.text()
+  res.status(out.status).type('application/json').send(text)
+})
+
+const port = Number(process.env.API_PORT ?? 3001)
+app.listen(port, () => {
+  console.log(`[terrae-api] http://127.0.0.1:${port}`)
+})

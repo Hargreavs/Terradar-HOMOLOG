@@ -1,0 +1,57 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Comunidade Kalunga",
+        "municipio": "Cavalcante",
+        "uf": "GO",
+        "situacao": "Titulado"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-47.55, -13.35], [-47.42, -13.35], [-47.42, -13.22], [-47.55, -13.22], [-47.55, -13.35]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Quilombo Ivaporunduva",
+        "municipio": "Eldorado",
+        "uf": "SP",
+        "situacao": "Reconhecido"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-48.12, -24.52]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Comunidade Rio dos Macacos",
+        "municipio": "Salvador",
+        "uf": "BA",
+        "situacao": "Em regularização"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-38.48, -12.92]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Quilombo Campinho da Independência",
+        "municipio": "Paraty",
+        "uf": "RJ",
+        "situacao": "Titulado"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-44.78, -23.22], [-44.68, -23.22], [-44.68, -23.14], [-44.78, -23.14], [-44.78, -23.22]]]
+      }
+    }
+  ]
+}

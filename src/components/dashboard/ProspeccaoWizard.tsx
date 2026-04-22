@@ -1,0 +1,486 @@
+import { useCallback, useMemo, useState, type CSSProperties } from 'react'
+import { BarChart3, MapPin, Scale, Shield, TrendingUp } from 'lucide-react'
+import { UFS_INTEL_DASHBOARD } from './InteligenciaDashboard'
+import { ProspeccaoAnimations } from './ProspeccaoAnimations'
+import { ObjetivoCard, RiscoCard } from './ProspeccaoCards'
+import type { ObjetivoProspeccao, PerfilRisco } from '../../lib/opportunityScore'
+import { corSubstanciaOuUndefined } from '../../lib/corSubstancia'
+import { TODAS_SUBST } from '../../lib/substancias'
+
+
+/** Exibição das pills (title case por palavra); valores internos permanecem como no catálogo. */
+function substanciaPillLabel(raw: string): string {
+  return raw
+    .split(/\s+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ')
+}
+
+const STEP_TITLES: Record<1 | 2 | 3 | 4, string> = {
+  1: 'Qual seu objetivo com esta prospecção?',
+  2: 'Quais substâncias te interessam?',
+  3: 'Qual seu apetite de risco?',
+  4: 'Preferência geográfica',
+}
+
+const STEP_SUBTEXTS: Record<1 | 2 | 3 | 4, string> = {
+  1: 'Escolha o que melhor descreve sua busca.',
+  2: 'Selecione uma ou mais substâncias.',
+  3: 'Isso ajusta os pesos da Pontuação de Oportunidade.',
+  4: 'Opcional. Deixe em branco para analisar todo o Brasil.',
+}
+
+const navGhostButtonStyle: CSSProperties = {
+  border: 'none',
+  background: 'none',
+  padding: 0,
+  fontSize: 15,
+  color: '#F1EFE8',
+  cursor: 'pointer',
+  fontWeight: 400,
+}
+
+export function ProspeccaoWizard({
+  reducedMotion,
+  prospeccaoSubstOpcoes,
+  proPrefixSub: _proPrefixSub,
+  proObjetivo,
+  setProObjetivo,
+  proSubst,
+  setProSubst,
+  proRisco,
+  setProRisco,
+  proUfs,
+  setProUfs,
+  proDdSub: _proDdSub,
+  setProDdSub: _setProDdSub,
+  onCancel,
+  onAnalisar,
+  exiting = false,
+  initialStep,
+}: {
+  reducedMotion: boolean
+  prospeccaoSubstOpcoes: string[]
+  proPrefixSub: string
+  proObjetivo: ObjetivoProspeccao | null
+  setProObjetivo: (o: ObjetivoProspeccao | null) => void
+  proSubst: string[]
+  setProSubst: (s: string[]) => void
+  proRisco: PerfilRisco | null
+  setProRisco: (r: PerfilRisco | null) => void
+  proUfs: string[]
+  setProUfs: (u: string[]) => void
+  proDdSub: boolean
+  setProDdSub: (v: boolean) => void
+  onCancel: () => void
+  onAnalisar: () => void
+  exiting?: boolean
+  initialStep?: 1 | 2 | 3 | 4
+}) {
+  const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(() => initialStep ?? 1)
+  const [stepContentVisible, setStepContentVisible] = useState(true)
+  const [animationVisible, setAnimationVisible] = useState(true)
+  const [animationStep, setAnimationStep] = useState<1 | 2 | 3 | 4>(() => initialStep ?? 1)
+
+  const stepValido = useMemo(() => {
+    switch (currentStep) {
+      case 1:
+        return proObjetivo != null
+      case 2:
+        return proSubst.length > 0
+      case 3:
+        return proRisco != null
+      case 4:
+        return true
+      default:
+        return false
+    }
+  }, [currentStep, proObjetivo, proRisco, proSubst.length])
+
+  const changeStep = useCallback(
+    (newStep: number) => {
+      const ns = newStep as 1 | 2 | 3 | 4
+      if (reducedMotion) {
+        setCurrentStep(ns)
+        setAnimationStep(ns)
+        return
+      }
+      setStepContentVisible(false)
+      setAnimationVisible(false)
+      window.setTimeout(() => {
+        setCurrentStep(ns)
+        setAnimationStep(ns)
+        window.setTimeout(() => {
+          setStepContentVisible(true)
+          setAnimationVisible(true)
+        }, 50)
+      }, 200)
+    },
+    [reducedMotion],
+  )
+
+  const handleNextStep = () => {
+    if (currentStep < 4) changeStep(currentStep + 1)
+  }
+
+  const handlePrevStep = () => {
+    if (currentStep > 1) changeStep(currentStep - 1)
+  }
+
+  const exitingLeftStyle: CSSProperties = exiting
+    ? {
+        opacity: 0,
+        transform: 'translateX(-40px)',
+        transition: 'opacity 300ms ease-in, transform 300ms ease-in',
+      }
+    : {}
+
+  const stepContentStyle: CSSProperties = reducedMotion
+    ? {}
+    : {
+        opacity: stepContentVisible ? 1 : 0,
+        transform: stepContentVisible ? 'translateY(0)' : 'translateY(10px)',
+        transition: 'opacity 200ms ease, transform 200ms ease',
+      }
+
+  const subtextStyle: CSSProperties = {
+    fontSize: 15,
+    color: '#B4B2A9',
+    marginTop: 8,
+    marginBottom: 24,
+  }
+
+  const substanciasSemTodas = prospeccaoSubstOpcoes.filter((s) => s !== TODAS_SUBST)
+
+  const toggleTodasSubst = () => {
+    if (proSubst.includes(TODAS_SUBST)) setProSubst([])
+    else setProSubst([TODAS_SUBST])
+  }
+
+  const togglePillSubstancia = (substancia: string) => {
+    if (proSubst.includes(TODAS_SUBST)) {
+      const todas = prospeccaoSubstOpcoes.filter((s) => s !== TODAS_SUBST && s !== substancia)
+      setProSubst(todas)
+      return
+    }
+    if (proSubst.includes(substancia)) {
+      setProSubst(proSubst.filter((s) => s !== substancia))
+    } else {
+      setProSubst([...proSubst, substancia])
+    }
+  }
+
+  const h2Style: CSSProperties = {
+    fontSize: 22,
+    fontWeight: 500,
+    color: '#F1EFE8',
+    margin: 0,
+    lineHeight: 1.3,
+  }
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flex: 1,
+        minHeight: 0,
+        height: '100%',
+        alignSelf: 'stretch',
+        gap: 0,
+        marginTop: 24,
+        alignItems: 'stretch',
+      }}
+    >
+      <div
+        style={{
+          flex: '0 0 50%',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'flex-start',
+          padding: '40px 60px 40px 40px',
+          paddingTop: '18vh',
+          boxSizing: 'border-box',
+          minHeight: 0,
+          overflow: 'hidden',
+          ...exitingLeftStyle,
+        }}
+      >
+        <div style={{ maxWidth: 480, width: '100%' }}>
+          <div style={{ marginBottom: 32 }}>
+            <div
+              style={{
+                fontSize: 13,
+                letterSpacing: 1.5,
+                textTransform: 'uppercase',
+                color: '#888780',
+                fontWeight: 500,
+                marginBottom: 12,
+              }}
+            >
+              Etapa {currentStep} de 4
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                gap: 4,
+                width: '100%',
+                maxWidth: 280,
+              }}
+            >
+              {([1, 2, 3, 4] as const).map((step) => (
+                <div
+                  key={step}
+                  style={{
+                    flex: 1,
+                    height: 3,
+                    borderRadius: 2,
+                    backgroundColor: step <= currentStep ? '#EF9F27' : '#2C2C2A',
+                    transition: 'background-color 300ms ease',
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+
+          <h2 style={h2Style}>{STEP_TITLES[currentStep]}</h2>
+          <p style={subtextStyle}>{STEP_SUBTEXTS[currentStep]}</p>
+
+          <div style={stepContentStyle}>
+            {currentStep === 1 ? (
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 12,
+                  width: '100%',
+                }}
+              >
+                <ObjetivoCard
+                  selected={proObjetivo === 'investir'}
+                  onClick={() => setProObjetivo('investir')}
+                  icon={<TrendingUp size={20} />}
+                  label="Investir em processo existente"
+                />
+                <ObjetivoCard
+                  selected={proObjetivo === 'novo_requerimento'}
+                  onClick={() => setProObjetivo('novo_requerimento')}
+                  icon={<MapPin size={20} />}
+                  label="Identificar áreas para novo requerimento"
+                />
+                <ObjetivoCard
+                  selected={proObjetivo === 'avaliar_portfolio'}
+                  onClick={() => setProObjetivo('avaliar_portfolio')}
+                  icon={<BarChart3 size={20} />}
+                  label="Avaliar portfólio atual"
+                />
+              </div>
+            ) : null}
+
+            {currentStep === 2 ? (
+              <div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={toggleTodasSubst}
+                    style={{
+                      padding: '8px 16px',
+                      borderRadius: 20,
+                      fontSize: 14,
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                      borderWidth: 1,
+                      borderStyle: 'solid',
+                      borderColor: proSubst.includes(TODAS_SUBST) ? '#EF9F27' : '#2C2C2A',
+                      backgroundColor: proSubst.includes(TODAS_SUBST)
+                        ? 'rgba(239, 159, 39, 0.12)'
+                        : '#111110',
+                      color: proSubst.includes(TODAS_SUBST) ? '#EF9F27' : '#D3D1C7',
+                    }}
+                  >
+                    Todas
+                  </button>
+                  {substanciasSemTodas.map((substancia) => {
+                    const isSelected =
+                      proSubst.includes(substancia) || proSubst.includes(TODAS_SUBST)
+                    const corSub = corSubstanciaOuUndefined(substancia) ?? '#EF9F27'
+                    return (
+                      <button
+                        key={substancia}
+                        type="button"
+                        onClick={() => togglePillSubstancia(substancia)}
+                        style={{
+                          padding: '8px 16px',
+                          borderRadius: 20,
+                          fontSize: 14,
+                          fontWeight: 500,
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease',
+                          borderWidth: 1,
+                          borderStyle: 'solid',
+                          borderColor: isSelected ? corSub : '#2C2C2A',
+                          backgroundColor: isSelected ? `${corSub}1A` : '#111110',
+                          color: isSelected ? corSub : '#D3D1C7',
+                        }}
+                      >
+                        {substanciaPillLabel(substancia)}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            ) : null}
+
+            {currentStep === 3 ? (
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 12,
+                  width: '100%',
+                }}
+              >
+                <RiscoCard
+                  selected={proRisco === 'conservador'}
+                  onClick={() => setProRisco('conservador')}
+                  icon={<Shield size={20} />}
+                  iconSelectedColor="#1D9E75"
+                  label="Conservador"
+                  desc="Prioriza segurança e processos consolidados"
+                />
+                <RiscoCard
+                  selected={proRisco === 'moderado'}
+                  onClick={() => setProRisco('moderado')}
+                  icon={<Scale size={20} />}
+                  iconSelectedColor="#E8A830"
+                  label="Moderado"
+                  desc="Equilíbrio entre risco e retorno"
+                />
+                <RiscoCard
+                  selected={proRisco === 'arrojado'}
+                  onClick={() => setProRisco('arrojado')}
+                  icon={<TrendingUp size={20} />}
+                  iconSelectedColor="#E24B4A"
+                  label="Arrojado"
+                  desc="Aceita risco elevado por alta recompensa"
+                />
+              </div>
+            ) : null}
+
+            {currentStep === 4 ? (
+              <div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => setProUfs([])}
+                    style={{
+                      padding: '8px 16px',
+                      borderRadius: 20,
+                      fontSize: 14,
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                      borderWidth: 1,
+                      borderStyle: 'solid',
+                      borderColor: proUfs.length === 0 ? '#EF9F27' : '#2C2C2A',
+                      backgroundColor: proUfs.length === 0 ? 'rgba(239, 159, 39, 0.12)' : '#111110',
+                      color: proUfs.length === 0 ? '#EF9F27' : '#D3D1C7',
+                    }}
+                  >
+                    Todo o Brasil
+                  </button>
+                  {[...UFS_INTEL_DASHBOARD].map((uf) => {
+                    const isSelected = proUfs.includes(uf)
+                    return (
+                      <button
+                        key={uf}
+                        type="button"
+                        onClick={() => {
+                          if (isSelected) {
+                            setProUfs(proUfs.filter((u) => u !== uf))
+                          } else {
+                            setProUfs([...proUfs, uf])
+                          }
+                        }}
+                        style={{
+                          padding: '8px 16px',
+                          borderRadius: 20,
+                          fontSize: 14,
+                          fontWeight: 500,
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease',
+                          borderWidth: 1,
+                          borderStyle: 'solid',
+                          borderColor: isSelected ? '#EF9F27' : '#2C2C2A',
+                          backgroundColor: isSelected ? 'rgba(239, 159, 39, 0.12)' : '#111110',
+                          color: isSelected ? '#EF9F27' : '#D3D1C7',
+                        }}
+                      >
+                        {uf}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 16,
+              marginTop: 32,
+            }}
+          >
+            {currentStep > 1 ? (
+              <button type="button" onClick={handlePrevStep} style={navGhostButtonStyle}>
+                Voltar
+              </button>
+            ) : null}
+            {currentStep === 1 ? (
+              <button type="button" onClick={onCancel} style={navGhostButtonStyle}>
+                Cancelar
+              </button>
+            ) : null}
+            <button
+              type="button"
+              disabled={!stepValido}
+              onClick={currentStep < 4 ? handleNextStep : onAnalisar}
+              style={{
+                backgroundColor: '#EF9F27',
+                color: '#0D0D0C',
+                fontSize: 15,
+                fontWeight: 600,
+                borderRadius: 8,
+                padding: '10px 28px',
+                border: 'none',
+                cursor: stepValido ? 'pointer' : 'not-allowed',
+                opacity: stepValido ? 1 : 0.4,
+                transition: 'filter 0.15s ease-out, box-shadow 0.15s ease-out',
+              }}
+              onMouseEnter={(e) => {
+                if (!stepValido) return
+                e.currentTarget.style.filter = 'brightness(1.1)'
+                e.currentTarget.style.boxShadow = '0 0 24px rgba(239, 159, 39, 0.35)'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.filter = 'none'
+                e.currentTarget.style.boxShadow = 'none'
+              }}
+            >
+              {currentStep < 4 ? 'Próximo' : 'Analisar oportunidades'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <ProspeccaoAnimations
+        currentStep={animationStep}
+        visible={animationVisible}
+        reducedMotion={reducedMotion}
+        exiting={exiting}
+      />
+    </div>
+  )
+}

@@ -1,0 +1,83 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Flona Tapajós",
+        "categoria": "Uso Sustentável",
+        "esfera": "Federal",
+        "area_ha": 527319
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-55.8, -4.2], [-54.0, -4.2], [-54.0, -2.8], [-55.8, -2.8], [-55.8, -4.2]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Parque Nacional Chapada dos Veadeiros",
+        "categoria": "Proteção Integral",
+        "esfera": "Federal",
+        "area_ha": 65514
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-50.7, -16.25], [-46.95, -16.25], [-46.95, -13.75], [-50.7, -13.75], [-50.7, -16.25]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Parque Nacional da Chapada Diamantina",
+        "categoria": "Proteção Integral",
+        "esfera": "Federal",
+        "area_ha": 152000
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-42.35, -15.6], [-40.85, -15.6], [-40.85, -10.95], [-42.35, -10.95], [-42.35, -15.6]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "APA Cristalino I (demo)",
+        "categoria": "Uso Sustentável",
+        "esfera": "Estadual",
+        "area_ha": 184000
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-55.6, -11.35], [-53.75, -11.35], [-53.75, -10.45], [-55.6, -10.45], [-55.6, -11.35]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Parque Nacional da Serra do Cipó",
+        "categoria": "Proteção Integral",
+        "esfera": "Federal",
+        "area_ha": 31000
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-43.8, -19.4], [-43.2, -19.4], [-43.2, -18.9], [-43.8, -18.9], [-43.8, -19.4]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "RESEX do Baixo Rio Branco",
+        "categoria": "Uso Sustentável",
+        "esfera": "Federal",
+        "area_ha": 120000
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-60.5, 1.8], [-59.2, 1.8], [-59.2, 3.0], [-60.5, 3.0], [-60.5, 1.8]]]
+      }
+    }
+  ]
+}

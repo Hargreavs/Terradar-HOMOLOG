@@ -1,0 +1,41 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Aquífero Guarani",
+        "tipo": "Sedimentar",
+        "area_km2": 1087000
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-58.0, -32.0], [-44.0, -32.0], [-44.0, -18.0], [-58.0, -18.0], [-58.0, -32.0]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Aquífero Alter do Chão",
+        "tipo": "Sedimentar",
+        "area_km2": 86000
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-55.5, -3.5], [-52.0, -3.5], [-52.0, -0.5], [-55.5, -0.5], [-55.5, -3.5]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nome": "Aquífero Bambuí",
+        "tipo": "Fraturado/kárstico",
+        "area_km2": 87000
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-47.5, -20.5], [-42.0, -20.5], [-42.0, -15.5], [-47.5, -15.5], [-47.5, -20.5]]]
+      }
+    }
+  ]
+}
