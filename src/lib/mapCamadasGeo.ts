@@ -5,7 +5,6 @@ export type CamadaGeoId =
   | 'terras_indigenas'
   | 'unidades_conservacao'
   | 'quilombolas'
-  | 'app_car'
   | 'aquiferos'
   | 'ferrovias'
   | 'portos'
@@ -13,13 +12,16 @@ export type CamadaGeoId =
   | 'rodovias'
   | 'hidrovias'
 
+/**
+ * `app_car` (Áreas de Preservação) — removida temporariamente: sem tabela/ingest no backend.
+ * Reintroduzir com ingestão APP (p.ex. ANA BHO) e reativar `geo-src-app_car` + checkboxes.
+ */
 export const CAMADAS_GEO_ORDER: CamadaGeoId[] = [
   'biomas',
   'aquiferos',
   'terras_indigenas',
   'unidades_conservacao',
   'quilombolas',
-  'app_car',
   'rodovias',
   'ferrovias',
   'hidrovias',
@@ -31,7 +33,6 @@ export const CAMADAS_GEO_LEGEND_ORDER: CamadaGeoId[] = [
   'terras_indigenas',
   'unidades_conservacao',
   'quilombolas',
-  'app_car',
   'aquiferos',
   'biomas',
   'rodovias',
@@ -44,7 +45,6 @@ export const CAMADAS_GEO_LABEL: Record<CamadaGeoId, string> = {
   terras_indigenas: 'Terras Indígenas',
   unidades_conservacao: 'Unidades de Conservação',
   quilombolas: 'Quilombolas',
-  app_car: 'Áreas de Preservação',
   aquiferos: 'Aquíferos',
   ferrovias: 'Ferrovias',
   portos: 'Portos',
@@ -57,7 +57,6 @@ export const CAMADAS_GEO_COLOR: Record<CamadaGeoId, string> = {
   terras_indigenas: '#E07A5F',
   unidades_conservacao: '#4A9E4A',
   quilombolas: '#C4915A',
-  app_car: '#5B9A6F',
   aquiferos: '#4A90B8',
   ferrovias: '#B8B8B8',
   portos: '#7EADD4',
@@ -101,8 +100,6 @@ export const CAMADA_GEO_HOVER_LAYER_IDS: string[] = [
   'geo-quilombolas-fill',
   'geo-quilombolas-line',
   'geo-quilombolas-circle',
-  'geo-app_car-fill',
-  'geo-app_car-line',
   'geo-ferrovias-line',
   'geo-portos-circle',
   // === API layers (16.03 + 16.04a/b/c) ===
@@ -136,7 +133,6 @@ const LAYERS_BY_CAMADA: Record<CamadaGeoId, string[]> = {
     'geo-quilombolas-circle',
     'geo-quilombolas-label',
   ],
-  app_car: ['geo-app_car-fill', 'geo-app_car-line', 'geo-app_car-label'],
   ferrovias: ['geo-ferrovias-halo', 'geo-ferrovias-line', 'geo-ferrovias-label'],
   portos: ['geo-portos-circle', 'geo-portos-label'],
   biomas: [],
@@ -384,56 +380,6 @@ export function addCamadasGeoLayers(
     beforeId,
   )
 
-  src('geo-src-app_car', data.app_car)
-  addBefore(
-    map,
-    {
-      id: 'geo-app_car-fill',
-      type: 'fill',
-      source: 'geo-src-app_car',
-      paint: { 'fill-color': '#5B9A6F', 'fill-opacity': 0.12 },
-      layout: visNone,
-    },
-    beforeId,
-  )
-  addBefore(
-    map,
-    {
-      id: 'geo-app_car-line',
-      type: 'line',
-      source: 'geo-src-app_car',
-      paint: {
-        'line-color': '#5B9A6F',
-        'line-opacity': 0.4,
-        'line-width': 1,
-      },
-      layout: visNone,
-    },
-    beforeId,
-  )
-  addBefore(
-    map,
-    {
-      id: 'geo-app_car-label',
-      type: 'symbol',
-      source: 'geo-src-app_car',
-      filter: ['has', 'tipo'],
-      layout: {
-        visibility: 'none',
-        'text-field': ['get', 'tipo'],
-        'text-size': 10,
-        'text-font': TEXT_FONT,
-        'text-anchor': 'center',
-      },
-      paint: {
-        'text-color': '#5B9A6F',
-        'text-halo-color': '#111110',
-        'text-halo-width': 1,
-      },
-    },
-    beforeId,
-  )
-
   src('geo-src-ferrovias', data.ferrovias)
   addBefore(
     map,
@@ -621,16 +567,6 @@ export function formatCamadaGeoTooltip(
       if (s) parts.push(s)
       break
     }
-    case 'app_car': {
-      const t = strProp(props, 'tipo')
-      const m = strProp(props, 'municipio')
-      const uf = strProp(props, 'uf')
-      const w = strProp(props, 'largura_m')
-      if (t) parts.push(t)
-      if (m || uf) parts.push([m, uf].filter(Boolean).join('/'))
-      if (w) parts.push(`${w} m`)
-      break
-    }
     case 'aquiferos': {
       const t = strProp(props, 'tipo')
       const a = strProp(props, 'area_km2')
@@ -687,7 +623,6 @@ export function defaultCamadasGeo(): Record<CamadaGeoId, boolean> {
     terras_indigenas: false,
     unidades_conservacao: false,
     quilombolas: false,
-    app_car: false,
     aquiferos: false,
     ferrovias: false,
     portos: false,

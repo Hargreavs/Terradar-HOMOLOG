@@ -99,7 +99,7 @@ const CAMADAS_SUB_LABEL: CSSProperties = {
 const CAMADAS_GEO_GROUPS: { title: string; ids: CamadaGeoId[] }[] = [
   {
     title: 'ÁREAS PROTEGIDAS',
-    ids: ['terras_indigenas', 'unidades_conservacao', 'quilombolas', 'app_car', 'biomas'],
+    ids: ['terras_indigenas', 'unidades_conservacao', 'quilombolas', 'biomas'],
   },
   { title: 'RECURSOS HÍDRICOS', ids: ['aquiferos'] },
   { title: 'INFRAESTRUTURA', ids: ['rodovias', 'ferrovias', 'hidrovias', 'portos'] },
@@ -137,7 +137,6 @@ const CAMADAS_GEO_ITEM: Record<
     Icon: TreePine,
   },
   quilombolas: { label: 'Quilombolas', color: '#C4915A', Icon: Home },
-  app_car: { label: 'Áreas de Preservação', color: '#5B9A6F', Icon: Leaf },
   aquiferos: { label: 'Aquíferos', color: '#4A90B8', Icon: Droplets },
   biomas: { label: 'Biomas', color: '#8FA668', Icon: Leaf },
   rodovias: { label: 'Rodovias', color: '#D9A55B', Icon: TrainTrack },
