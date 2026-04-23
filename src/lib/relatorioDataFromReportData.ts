@@ -271,11 +271,34 @@ function territorialFromReport(
     }
   }
 
+  const dTiDenorm = processo.dist_ti
+  if (dTiDenorm != null && Number.isFinite(Number(dTiDenorm))) {
+    distancia_ti_km = Number(dTiDenorm)
+  }
+  const dUcDenorm = processo.dist_uc
+  if (dUcDenorm != null && Number.isFinite(Number(dUcDenorm))) {
+    distancia_uc_us_km = Number(dUcDenorm)
+  }
+  const dAqDenorm = processo.dist_aquifero
+  if (dAqDenorm != null && Number.isFinite(Number(dAqDenorm))) {
+    distancia_aquifero_km = Number(dAqDenorm)
+    if (Number(dAqDenorm) === 0) sobreposicao_aquifero = true
+  }
+  const dFvDenorm = processo.dist_ferrovia
+  if (dFvDenorm != null && Number.isFinite(Number(dFvDenorm))) {
+    const df = Number(dFvDenorm)
+    distancia_ferrovia_km = df
+    distancia_ferrovia_operacional_km = df
+  }
+
   return {
     distancia_ti_km,
     nome_ti_proxima,
     fase_ti: null,
-    distancia_uc_km: nome_uc_us_proxima ? distancia_uc_us_km : null,
+    distancia_uc_km:
+      nome_uc_us_proxima || distancia_uc_us_km != null
+        ? distancia_uc_us_km
+        : null,
     nome_uc_proxima: nome_uc_us_proxima ?? nome_uc_pi_proxima,
     tipo_uc: tipo_uc_us ?? tipo_uc_pi,
     nome_uc_us_proxima,
@@ -344,7 +367,15 @@ function intelFromReport(rd: ReportData, _processo: Processo): IntelMineral {
 
   return {
     substancia_contexto: rd.substancia_anm,
+    fonte_preco: rd.fonte_preco,
     fonte_res_prod: rd.fonte_res_prod,
+    reservas_br_pct_dado: rd.reservas_br_pct_raw,
+    producao_br_pct_dado: rd.producao_br_pct_raw,
+    preco_brl_por_t_legacy: rd.preco_brl_por_t,
+    preco_brl_por_g_legacy:
+      rd.preco_g_brl > 0 && Number.isFinite(rd.preco_g_brl)
+        ? rd.preco_g_brl
+        : null,
     tipo_mercado: rd.tipo_mercado ?? null,
     producao_br_absoluta_t: rd.producao_br_absoluta_t ?? null,
     valor_producao_br_brl: rd.valor_producao_br_brl ?? null,
@@ -379,7 +410,8 @@ function intelFromReport(rd: ReportData, _processo: Processo): IntelMineral {
     potencial_reserva_estimado_t: null,
     valor_estimado_usd_mi: 0,
     valor_estimado_usd_ha: rd.valor_insitu_usd_ha,
-    valor_estimado_brl_ha: rd.valor_insitu_usd_ha * rd.ptax,
+    valor_estimado_brl_ha:
+      rd.ptax > 0 ? rd.valor_insitu_usd_ha * rd.ptax : 0,
     metodologia_estimativa:
       'Valores derivados do motor de scores e master de substâncias.',
     processos_vizinhos: [],

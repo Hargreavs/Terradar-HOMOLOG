@@ -1161,6 +1161,16 @@ export async function buildReportData(
     osClass = osClassRaw ? translatePtLabel(osClassRaw, lang) : t.nd
   }
 
+  const denormAmbiental = (() => {
+    const v = p.score_territorial
+    if (v == null) return null
+    const n = Number(v)
+    return Number.isFinite(n) ? n : null
+  })()
+  if (denormAmbiental != null) {
+    rsAmb = riskDimFromScore(denormAmbiental, lang)
+  }
+
   if (scores) {
     const rl = String(scores.risk_label ?? '').trim()
     if (rl) {
@@ -1262,9 +1272,12 @@ export async function buildReportData(
    */
   const teorFracao = (Number(mercado?.teor_pct ?? 0) || 0) / 100
   const cambioRef =
-    Number(mercado?.cambio_referencia ?? 0) > 0
-      ? Number(mercado?.cambio_referencia)
-      : 5.0229
+    mercado?.cambio_referencia != null &&
+    Number.isFinite(Number(mercado.cambio_referencia)) &&
+    Number(mercado.cambio_referencia) > 0
+      ? Number(mercado.cambio_referencia)
+      : null
+  const ptaxLegacy = cambioRef ?? 0
 
   /**
    * Valor in-situ e CFEM: sempre derivados de teor × massa/ha × preço.
@@ -1274,7 +1287,8 @@ export async function buildReportData(
     mercado && precoUsdPorT > 0 && teorFracao > 0
       ? TONELADAS_POR_HA * teorFracao * precoUsdPorT
       : 0
-  const valReservaBrlHa = valReservaUsdHa * cambioRef
+  const valReservaBrlHa =
+    cambioRef != null && valReservaUsdHa > 0 ? valReservaUsdHa * cambioRef : 0
 
   const cfemPctAliquota =
     Number(mercado?.cfem_pct ?? p.cfem_aliquota_pct ?? 0) || 0
@@ -1426,9 +1440,17 @@ export async function buildReportData(
     regime_display: translateTenure(regimeFmt, lang),
     area_ha: areaHa,
     municipio: municipioUf,
-    bioma: analise?.bioma?.length
-      ? analise.bioma.map((b) => b.nome).join(', ')
-      : nd(p.bioma),
+    bioma: (() => {
+      const btRaw = p.bioma_territorial
+      const bt =
+        btRaw != null && String(btRaw).trim() !== ''
+          ? String(btRaw).trim()
+          : null
+      if (bt) return bt
+      if (analise?.bioma?.length)
+        return analise.bioma.map((b) => b.nome).join(', ')
+      return nd(p.bioma)
+    })(),
 
     alvara_validade: alvaraRaw
       ? formatIsoToBr(String(alvaraRaw))
@@ -1506,7 +1528,7 @@ export async function buildReportData(
       | 'oz' | 'ct' | 'kg' | 'lb' | 't' | 'L' | null,
     preco_oz_usd: precoOzUsd,
     preco_g_brl: precoBrlPorGrama,
-    ptax: cambioRef,
+    ptax: ptaxLegacy,
     preco_unidade_label: precoUnidadeLabel,
     preco_sub_label: precoSubLabel,
     var_12m_pct: var12,
@@ -1520,6 +1542,29 @@ export async function buildReportData(
     demanda_global_t: 0,
     reservas_mundiais_pct: Number(mercado?.reservas_br_pct ?? 0) || 0,
     producao_mundial_pct: Number(mercado?.producao_br_pct ?? 0) || 0,
+    reservas_br_pct_raw:
+      mercado?.reservas_br_pct != null &&
+      String(mercado.reservas_br_pct).trim() !== '' &&
+      Number.isFinite(Number(mercado.reservas_br_pct))
+        ? Number(mercado.reservas_br_pct)
+        : null,
+    producao_br_pct_raw:
+      mercado?.producao_br_pct != null &&
+      String(mercado.producao_br_pct).trim() !== '' &&
+      Number.isFinite(Number(mercado.producao_br_pct))
+        ? Number(mercado.producao_br_pct)
+        : null,
+    fonte_preco:
+      mercado?.fonte_preco != null && String(mercado.fonte_preco).trim() !== ''
+        ? String(mercado.fonte_preco).trim()
+        : null,
+    preco_brl_por_t:
+      mercado?.preco_brl != null &&
+      String(mercado.preco_brl).trim() !== '' &&
+      Number.isFinite(Number(mercado.preco_brl)) &&
+      Number(mercado.preco_brl) > 0
+        ? Number(mercado.preco_brl)
+        : null,
     tipo_mercado: masterStringField(mercado, 'tipo_mercado'),
     producao_br_absoluta_t: masterNumericField(
       mercado,

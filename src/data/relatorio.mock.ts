@@ -173,8 +173,17 @@ export interface DemandaProjetadaEstruturada {
 
 export interface IntelMineral {
   substancia_contexto: string
+  /** `master_substancias.fonte_preco` (PROIBIDO, SEM_FONTE…). */
+  fonte_preco?: string | null
   /** `master_substancias.fonte_res_prod`; `SEM_FONTE_OFICIAL:` desativa percentuais no card Contexto global. */
   fonte_res_prod?: string | null
+  /** Percentuais BR crus (`null` = ausente na master). Drawer F3. */
+  reservas_br_pct_dado?: number | null
+  producao_br_pct_dado?: number | null
+  /** Fallback BRL/t da master quando câmbio ao vivo indisponível. */
+  preco_brl_por_t_legacy?: number | null
+  /** Fallback R$/g da master (metais cotados em oz). */
+  preco_brl_por_g_legacy?: number | null
   reservas_brasil_mundial_pct: number
   producao_brasil_mundial_pct: number
   demanda_projetada_2030: string
