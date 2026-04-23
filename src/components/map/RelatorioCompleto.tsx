@@ -9,10 +9,11 @@ import {
   type CSSProperties,
   type ReactNode,
 } from 'react'
-import { ArrowUpRight, Loader2, Sparkles } from 'lucide-react'
+import { ArrowUpRight, Ban, Info, Loader2, Sparkles } from 'lucide-react'
 import { relatoriosMock } from '../../data/relatorio.mock'
 import type {
   DadosANM,
+  IntelMineral,
   ObservacoesTecnicas,
   ObservacoesTecnicasItem,
   RelatorioData,
@@ -32,10 +33,7 @@ import {
   labelSubstanciaParaExibicao,
   substanciaDesconhecida,
 } from '../../lib/substancias'
-import {
-  PREFIX_SEM_FONTE_RES_PROD,
-  textoAposSemFonteOficial,
-} from '../../lib/reportFonteResProd'
+import { textoAposSemFonteOficial } from '../../lib/reportFonteResProd'
 import {
   formatarPctTopUf,
   formatarPrecoMedioBrBrlPorT,
@@ -72,6 +70,14 @@ import { RiskDecomposicaoRelatorioPanel } from './RiskDecomposicaoRelatorioPanel
 import { OportunidadeDecomposicaoRelatorioPanel } from './OportunidadeDecomposicaoRelatorioPanel'
 import { OportunidadePerfilCalcTooltipContent } from './OportunidadeScoreCalcTooltipContent'
 import { RiskTotalCalcTooltipContent } from './RiskScoreCalcTooltipContent'
+import { DrawerRegulatoryBadges } from './DrawerRegulatoryBadges'
+import { ProcessoEventosTimeline } from './ProcessoEventosTimeline'
+import { useExchangeRate } from '../../context/ExchangeRateContext'
+import {
+  getSubstanceMarketState,
+  textoExplicativoFonte,
+  type SubstanceMarketState,
+} from '../../lib/substanceMarketState'
 
 type AbaId =
   | 'processo'
@@ -110,6 +116,35 @@ const FS = {
   jumbo: 58,
   highlight: 32,
 } as const
+
+const GRAMAS_POR_ONCA_TROY = 31.1034768
+
+/** Preço BRL no drawer: USD × câmbio ao vivo; se indisponível, legado da master. */
+function computePrecoBrlDrawer(
+  intel: IntelMineral,
+  liveRate: number | null,
+): { brlPorGrama: number | null; brlPorTonelada: number | null } {
+  if (liveRate != null && liveRate > 0) {
+    let brlPorGrama: number | null = null
+    if (
+      intel.unidade_preco === 'oz' &&
+      intel.preco_referencia_usd_oz != null &&
+      intel.preco_referencia_usd_oz > 0
+    ) {
+      brlPorGrama =
+        (intel.preco_referencia_usd_oz * liveRate) / GRAMAS_POR_ONCA_TROY
+    }
+    const brlPorTonelada =
+      intel.preco_medio_usd_t > 0 ? intel.preco_medio_usd_t * liveRate : null
+    return { brlPorGrama, brlPorTonelada }
+  }
+  const legG = intel.preco_brl_por_g_legacy
+  const legT = intel.preco_brl_por_t_legacy
+  return {
+    brlPorGrama: legG != null && legG > 0 ? legG : null,
+    brlPorTonelada: legT != null && legT > 0 ? legT : null,
+  }
+}
 
 /** Borda superior inativa (faixa com opacidade). */
 function hexCorParaRgba(hex: string, alpha: number): string {
@@ -1774,6 +1809,53 @@ export function RelatorioCompleto({
 
   const dados: RelatorioData | undefined = dadosResolved
 
+  const {
+    rate: cambioAoVivo,
+    isStale: cambioStale,
+    loading: cambioLoading,
+    fetchedAt: cambioFetchedAt,
+  } = useExchangeRate()
+
+  const commodityMarketState = useMemo((): SubstanceMarketState | null => {
+    const im = dados?.intel_mineral
+    if (!im) return null
+    const r =
+      im.reservas_br_pct_dado !== undefined
+        ? im.reservas_br_pct_dado
+        : im.reservas_brasil_mundial_pct
+    const p =
+      im.producao_br_pct_dado !== undefined
+        ? im.producao_br_pct_dado
+        : im.producao_brasil_mundial_pct
+    return getSubstanceMarketState({
+      fonte_preco: im.fonte_preco,
+      fonte_res_prod: im.fonte_res_prod,
+      reservas_br_pct: r,
+      producao_br_pct: p,
+    })
+  }, [dados?.intel_mineral])
+
+  const drawerPrecoBrl = useMemo(
+    () =>
+      dados?.intel_mineral
+        ? computePrecoBrlDrawer(dados.intel_mineral, cambioAoVivo)
+        : { brlPorGrama: null, brlPorTonelada: null },
+    [dados?.intel_mineral, cambioAoVivo],
+  )
+
+  const valorReservaBrlBiPorHaAoVivo = useMemo(() => {
+    const im = dados?.intel_mineral
+    if (
+      im?.valor_estimado_usd_ha != null &&
+      im.valor_estimado_usd_ha > 0 &&
+      cambioAoVivo != null &&
+      cambioAoVivo > 0
+    ) {
+      return (im.valor_estimado_usd_ha * cambioAoVivo) / 1_000_000_000
+    }
+    return null
+  }, [dados?.intel_mineral, cambioAoVivo])
+
   const [aba, setAba] = useState<AbaId>(abaInicial)
   const [perfilOportunidadeAtivo, setPerfilOportunidadeAtivo] =
     useState<PerfilOportunidadeOSKey>('conservador')
@@ -1788,6 +1870,7 @@ export function RelatorioCompleto({
     if (!processo) return []
     const extras: AlertaLegislativo[] = []
     if (processo.exigencia_pendente === true) {
+      const historico = processo.ativo_derivado === false
       extras.push({
         id: 'terr-exigencia-pendente-scm',
         fonte: 'ANM',
@@ -1795,12 +1878,13 @@ export function RelatorioCompleto({
         data:
           processo.ultimo_evento_data?.trim() ||
           new Date().toISOString().slice(0, 10),
-        titulo: 'Exigência pendente',
-        resumo:
-          'Existe exigência publicada sem cumprimento registrado nos Microdados SCM.',
-        nivel_impacto: 2,
-        tipo_impacto: 'restritivo',
-        urgencia: 'imediata',
+        titulo: historico ? 'Exigência (histórico)' : 'Exigência pendente',
+        resumo: historico
+          ? 'Exigência registrada nos Microdados SCM ao encerrar o processo — consulta histórica.'
+          : 'Existe exigência publicada sem cumprimento registrado nos Microdados SCM.',
+        nivel_impacto: historico ? 1 : 2,
+        tipo_impacto: historico ? 'neutro' : 'restritivo',
+        urgencia: historico ? 'medio_prazo' : 'imediata',
       })
     }
     return [...extras, ...processo.alertas].sort(
@@ -1887,12 +1971,14 @@ export function RelatorioCompleto({
             style={{
               display: 'flex',
               alignItems: 'center',
+              flexWrap: 'wrap',
               gap: 8,
               minWidth: 0,
               flex: 1,
             }}
           >
             <RegimeBadge regime={regimeDrawerUi} variant="drawer" />
+            <DrawerRegulatoryBadges processo={processo} />
           </div>
           <div
             style={{
@@ -2049,6 +2135,8 @@ export function RelatorioCompleto({
       : `${Number(processo.area_ha).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} ha`
 
   const cambioIntel = intel_mineral.cambio_brl_usd ?? metadata?.cambio
+  const cambioLegendaDrawer =
+    cambioAoVivo != null && cambioAoVivo > 0 ? cambioAoVivo : cambioIntel
   const areaHa = processo.area_ha
   /** Mi USD/ha — valor in-situ teórico por hectare (sem multiplicar pela área do processo). */
   const valorReservaUsdMiPorHa =
@@ -2068,6 +2156,8 @@ export function RelatorioCompleto({
           : intel_mineral.valor_estimado_brl_tri != null && areaHa > 0
             ? (intel_mineral.valor_estimado_brl_tri * 1000) / areaHa
             : null
+  const valorReservaBrlBiPorHaEfetivo =
+    valorReservaBrlBiPorHaAoVivo ?? valorReservaBrlBiPorHa
 
   const cfemMunicipioParaContexto =
     fiscal.cfem_municipio.length > 0
@@ -2225,12 +2315,14 @@ export function RelatorioCompleto({
           style={{
             display: 'flex',
             alignItems: 'center',
+            flexWrap: 'wrap',
             gap: 8,
             minWidth: 0,
             flex: 1,
           }}
         >
           <RegimeBadge regime={regimeDrawerUi} variant="drawer" />
+          <DrawerRegulatoryBadges processo={processo} />
         </div>
         <div
           style={{
@@ -2341,6 +2433,53 @@ export function RelatorioCompleto({
             semGeom={semGeom}
             classificacaoZumbi={dados_anm.classificacao_zumbi ?? null}
           />
+          {processo.ativo_derivado === false ? (
+            <div
+              style={{
+                padding: '10px 12px',
+                borderRadius: 8,
+                backgroundColor: 'rgba(180, 178, 169, 0.1)',
+                border: '1px solid #2C2C2A',
+                display: 'flex',
+                gap: 10,
+                alignItems: 'flex-start',
+              }}
+            >
+              <span
+                style={{
+                  color: '#888780',
+                  fontSize: FS.md,
+                  lineHeight: 1.4,
+                  flexShrink: 0,
+                }}
+                aria-hidden
+              >
+                ⓘ
+              </span>
+              <div>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: FS.md,
+                    fontWeight: 600,
+                    color: '#D3D1C7',
+                  }}
+                >
+                  Processo encerrado
+                </p>
+                <p
+                  style={{
+                    margin: '4px 0 0',
+                    fontSize: FS.sm,
+                    color: '#888780',
+                    lineHeight: 1.45,
+                  }}
+                >
+                  Dados exibidos são históricos.
+                </p>
+              </div>
+            </div>
+          ) : null}
         {aba === 'processo' ? (
           <>
             <Card>
@@ -2532,49 +2671,13 @@ export function RelatorioCompleto({
             </Card>
 
             <Card>
-              <SecLabel branco>Último despacho ANM</SecLabel>
-              <p
-                style={{
-                  fontSize: FS.lg,
-                  color: '#888780',
-                  margin: '0 0 6px 0',
-                  lineHeight: 1.5,
-                }}
-              >
-                {formatarDataIsoPtBr(dados_anm.data_ultimo_despacho)}
-              </p>
-              <p
-                style={{
-                  fontSize: FS.lg,
-                  color: '#D3D1C7',
-                  margin: '0 0 8px 0',
-                  lineHeight: 1.5,
-                }}
-              >
-                {dados_anm.ultimo_despacho}
-              </p>
-              <a
-                href={SEI_ANM_PESQUISA_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  fontSize: FS.lg,
-                  color: '#EF9F27',
-                  margin: 0,
-                  lineHeight: 1.5,
-                  cursor: 'pointer',
-                  textDecoration: 'none',
-                  display: 'inline-block',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.textDecoration = 'underline'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.textDecoration = 'none'
-                }}
-              >
-                SEI: {dados_anm.numero_sei}
-              </a>
+              <ProcessoEventosTimeline
+                numero={processo.numero}
+                totalEventos={processo.total_eventos}
+                ativoDerivado={processo.ativo_derivado}
+                numeroSei={dados_anm.numero_sei}
+                cadastroDataIso={timestamps.cadastro_mineiro}
+              />
               {mostrarDisclaimerSEI(processo) ? (
                 <div
                   style={{
@@ -2590,15 +2693,24 @@ export function RelatorioCompleto({
                   {TEXTO_DISCLAIMER_SEI_ANM.replace(/!/g, '')}
                 </div>
               ) : null}
-              <FonteLabel
-                dataIso={timestamps.cadastro_mineiro}
-                fonte="SEI-ANM"
-              />
             </Card>
 
             {dados_anm.pendencias.length > 0 ? (
               <Card>
                 <SecLabel branco>Pendências</SecLabel>
+                {processo.ativo_derivado === false ? (
+                  <p
+                    style={{
+                      fontSize: FS.sm,
+                      color: '#888780',
+                      margin: '0 0 10px 0',
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    Registros históricos ao encerrar o processo — não indicam
+                    pendência administrativa atual.
+                  </p>
+                ) : null}
                 <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
                   {dados_anm.pendencias.map((p, i) => (
                     <li
@@ -2610,8 +2722,17 @@ export function RelatorioCompleto({
                         marginBottom: i < dados_anm.pendencias.length - 1 ? 10 : 0,
                       }}
                     >
-                      <span style={{ color: '#E24B4A', fontSize: FS.md, lineHeight: 1.4 }}>
-                        ▲
+                      <span
+                        style={{
+                          color:
+                            processo.ativo_derivado === false
+                              ? '#888780'
+                              : '#E24B4A',
+                          fontSize: FS.md,
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        {processo.ativo_derivado === false ? '◆' : '▲'}
                       </span>
                       <span style={{ fontSize: FS.md, color: '#D3D1C7', lineHeight: 1.4 }}>
                         {p}
@@ -3699,7 +3820,7 @@ export function RelatorioCompleto({
               ) : (
                 <>
               <SecLabel branco style={{ marginBottom: 2 }}>
-                Contexto global
+                Mercado desta commodity
               </SecLabel>
               <p
                 style={{
@@ -3711,310 +3832,652 @@ export function RelatorioCompleto({
               >
                 {processo.substancia.toUpperCase()}
               </p>
-              {intel_mineral.fonte_res_prod != null &&
-              intel_mineral.fonte_res_prod.startsWith(PREFIX_SEM_FONTE_RES_PROD) ? (
-                <>
-                  <p
-                    style={{
-                      fontSize: FS.md,
-                      color: '#D3D1C7',
-                      lineHeight: 1.55,
-                      margin: '0 0 12px 0',
-                      textAlign: 'center',
-                    }}
-                  >
-                    Não há fonte oficial publicada para reservas ou produção
-                    mundial desta substância.
-                  </p>
-                  {textoAposSemFonteOficial(intel_mineral.fonte_res_prod) !==
-                  '' ? (
-                    <p
+              {(() => {
+                const mercadoST = commodityMarketState ?? 'BR_PRODUTOR'
+                const temPrecoUsd =
+                  (intel_mineral.unidade_preco === 'oz' &&
+                    intel_mineral.preco_referencia_usd_oz != null &&
+                    intel_mineral.preco_referencia_usd_oz > 0) ||
+                  intel_mineral.preco_medio_usd_t > 0
+                const explicaSemFonte =
+                  textoExplicativoFonte(intel_mineral.fonte_preco) ||
+                  textoExplicativoFonte(intel_mineral.fonte_res_prod) ||
+                  textoAposSemFonteOficial(intel_mineral.fonte_res_prod ?? '')
+                if (mercadoST === 'PROIBIDO') {
+                  return (
+                    <>
+                      <div
+                        style={{
+                          borderLeft: '3px solid #E8A830',
+                          padding: '12px 14px 12px 14px',
+                          marginBottom: 12,
+                          borderRadius: 6,
+                          backgroundColor: 'rgba(232, 168, 48, 0.08)',
+                        }}
+                      >
+                        <p
+                          style={{
+                            display: 'flex',
+                            gap: 10,
+                            alignItems: 'flex-start',
+                            margin: 0,
+                            fontSize: FS.md,
+                            color: '#D3D1C7',
+                            lineHeight: 1.55,
+                          }}
+                        >
+                          <Ban
+                            size={18}
+                            style={{
+                              color: '#E8A830',
+                              flexShrink: 0,
+                              marginTop: 2,
+                            }}
+                            aria-hidden
+                          />
+                          <span>
+                            <span style={{ color: '#F1EFE8', fontWeight: 600 }}>
+                              Produção proibida no Brasil
+                            </span>
+                            <br />
+                            Material regulamentado por Lei 12.635/2012 e decisão
+                            STF 2017 (ADI 3406/3470).
+                            <br />
+                            <br />
+                            Reservas geológicas existem mas são inexploráveis
+                            legalmente.
+                          </span>
+                        </p>
+                      </div>
+                      <FonteLabel
+                        dataIso={timestamps.usgs}
+                        fonte={
+                          intel_mineral.fonte_preco != null &&
+                          intel_mineral.fonte_preco.trim() !== ''
+                            ? intel_mineral.fonte_preco
+                            : 'Fontes curadas TERRADAR'
+                        }
+                        marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
+                      />
+                    </>
+                  )
+                }
+                if (mercadoST === 'SEM_FONTE') {
+                  return (
+                    <>
+                      {temPrecoUsd ? (
+                        <p
+                          style={{
+                            fontSize: FS.sm,
+                            color: '#888780',
+                            margin: '0 0 12px 0',
+                            lineHeight: 1.45,
+                          }}
+                        >
+                          Dados de reservas e produção Brasil indisponíveis em
+                          fontes oficiais comparáveis. O preço spot segue na
+                          secção «Preço e tendência».
+                        </p>
+                      ) : null}
+                      <div
+                        style={{
+                          borderLeft: '3px solid #888780',
+                          paddingLeft: 12,
+                          marginBottom: 12,
+                        }}
+                      >
+                        <p
+                          style={{
+                            display: 'flex',
+                            gap: 8,
+                            alignItems: 'flex-start',
+                            margin: 0,
+                            fontSize: FS.md,
+                            color: '#D3D1C7',
+                            lineHeight: 1.55,
+                          }}
+                        >
+                          <Info
+                            size={18}
+                            style={{
+                              color: '#888780',
+                              flexShrink: 0,
+                              marginTop: 2,
+                            }}
+                            aria-hidden
+                          />
+                          <span>
+                            <span style={{ color: '#F1EFE8', fontWeight: 600 }}>
+                              Dados indisponíveis em fontes oficiais
+                            </span>
+                            {explicaSemFonte ? (
+                              <>
+                                <br />
+                                <br />
+                                <span style={{ color: '#888780' }}>
+                                  {explicaSemFonte}
+                                </span>
+                              </>
+                            ) : null}
+                          </span>
+                        </p>
+                      </div>
+                      <FonteLabel
+                        dataIso={timestamps.usgs}
+                        fonte={
+                          intel_mineral.fonte_res_prod != null &&
+                          intel_mineral.fonte_res_prod.trim() !== ''
+                            ? intel_mineral.fonte_res_prod
+                            : 'USGS Mineral Commodity Summaries'
+                        }
+                        marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
+                      />
+                    </>
+                  )
+                }
+                if (mercadoST === 'BR_NAO_PRODUTOR') {
+                  const { brlPorGrama, brlPorTonelada } = drawerPrecoBrl
+                  const txtRes =
+                    intel_mineral.fonte_res_prod != null &&
+                    intel_mineral.fonte_res_prod.trim() !== ''
+                      ? textoExplicativoFonte(intel_mineral.fonte_res_prod) ||
+                        intel_mineral.fonte_res_prod
+                      : ''
+                  return (
+                    <>
+                      {temPrecoUsd ? (
+                        <div style={{ marginBottom: 14 }}>
+                          {intel_mineral.unidade_preco === 'oz' &&
+                          intel_mineral.preco_referencia_usd_oz != null ? (
+                            <>
+                              <p
+                                style={{
+                                  fontSize: FS.h2,
+                                  fontWeight: 500,
+                                  color: '#F1EFE8',
+                                  margin: '0 0 6px 0',
+                                }}
+                              >
+                                USD{' '}
+                                {intel_mineral.preco_referencia_usd_oz.toLocaleString(
+                                  'pt-BR',
+                                )}
+                                /oz
+                              </p>
+                              {brlPorGrama != null ? (
+                                <p
+                                  style={{
+                                    fontSize: FS.lg,
+                                    color: 'rgba(241, 239, 232, 0.65)',
+                                    margin: '0 0 4px 0',
+                                  }}
+                                >
+                                  ≈ R${' '}
+                                  {brlPorGrama.toLocaleString('pt-BR', {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  })}
+                                  /g
+                                  {cambioLegendaDrawer != null ? (
+                                    <span
+                                      style={{
+                                        fontSize: FS.min,
+                                        color: 'rgba(241,239,232,0.4)',
+                                        fontStyle: 'italic',
+                                      }}
+                                    >
+                                      {' '}
+                                      (câmbio {cambioLegendaDrawer.toFixed(4)}
+                                      {cambioStale
+                                        ? ' — última cotação disponível'
+                                        : ''}
+                                      )
+                                    </span>
+                                  ) : null}
+                                </p>
+                              ) : cambioLoading ? (
+                                <p
+                                  style={{
+                                    fontSize: FS.sm,
+                                    color: '#888780',
+                                    margin: 0,
+                                  }}
+                                >
+                                  Obtendo câmbio…
+                                </p>
+                              ) : null}
+                            </>
+                          ) : (
+                            <>
+                              <p
+                                style={{
+                                  fontSize: FS.h2,
+                                  fontWeight: 500,
+                                  color: '#F1EFE8',
+                                  margin: '0 0 6px 0',
+                                }}
+                              >
+                                {intel_mineral.preco_medio_usd_t.toLocaleString(
+                                  'pt-BR',
+                                )}{' '}
+                                USD/t
+                              </p>
+                              {brlPorTonelada != null ? (
+                                <p
+                                  style={{
+                                    fontSize: FS.lg,
+                                    color: 'rgba(241, 239, 232, 0.65)',
+                                    margin: 0,
+                                  }}
+                                >
+                                  ≈ R${' '}
+                                  {brlPorTonelada.toLocaleString('pt-BR', {
+                                    maximumFractionDigits: 2,
+                                  })}
+                                  /t
+                                  {cambioLegendaDrawer != null ? (
+                                    <span
+                                      style={{
+                                        fontSize: FS.min,
+                                        color: 'rgba(241,239,232,0.4)',
+                                        fontStyle: 'italic',
+                                      }}
+                                    >
+                                      {' '}
+                                      (câmbio {cambioLegendaDrawer.toFixed(4)}
+                                      {cambioStale
+                                        ? ' — última cotação disponível'
+                                        : ''}
+                                      )
+                                    </span>
+                                  ) : null}
+                                </p>
+                              ) : null}
+                            </>
+                          )}
+                        </div>
+                      ) : null}
+                      <div
+                        style={{
+                          borderLeft: '3px solid #888780',
+                          paddingLeft: 12,
+                          marginBottom: 12,
+                        }}
+                      >
+                        <p
+                          style={{
+                            display: 'flex',
+                            gap: 8,
+                            alignItems: 'flex-start',
+                            margin: 0,
+                            fontSize: FS.md,
+                            color: '#D3D1C7',
+                            lineHeight: 1.55,
+                          }}
+                        >
+                          <Info
+                            size={18}
+                            style={{ color: '#888780', flexShrink: 0 }}
+                            aria-hidden
+                          />
+                          <span>
+                            <span style={{ color: '#F1EFE8', fontWeight: 600 }}>
+                              Brasil não é produtor desta commodity
+                            </span>
+                            {txtRes ? (
+                              <>
+                                <br />
+                                <br />
+                                <span style={{ color: '#888780' }}>{txtRes}</span>
+                              </>
+                            ) : null}
+                          </span>
+                        </p>
+                      </div>
+                      <FonteLabel
+                        dataIso={timestamps.usgs}
+                        fonte="USGS MCS 2026"
+                        marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
+                      />
+                    </>
+                  )
+                }
+                return (
+                  <>
+                    <div
                       style={{
-                        fontSize: FS.md,
-                        color: '#888780',
-                        lineHeight: 1.5,
-                        margin: '0 0 0 0',
-                        textAlign: 'center',
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 1fr',
+                        gap: 16,
                       }}
                     >
-                      {textoAposSemFonteOficial(intel_mineral.fonte_res_prod)}
-                    </p>
-                  ) : null}
-                </>
-              ) : (
-                <>
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '1fr 1fr',
-                      gap: 16,
-                    }}
-                  >
+                      {(() => {
+                        const pctR = intel_mineral.reservas_brasil_mundial_pct
+                        const corR =
+                          pctR > 20
+                            ? '#1D9E75'
+                            : pctR >= 5
+                              ? '#EF9F27'
+                              : '#888780'
+                        const pctP = intel_mineral.producao_brasil_mundial_pct
+                        const corP =
+                          pctP > 20
+                            ? '#1D9E75'
+                            : pctP < 5
+                              ? '#E24B4A'
+                              : '#EF9F27'
+                        return (
+                          <>
+                            <div>
+                              <p
+                                style={{
+                                  ...subsecaoTituloStyle,
+                                  margin: '0 0 2px 0',
+                                }}
+                              >
+                                Reservas Brasil
+                              </p>
+                              <p
+                                style={{
+                                  fontSize: FS.display,
+                                  fontWeight: 500,
+                                  color: corR,
+                                  margin: '0 0 6px 0',
+                                }}
+                              >
+                                {pctR}%
+                              </p>
+                              <div
+                                style={{
+                                  height: 6,
+                                  borderRadius: 3,
+                                  backgroundColor: '#2C2C2A',
+                                  overflow: 'hidden',
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    width: `${Math.min(100, pctR)}%`,
+                                    height: '100%',
+                                    backgroundColor: corR,
+                                  }}
+                                />
+                              </div>
+                              <p
+                                style={{
+                                  fontSize: FS.md,
+                                  color: SECTION_TITLE,
+                                  margin: '6px 0 0 0',
+                                }}
+                              >
+                                das reservas mundiais
+                              </p>
+                            </div>
+                            <div>
+                              <p
+                                style={{
+                                  ...subsecaoTituloStyle,
+                                  margin: '0 0 2px 0',
+                                }}
+                              >
+                                Produção Brasil
+                              </p>
+                              <p
+                                style={{
+                                  fontSize: FS.display,
+                                  fontWeight: 500,
+                                  color: corP,
+                                  margin: '0 0 6px 0',
+                                }}
+                              >
+                                {pctP}%
+                              </p>
+                              <div
+                                style={{
+                                  height: 6,
+                                  borderRadius: 3,
+                                  backgroundColor: '#2C2C2A',
+                                  overflow: 'hidden',
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    width: `${Math.min(100, pctP)}%`,
+                                    height: '100%',
+                                    backgroundColor: corP,
+                                  }}
+                                />
+                              </div>
+                              <p
+                                style={{
+                                  fontSize: FS.md,
+                                  color: SECTION_TITLE,
+                                  margin: '6px 0 0 0',
+                                }}
+                              >
+                                da produção mundial
+                              </p>
+                            </div>
+                          </>
+                        )
+                      })()}
+                    </div>
                     {(() => {
                       const pctR = intel_mineral.reservas_brasil_mundial_pct
-                      const corR =
-                        pctR > 20 ? '#1D9E75' : pctR >= 5 ? '#EF9F27' : '#888780'
                       const pctP = intel_mineral.producao_brasil_mundial_pct
-                      const corP =
-                        pctP > 20
-                          ? '#1D9E75'
-                          : pctP < 5
-                            ? '#E24B4A'
-                            : '#EF9F27'
+                      const diff = pctR - pctP
+                      const fPg = formatarGapPontosPercentuais(diff)
+                      const fX = formatarPctContextoGlobal(pctP)
+                      const fY = formatarPctContextoGlobal(pctR)
+
+                      let corGap: string
+                      let gapTxt: string
+                      let explic: string
+
+                      if (Math.abs(diff) < 0.5) {
+                        corGap = '#888780'
+                        gapTxt =
+                          Math.abs(diff) < 0.05
+                            ? 'Gap: 0 p.p.'
+                            : `Gap: ${fPg} p.p.`
+                        explic = `A participação brasileira na produção mundial (${fX}%) está alinhada à sua proporção de reservas (${fY}%).`
+                      } else if (diff > 0) {
+                        corGap = '#1D9E75'
+                        gapTxt = `Gap: +${fPg} p.p.`
+                        explic = `A produção brasileira (${fX}%) está abaixo da proporção de reservas (${fY}%), indicando potencial de expansão de ${fPg} p.p.`
+                      } else {
+                        corGap = '#E8A830'
+                        gapTxt = `Gap: ${fPg} p.p.`
+                        explic = `A produção brasileira (${fX}%) supera a proporção de reservas (${fY}%), indicando ritmo de extração acelerado`
+                      }
+
                       return (
                         <>
-                          <div>
-                            <p
-                              style={{
-                                ...subsecaoTituloStyle,
-                                margin: '0 0 2px 0',
-                              }}
-                            >
-                              Reservas Brasil
-                            </p>
-                            <p
-                              style={{
-                                fontSize: FS.display,
-                                fontWeight: 500,
-                                color: corR,
-                                margin: '0 0 6px 0',
-                              }}
-                            >
-                              {pctR}%
-                            </p>
-                            <div
-                              style={{
-                                height: 6,
-                                borderRadius: 3,
-                                backgroundColor: '#2C2C2A',
-                                overflow: 'hidden',
-                              }}
-                            >
-                              <div
-                                style={{
-                                  width: `${Math.min(100, pctR)}%`,
-                                  height: '100%',
-                                  backgroundColor: corR,
-                                }}
-                              />
-                            </div>
-                            <p
-                              style={{
-                                fontSize: FS.md,
-                                color: SECTION_TITLE,
-                                margin: '6px 0 0 0',
-                              }}
-                            >
-                              das reservas mundiais
-                            </p>
-                          </div>
-                          <div>
-                            <p
-                              style={{
-                                ...subsecaoTituloStyle,
-                                margin: '0 0 2px 0',
-                              }}
-                            >
-                              Produção Brasil
-                            </p>
-                            <p
-                              style={{
-                                fontSize: FS.display,
-                                fontWeight: 500,
-                                color: corP,
-                                margin: '0 0 6px 0',
-                              }}
-                            >
-                              {pctP}%
-                            </p>
-                            <div
-                              style={{
-                                height: 6,
-                                borderRadius: 3,
-                                backgroundColor: '#2C2C2A',
-                                overflow: 'hidden',
-                              }}
-                            >
-                              <div
-                                style={{
-                                  width: `${Math.min(100, pctP)}%`,
-                                  height: '100%',
-                                  backgroundColor: corP,
-                                }}
-                              />
-                            </div>
-                            <p
-                              style={{
-                                fontSize: FS.md,
-                                color: SECTION_TITLE,
-                                margin: '6px 0 0 0',
-                              }}
-                            >
-                              da produção mundial
-                            </p>
-                          </div>
+                          <p
+                            style={{
+                              fontSize: FS.lg,
+                              fontWeight: 500,
+                              color: corGap,
+                              margin: '16px 0 0 0',
+                              lineHeight: 1.45,
+                            }}
+                          >
+                            {gapTxt}
+                          </p>
+                          <p
+                            style={{
+                              fontSize: FS.md,
+                              color: '#888780',
+                              margin: '6px 0 0 0',
+                              lineHeight: 1.45,
+                            }}
+                          >
+                            {explic}
+                          </p>
                         </>
                       )
                     })()}
-                  </div>
-                  {(() => {
-                    const pctR = intel_mineral.reservas_brasil_mundial_pct
-                    const pctP = intel_mineral.producao_brasil_mundial_pct
-                    const diff = pctR - pctP
-                    const fPg = formatarGapPontosPercentuais(diff)
-                    const fX = formatarPctContextoGlobal(pctP)
-                    const fY = formatarPctContextoGlobal(pctR)
-
-                    let corGap: string
-                    let gapTxt: string
-                    let explic: string
-
-                    if (Math.abs(diff) < 0.5) {
-                      corGap = '#888780'
-                      gapTxt =
-                        Math.abs(diff) < 0.05
-                          ? 'Gap: 0 p.p.'
-                          : `Gap: ${fPg} p.p.`
-                      explic = `A participação brasileira na produção mundial (${fX}%) está alinhada à sua proporção de reservas (${fY}%).`
-                    } else if (diff > 0) {
-                      corGap = '#1D9E75'
-                      gapTxt = `Gap: +${fPg} p.p.`
-                      explic = `A produção brasileira (${fX}%) está abaixo da proporção de reservas (${fY}%), indicando potencial de expansão de ${fPg} p.p.`
-                    } else {
-                      corGap = '#E8A830'
-                      gapTxt = `Gap: ${fPg} p.p.`
-                      explic = `A produção brasileira (${fX}%) supera a proporção de reservas (${fY}%), indicando ritmo de extração acelerado`
-                    }
-
-                    return (
-                      <>
-                        <p
-                          style={{
-                            fontSize: FS.lg,
-                            fontWeight: 500,
-                            color: corGap,
-                            margin: '16px 0 0 0',
-                            lineHeight: 1.45,
-                          }}
-                        >
-                          {gapTxt}
-                        </p>
-                        <p
-                          style={{
-                            fontSize: FS.md,
-                            color: '#888780',
-                            margin: '6px 0 0 0',
-                            lineHeight: 1.45,
-                          }}
-                        >
-                          {explic}
-                        </p>
-                      </>
-                    )
-                  })()}
-                  <FonteLabel
-                    dataIso={timestamps.usgs}
-                    fonte={
-                      intel_mineral.fonte_res_prod != null &&
-                      intel_mineral.fonte_res_prod.trim() !== ''
-                        ? intel_mineral.fonte_res_prod
-                        : 'USGS Mineral Commodity Summaries'
-                    }
-                    marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
-                  />
-                </>
-              )}
+                    <FonteLabel
+                      dataIso={timestamps.usgs}
+                      fonte={
+                        intel_mineral.fonte_res_prod != null &&
+                        intel_mineral.fonte_res_prod.trim() !== ''
+                          ? intel_mineral.fonte_res_prod
+                          : 'USGS Mineral Commodity Summaries'
+                      }
+                      marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
+                    />
+                  </>
+                )
+              })()}
                 </>
               )}
             </Card>
 
+            {commodityMarketState !== 'PROIBIDO' ? (
             <Card>
               <SecLabel branco>Preço e tendência</SecLabel>
-              {intel_mineral.unidade_preco === 'oz' &&
-              intel_mineral.preco_referencia_usd_oz != null ? (
-                <>
-                  <p
-                    style={{
-                      fontSize: FS.h2,
-                      fontWeight: 500,
-                      color: '#F1EFE8',
-                      margin: '0 0 10px 0',
-                    }}
-                  >
-                    USD{' '}
-                    {intel_mineral.preco_referencia_usd_oz.toLocaleString('pt-BR')}
-                    /oz
-                  </p>
-                  {intel_mineral.preco_referencia_brl_g != null &&
-                  (intel_mineral.cambio_brl_usd ?? metadata?.cambio) != null ? (
-                    <>
+              {(() => {
+                const { brlPorGrama, brlPorTonelada } = drawerPrecoBrl
+                const legendaCambio =
+                  cambioLegendaDrawer != null && cambioLegendaDrawer > 0
+                    ? cambioLegendaDrawer
+                    : null
+                const dataCambioFmt = formatarDataIsoPtBr(
+                  cambioFetchedAt != null
+                    ? cambioFetchedAt.toISOString().slice(0, 10)
+                    : intel_mineral.cambio_data ?? metadata?.cambio_data,
+                )
+                return intel_mineral.unidade_preco === 'oz' &&
+                  intel_mineral.preco_referencia_usd_oz != null ? (
+                  <>
+                    <p
+                      style={{
+                        fontSize: FS.h2,
+                        fontWeight: 500,
+                        color: '#F1EFE8',
+                        margin: '0 0 10px 0',
+                      }}
+                    >
+                      USD{' '}
+                      {intel_mineral.preco_referencia_usd_oz.toLocaleString('pt-BR')}
+                      /oz
+                    </p>
+                    {cambioLoading &&
+                    brlPorGrama == null &&
+                    intel_mineral.preco_referencia_usd_oz > 0 ? (
                       <p
                         style={{
-                          fontSize: FS.h2,
-                          fontWeight: 400,
-                          color: 'rgba(241, 239, 232, 0.6)',
-                          margin: '0 0 4px 0',
+                          fontSize: FS.sm,
+                          color: '#888780',
+                          margin: '0 0 10px 0',
                         }}
                       >
-                        ≈ R${' '}
-                        {intel_mineral.preco_referencia_brl_g.toLocaleString(
-                          'pt-BR',
-                          {
+                        Obtendo câmbio USD/BRL…
+                      </p>
+                    ) : null}
+                    {brlPorGrama != null ? (
+                      <>
+                        <p
+                          style={{
+                            fontSize: FS.h2,
+                            fontWeight: 400,
+                            color: 'rgba(241, 239, 232, 0.6)',
+                            margin: '0 0 4px 0',
+                          }}
+                        >
+                          ≈ R${' '}
+                          {brlPorGrama.toLocaleString('pt-BR', {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
-                          },
-                        )}
-                        /g
-                      </p>
+                          })}
+                          /g
+                        </p>
+                        <p
+                          style={{
+                            fontSize: FS.min,
+                            color: 'rgba(241, 239, 232, 0.4)',
+                            fontStyle: 'italic',
+                            margin: '0 0 10px 0',
+                            lineHeight: 1.45,
+                          }}
+                        >
+                          (câmbio {legendaCambio != null ? legendaCambio.toFixed(4) : '—'}
+                          {cambioStale ? ' — última cotação disponível' : ''}
+                          {dataCambioFmt ? ` · ${dataCambioFmt}` : ''})
+                        </p>
+                      </>
+                    ) : null}
+                    <p
+                      style={{
+                        fontSize: FS.sm,
+                        color: 'rgba(241, 239, 232, 0.45)',
+                        margin: '0 0 10px 0',
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      {intel_mineral.preco_medio_usd_t.toLocaleString('pt-BR')} USD/t
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p
+                      style={{
+                        fontSize: FS.h2,
+                        fontWeight: 500,
+                        color: '#F1EFE8',
+                        margin: '0 0 4px 0',
+                      }}
+                    >
+                      {intel_mineral.preco_medio_usd_t.toLocaleString('pt-BR')} USD/t
+                    </p>
+                    {cambioLoading &&
+                    brlPorTonelada == null &&
+                    intel_mineral.preco_medio_usd_t > 0 ? (
                       <p
                         style={{
-                          fontSize: FS.min,
-                          color: 'rgba(241, 239, 232, 0.4)',
-                          fontStyle: 'italic',
-                          margin: '0 0 10px 0',
-                          lineHeight: 1.45,
+                          fontSize: FS.sm,
+                          color: '#888780',
+                          margin: '0 0 8px 0',
                         }}
                       >
-                        (câmbio R${' '}
-                        {(
-                          intel_mineral.cambio_brl_usd ?? metadata?.cambio
-                        )!.toLocaleString('pt-BR', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}{' '}
-                        {(() => {
-                          const d = formatarDataIsoPtBr(
-                            intel_mineral.cambio_data ?? metadata?.cambio_data,
-                          )
-                          return d ? ` em ${d}` : ''
-                        })()}
-                        )
+                        Obtendo câmbio USD/BRL…
                       </p>
-                    </>
-                  ) : null}
-                  <p
-                    style={{
-                      fontSize: FS.sm,
-                      color: 'rgba(241, 239, 232, 0.45)',
-                      margin: '0 0 10px 0',
-                      lineHeight: 1.45,
-                    }}
-                  >
-                    {intel_mineral.preco_medio_usd_t.toLocaleString('pt-BR')} USD/t
-                  </p>
-                </>
-              ) : (
-                <p
-                  style={{
-                    fontSize: FS.h2,
-                    fontWeight: 500,
-                    color: '#F1EFE8',
-                    margin: '0 0 4px 0',
-                  }}
-                >
-                  {intel_mineral.preco_medio_usd_t.toLocaleString('pt-BR')} USD/t
-                </p>
-              )}
+                    ) : null}
+                    {brlPorTonelada != null ? (
+                      <>
+                        <p
+                          style={{
+                            fontSize: FS.lg,
+                            fontWeight: 400,
+                            color: 'rgba(241, 239, 232, 0.6)',
+                            margin: '0 0 4px 0',
+                          }}
+                        >
+                          ≈ R${' '}
+                          {brlPorTonelada.toLocaleString('pt-BR', {
+                            maximumFractionDigits: 2,
+                          })}
+                          /t
+                        </p>
+                        <p
+                          style={{
+                            fontSize: FS.min,
+                            color: 'rgba(241, 239, 232, 0.4)',
+                            fontStyle: 'italic',
+                            margin: '0 0 10px 0',
+                            lineHeight: 1.45,
+                          }}
+                        >
+                          (câmbio {legendaCambio != null ? legendaCambio.toFixed(4) : '—'}
+                          {cambioStale ? ' — última cotação disponível' : ''}
+                          {dataCambioFmt ? ` · ${dataCambioFmt}` : ''})
+                        </p>
+                      </>
+                    ) : null}
+                  </>
+                )
+              })()}
               {(() => {
                 const t = intel_mineral.tendencia_preco
                 const cfg =
@@ -4143,6 +4606,7 @@ export function RelatorioCompleto({
                 marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
               />
             </Card>
+            ) : null}
 
             <Card>
               <SecLabel branco>Aplicações</SecLabel>
@@ -4248,14 +4712,16 @@ export function RelatorioCompleto({
                   fontWeight: 500,
                   color: '#EF9F27',
                   margin:
-                    valorReservaBrlBiPorHa != null ? '0 0 8px 0' : '0 0 20px 0',
+                    valorReservaBrlBiPorHaEfetivo != null
+                      ? '0 0 8px 0'
+                      : '0 0 20px 0',
                 }}
               >
                 {valorReservaUsdMiPorHa != null
                   ? `${formatarUsdMiInteligente(valorReservaUsdMiPorHa)}/ha`
                   : '—'}
               </p>
-              {valorReservaBrlBiPorHa != null ? (
+              {valorReservaBrlBiPorHaEfetivo != null ? (
                 <>
                   <p
                     style={{
@@ -4263,20 +4729,17 @@ export function RelatorioCompleto({
                       fontWeight: 500,
                       color: 'rgba(232, 168, 48, 0.7)',
                       margin:
-                        (intel_mineral.cambio_brl_usd ?? metadata?.cambio) !=
-                        null
-                          ? '0 0 4px 0'
-                          : '0 0 16px 0',
+                        cambioLegendaDrawer != null ? '0 0 4px 0' : '0 0 16px 0',
                     }}
                   >
                     ≈ R${' '}
-                    {valorReservaBrlBiPorHa.toLocaleString('pt-BR', {
+                    {valorReservaBrlBiPorHaEfetivo.toLocaleString('pt-BR', {
                       minimumFractionDigits: 2,
                       maximumFractionDigits: 2,
                     })}{' '}
                     bi/ha
                   </p>
-                  {(intel_mineral.cambio_brl_usd ?? metadata?.cambio) != null ? (
+                  {cambioLegendaDrawer != null ? (
                     <p
                       style={{
                         fontSize: FS.min,
@@ -4286,18 +4749,15 @@ export function RelatorioCompleto({
                         lineHeight: 1.45,
                       }}
                     >
-                      (câmbio R${' '}
-                      {(
-                        intel_mineral.cambio_brl_usd ?? metadata?.cambio
-                      )!.toLocaleString('pt-BR', {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
+                      (câmbio {cambioLegendaDrawer.toFixed(4)}
+                      {cambioStale ? ' — última cotação disponível' : ''}
                       {(() => {
                         const d = formatarDataIsoPtBr(
-                          intel_mineral.cambio_data ?? metadata?.cambio_data,
+                          cambioFetchedAt != null
+                            ? cambioFetchedAt.toISOString().slice(0, 10)
+                            : intel_mineral.cambio_data ?? metadata?.cambio_data,
                         )
-                        return d ? ` em ${d}` : ''
+                        return d ? ` · ${d}` : ''
                       })()}
                       )
                     </p>
