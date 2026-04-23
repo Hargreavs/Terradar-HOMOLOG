@@ -6,7 +6,6 @@ import {
   ChevronRight,
   Droplets,
   Home,
-  Layers,
   Leaf,
   Search,
   TrainTrack,
@@ -216,8 +215,6 @@ export function MapSidebar({
   const toggleCamada = useMapStore((s) => s.toggleCamada)
   const camadasGeo = useMapStore((s) => s.camadasGeo)
   const toggleCamadaGeo = useMapStore((s) => s.toggleCamadaGeo)
-  const territorioSimuladoVisivel = useMapStore((s) => s.territorioSimuladoVisivel)
-  const toggleTerritorioSimulado = useMapStore((s) => s.toggleTerritorioSimulado)
   const substancias = filtros.substancias
   const setFiltro = useMapStore((s) => s.setFiltro)
   const resetFiltros = useMapStore((s) => s.resetFiltros)
@@ -1202,41 +1199,6 @@ export function MapSidebar({
                 })}
               </div>
             ))}
-            <button
-              type="button"
-              onClick={() => toggleTerritorioSimulado()}
-              className="mt-2 flex w-full cursor-pointer items-center rounded-md border-0 px-1 py-0 text-left hover:bg-[#1A1A18]"
-              style={{ height: 32, gap: 8 }}
-            >
-              <span
-                className="flex shrink-0 items-center justify-center border border-solid"
-                style={{
-                  width: 16,
-                  height: 16,
-                  borderRadius: 4,
-                  borderColor: territorioSimuladoVisivel ? '#EF9F27' : '#5F5E5A',
-                  borderWidth: territorioSimuladoVisivel ? 0 : 1.5,
-                  backgroundColor: territorioSimuladoVisivel ? '#EF9F27' : 'transparent',
-                }}
-                aria-hidden
-              >
-                {territorioSimuladoVisivel ? (
-                  <Check size={10} className="text-[#0D0D0C]" strokeWidth={3} aria-hidden />
-                ) : null}
-              </span>
-              <Layers
-                size={14}
-                strokeWidth={2}
-                className="shrink-0"
-                style={{ color: territorioSimuladoVisivel ? '#888780' : '#5F5E5A' }}
-                aria-hidden
-              />
-              <span
-                className={`min-w-0 flex-1 ${territorioSimuladoVisivel ? cActive : cInactive}`}
-              >
-                Território (simulado)
-              </span>
-            </button>
             <p style={{ ...s3, marginTop: 8 }}>
               {camadasGeoAtivasCount} de {CAMADAS_GEO_ORDER.length} camadas ativas
             </p>

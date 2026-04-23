@@ -27,11 +27,6 @@ import {
   syncCamadasGeoVisibility,
 } from '../../lib/mapCamadasGeo'
 import {
-  addTerritorioSimuladoLayers,
-  syncTerritorioSimuladoVisibility,
-  territorioSimuladoLayersPresent,
-} from '../../lib/mapTerritorioSimulado'
-import {
   addTerritorialLinesLayers,
   applyFeatureHighlights,
   clearFeatureHighlights,
@@ -268,6 +263,76 @@ function buildEnrichmentPatch(
 
     const inicioLavra = pickDate('inicio_lavra_data')
     if (inicioLavra !== undefined) patch.inicio_lavra_data = inicioLavra
+
+    const toNullableString = (v: unknown): string | null => {
+      if (v == null) return null
+      const s = String(v).trim()
+      return s === '' ? null : s
+    }
+    const toNullableNumber = (v: unknown): number | null => {
+      if (v == null) return null
+      const n = Number(v)
+      return Number.isFinite(n) ? n : null
+    }
+    const toNullableBool = (v: unknown): boolean | null => {
+      if (v == null) return null
+      if (typeof v === 'boolean') return v
+      return null
+    }
+    const toNullableDate = (v: unknown): string | null => {
+      if (v == null) return null
+      const s = String(v).trim()
+      if (s === '') return null
+      const m = /^(\d{4}-\d{2}-\d{2})/.exec(s)
+      return m ? m[1]! : s
+    }
+
+    if ('bioma_territorial' in proc) {
+      patch.bioma_territorial = toNullableString(proc.bioma_territorial)
+    }
+    if ('dist_ti' in proc) patch.dist_ti = toNullableNumber(proc.dist_ti)
+    if ('dist_uc' in proc) patch.dist_uc = toNullableNumber(proc.dist_uc)
+    if ('dist_ferrovia' in proc)
+      patch.dist_ferrovia = toNullableNumber(proc.dist_ferrovia)
+    if ('dist_aquifero' in proc)
+      patch.dist_aquifero = toNullableNumber(proc.dist_aquifero)
+    if ('score_territorial' in proc)
+      patch.score_territorial = toNullableNumber(proc.score_territorial)
+    if ('score_territorial_calculado_em' in proc) {
+      patch.score_territorial_calculado_em = toNullableString(
+        proc.score_territorial_calculado_em,
+      )
+    }
+    if ('pendencias_abertas' in proc)
+      patch.pendencias_abertas = toNullableNumber(proc.pendencias_abertas)
+    if ('tem_risco_caducidade' in proc) {
+      patch.tem_risco_caducidade = toNullableBool(proc.tem_risco_caducidade)
+    }
+    if ('ultima_exigencia_data' in proc) {
+      patch.ultima_exigencia_data = toNullableDate(proc.ultima_exigencia_data)
+    }
+    if ('ultima_exigencia_categoria' in proc) {
+      patch.ultima_exigencia_categoria = toNullableString(
+        proc.ultima_exigencia_categoria,
+      )
+    }
+    if ('ultima_exigencia_prazo_dias' in proc) {
+      patch.ultima_exigencia_prazo_dias = toNullableNumber(
+        proc.ultima_exigencia_prazo_dias,
+      )
+    }
+    if ('pendencias_calculado_em' in proc) {
+      patch.pendencias_calculado_em = toNullableString(
+        proc.pendencias_calculado_em,
+      )
+    }
+    if ('needs_rescore' in proc)
+      patch.needs_rescore = toNullableBool(proc.needs_rescore)
+    if ('rescore_blocked_territorial' in proc) {
+      patch.rescore_blocked_territorial = toNullableBool(
+        proc.rescore_blocked_territorial,
+      )
+    }
   }
 
   const sp = proc?.scores_persistido as
@@ -302,6 +367,23 @@ function buildEnrichmentPatch(
       if (hasDim) {
         patch.dimensoes_oportunidade_persistido = dOpo
       }
+    }
+  }
+
+  // F5: JSONB de scores vem no nível `api.scores` (merge Supabase), não em `processo` cru
+  const scApi = (api as { scores?: Record<string, unknown> | null }).scores
+  if (scApi && typeof scApi === 'object') {
+    const dr = scApi.dimensoes_risco
+    if (dr && typeof dr === 'object') {
+      patch.dimensoes_risco_persistido =
+        dr as Processo['dimensoes_risco_persistido']
+    }
+    const dOpApi = scApi.dimensoes_oportunidade
+    if (dOpApi && typeof dOpApi === 'object') {
+      patch.dimensoes_oportunidade_persistido = dOpApi as Record<
+        string,
+        unknown
+      >
     }
   }
 
@@ -1131,7 +1213,6 @@ export function MapView() {
 
   const camadasGeo = useMapStore((s) => s.camadasGeo)
   const processos = useMapStore((s) => s.processos)
-  const territorioSimuladoVisivel = useMapStore((s) => s.territorioSimuladoVisivel)
   const filtrosAlteradosCount = useMemo(
     () => countFiltrosAlterados(filtros),
     [filtros],
@@ -1810,13 +1891,6 @@ export function MapView() {
       }
       addCamadasGeoLayers(map, 'processos-fill', CAMADAS_GEO_JSON)
       syncCamadasGeoVisibility(map, useMapStore.getState().camadasGeo)
-      if (!territorioSimuladoLayersPresent(map)) {
-        addTerritorioSimuladoLayers(map, 'processos-fill')
-      }
-      syncTerritorioSimuladoVisibility(
-        map,
-        useMapStore.getState().territorioSimuladoVisivel,
-      )
       const td = tearDownProcessoPopupRef.current
       if (td) {
         attachProcessosLayerHandlers(
@@ -2931,15 +3005,6 @@ export function MapView() {
   }, [mapLoaded, camadasGeo])
 
   useEffect(() => {
-    const map = mapRef.current
-    if (!map || !mapLoaded || !map.isStyleLoaded()) return
-    if (!territorioSimuladoLayersPresent(map)) {
-      addTerritorioSimuladoLayers(map, 'processos-fill')
-    }
-    syncTerritorioSimuladoVisibility(map, territorioSimuladoVisivel)
-  }, [mapLoaded, territorioSimuladoVisivel])
-
-  useEffect(() => {
     const fn = () => setCamadaGeoTip(null)
     window.addEventListener(TERRAE_MAP_CLEAR_FLOATING_UI, fn)
     return () => window.removeEventListener(TERRAE_MAP_CLEAR_FLOATING_UI, fn)
@@ -3114,12 +3179,6 @@ export function MapView() {
         addProcessosLayers(map, geoJSON)
         addCamadasGeoLayers(map, 'processos-fill', CAMADAS_GEO_JSON)
         syncCamadasGeoVisibility(map, useMapStore.getState().camadasGeo)
-
-        addTerritorioSimuladoLayers(map, 'processos-fill')
-        syncTerritorioSimuladoVisibility(
-          map,
-          useMapStore.getState().territorioSimuladoVisivel,
-        )
 
         applySatelliteStylePostLoad(map, MAPBOX_STYLE_SATELLITE)
 

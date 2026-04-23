@@ -147,11 +147,6 @@ export interface MapStore {
   camadasGeo: Record<CamadaGeoId, boolean>
   toggleCamadaGeo: (id: CamadaGeoId) => void
 
-  /** Overlays simulados (864.231/2017 screenshot); não persistido. */
-  territorioSimuladoVisivel: boolean
-  setTerritorioSimuladoVisivel: (visivel: boolean) => void
-  toggleTerritorioSimulado: () => void
-
   setFiltro: <K extends keyof FiltrosState>(
     key: K,
     value: FiltrosState[K],
@@ -279,16 +274,6 @@ export const useMapStore = create<MapStore>()(
       intelDrillExpectedFiltrosJson: null,
 
       camadasGeo: defaultCamadasGeo(),
-
-      territorioSimuladoVisivel: true,
-
-      setTerritorioSimuladoVisivel: (visivel) =>
-        set({ territorioSimuladoVisivel: visivel }),
-
-      toggleTerritorioSimulado: () =>
-        set((s) => ({
-          territorioSimuladoVisivel: !s.territorioSimuladoVisivel,
-        })),
 
       toggleCamadaGeo: (id) =>
         set((s) => ({
