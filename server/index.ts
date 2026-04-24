@@ -4,6 +4,7 @@ import cors from 'cors'
 import express from 'express'
 
 import { POST } from '../app/api/generate-report/route'
+import { pool } from './pool'
 import {
   computeScoresAuto,
   getCapag,
@@ -245,6 +246,48 @@ app.get('/api/processo', async (req, res) => {
     })
   }
 })
+
+/**
+ * Análise territorial da dimensão Ambiental (sítios, APP hídrica, massas d’água).
+ * GET /api/processo/:numero/territorial-ambiental — use `encodeURIComponent(numero)` no
+ * segmento (ex.: 864.231%2F2017). Chama `fn_territorial_analysis_ambiental` no Postgres.
+ */
+app.get(
+  '/api/processo/:numero/territorial-ambiental',
+  async (req, res) => {
+    if (!pool) {
+      return res.status(503).json({ error: 'DATABASE_URL não configurada' })
+    }
+    const raw = req.params.numero
+    const numero = typeof raw === 'string' ? decodeURIComponent(raw.trim()) : ''
+    if (!numero) {
+      return res.status(400).json({ error: 'numero obrigatorio' })
+    }
+    try {
+      const { rows } = await pool.query(
+        'SELECT fn_territorial_analysis_ambiental($1) AS resultado',
+        [numero],
+      )
+      const resultado = rows[0]?.resultado
+      if (resultado == null) {
+        return res.status(404).json({ error: 'Análise ambiental indisponível' })
+      }
+      res.json(resultado)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      const lower = msg.toLowerCase()
+      if (
+        lower.includes('nao encontrado') ||
+        lower.includes('não encontrado') ||
+        lower.includes('not found')
+      ) {
+        return res.status(404).json({ error: msg })
+      }
+      console.error('[/api/processo/.../territorial-ambiental]', err)
+      res.status(500).json({ error: 'erro ao calcular analise ambiental' })
+    }
+  },
+)
 
 app.post('/api/generate-report', async (req, res) => {
   const r = new Request(`http://127.0.0.1/api/generate-report`, {
