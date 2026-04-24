@@ -78,6 +78,13 @@ import {
   textoExplicativoFonte,
   type SubstanceMarketState,
 } from '../../lib/substanceMarketState'
+import { useTerritorialAmbiental } from '../../hooks/useTerritorialAmbiental'
+import {
+  appOverlapTextColor,
+  distanciaTextColor,
+  formatDateBR,
+  formatDistM,
+} from '../../lib/territorialAmbientalDisplay'
 
 type AbaId =
   | 'processo'
@@ -1925,6 +1932,27 @@ export function RelatorioCompleto({
     )
   }, [processo, dados?.dados_anm?.fase_atual])
 
+  // Imediatamente após os demais hooks, antes de qualquer return — ver comentario
+  // no bloco `dados` abaixo (sem geometria, zumbi).
+  const semGeom =
+    processo != null &&
+    (!Number.isFinite(processo.lat) || !Number.isFinite(processo.lng))
+
+  const dadosInsuficientes =
+    processo != null && processo.dados_insuficientes === true
+
+  const { data: ambiental, loading: ambientalLoading, error: ambientalError } =
+    useTerritorialAmbiental(
+      processo?.numero,
+      Boolean(
+        aberto &&
+          aba === 'territorio' &&
+          processo?.numero &&
+          !dadosInsuficientes &&
+          !semGeom,
+      ),
+    )
+
   if (!processo) return null
 
   // Estado de loading/erro usa o MESMO container + header do return completo
@@ -2073,23 +2101,8 @@ export function RelatorioCompleto({
     oportunidade,
   } = dados
 
-  // Processo sem georreferenciamento SIGMINE (geom null no DB). Drawer abre
-  // normalmente com dados cadastrais/regulatórios/fiscais; análise territorial
-  // não é gerável porque depende de polígono. Usa `!Number.isFinite` para
-  // detectar o sentinel NaN injetado por `mapDbRowToMapProcesso` quando
-  // chamado com `{ permitirSemGeom: true }`.
-  const semGeom =
-    processo != null &&
-    (!Number.isFinite(processo.lat) || !Number.isFinite(processo.lng))
-
-  // Processo zumbi: requerimento de grupamento mineiro pendente. Sem geom,
-  // sem substância, sem município. Não renderizar scores/mercado/fiscal
-  // em abas que dependem desses dados. Banner vermelho no topo.
-  // Nota: dadosInsuficientes é subconjunto estrito de semGeom (todo zumbi
-  // é sem-geom, mas nem todo sem-geom é zumbi — há 1.022 processos sem
-  // SIGMINE que têm substância e município válidos).
-  const dadosInsuficientes =
-    processo != null && processo.dados_insuficientes === true
+  // `semGeom` e `dadosInsuficientes` + `useTerritorialAmbiental` estão no topo
+  // (antes de `if (!processo)` / `if (!dados)`) para respeitar a ordem dos hooks.
 
   // True quando o processo não tem Risk Score calculável. Ativa empty state
   // nas abas Risco e Oportunidade (Bloco 3a/3b). Casos cobertos:
@@ -3646,6 +3659,150 @@ export function RelatorioCompleto({
                   />
                 </>
               )}
+            </Card>
+
+            <Card>
+              <SecLabel branco>Ambiental</SecLabel>
+              {ambientalLoading ? (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '24px 0',
+                  }}
+                >
+                  <Loader2
+                    className="h-8 w-8 shrink-0 animate-spin"
+                    style={{ color: '#888780' }}
+                    aria-hidden
+                  />
+                </div>
+              ) : ambientalError ? (
+                <p
+                  style={{
+                    fontSize: FS.md,
+                    color: '#E24B4A',
+                    margin: '8px 0 0 0',
+                  }}
+                >
+                  {ambientalError.message}
+                </p>
+              ) : ambiental ? (
+                <>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 8,
+                      marginBottom: 8,
+                    }}
+                  >
+                    <span
+                      style={{ fontSize: FS.md, color: '#D3D1C7', flex: 1 }}
+                    >
+                      APP Hídrica
+                    </span>
+                    <span
+                      style={{
+                        fontSize: FS.md,
+                        fontWeight: 500,
+                        color: appOverlapTextColor(ambiental.app_hidrica.overlap_pct),
+                        flexShrink: 0,
+                        textAlign: 'right',
+                      }}
+                    >
+                      {ambiental.app_hidrica.overlap_pct > 0
+                        ? `${ambiental.app_hidrica.overlap_pct.toFixed(2)}% sobreposto`
+                        : `a ${formatDistM(ambiental.app_hidrica.distancia_m)}`}
+                    </span>
+                  </div>
+                  {ambiental.sitios_arqueologicos.slice(0, 3).map((s) => (
+                    <div
+                      key={s.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        marginBottom: 8,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: FS.md,
+                          color: '#D3D1C7',
+                          flex: 1,
+                          minWidth: 0,
+                        }}
+                      >
+                        Sítio: {s.nome?.trim() || s.tipo_bem || '—'}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: FS.md,
+                          fontWeight: 500,
+                          color: distanciaTextColor(s.distancia_km),
+                          flexShrink: 0,
+                        }}
+                      >
+                        {s.distancia_km.toFixed(2).replace('.', ',')} km
+                      </span>
+                    </div>
+                  ))}
+                  {ambiental.massas_agua.slice(0, 3).map((m) => (
+                    <div
+                      key={m.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        marginBottom: 8,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: FS.md,
+                          color: '#D3D1C7',
+                          flex: 1,
+                          minWidth: 0,
+                        }}
+                      >
+                        Massa:{' '}
+                        {m.nome?.trim() ||
+                          (m.area_ha != null && !Number.isNaN(m.area_ha)
+                            ? `${m.area_ha.toFixed(1)} ha`
+                            : '—')}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: FS.md,
+                          fontWeight: 500,
+                          color: distanciaTextColor(m.distancia_km),
+                          flexShrink: 0,
+                        }}
+                      >
+                        {m.distancia_km.toFixed(2).replace('.', ',')} km
+                      </span>
+                    </div>
+                  ))}
+                  <span
+                    style={{
+                      display: 'block',
+                      marginTop: FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX,
+                      fontSize: 10,
+                      lineHeight: 1.45,
+                      color: '#5F5E5A',
+                    }}
+                  >
+                    Atualizado em{' '}
+                    {formatDateBR(ambiental.calculado_em)} · Fontes: IPHAN ·
+                    SNIRH-ANA · TERRADAR
+                  </span>
+                </>
+              ) : null}
             </Card>
               </>
             )}

@@ -1,5 +1,6 @@
 import type { MasterSubstancia } from './reportTypes'
 import type { RespostaBusca } from '../types/busca'
+import type { TerritorialAmbientalResponse } from '../types/territorialAmbiental'
 
 // ── Tipos do scores_auto (do scoreEngine) ──
 export interface ScoreAutoResult {
@@ -195,4 +196,22 @@ export async function buscarProcessos(
     }
     return { ok: false, tipo: 'vazio', total: 0, data: [], error: String(e) }
   }
+}
+
+export async function fetchTerritorialAmbiental(
+  numero: string,
+  signal?: AbortSignal,
+): Promise<TerritorialAmbientalResponse> {
+  const encoded = encodeURIComponent(numero.trim())
+  const res = await fetch(
+    `/api/processo/${encoded}/territorial-ambiental`,
+    { signal },
+  )
+  if (!res.ok) {
+    if (res.status === 404) {
+      throw new Error(`Processo ${numero} nao encontrado`)
+    }
+    throw new Error(`HTTP ${res.status} em territorial-ambiental`)
+  }
+  return (await res.json()) as TerritorialAmbientalResponse
 }
