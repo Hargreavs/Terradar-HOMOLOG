@@ -2353,7 +2353,7 @@ export function MapView() {
     bbox: viewportBbox,
     zoom: viewportZoom,
     limit: getViewportProcessosLimit(viewportZoom ?? 5),
-    debounceMs: 800,
+    debounceMs: 200,
     exibirProcessosAtivos: filtros.exibirProcessosAtivos,
     exibirProcessosInativos: filtros.exibirProcessosInativos,
   })
