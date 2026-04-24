@@ -3894,8 +3894,9 @@ export function RelatorioCompleto({
                   <span
                     style={{
                       display: 'block',
+                      textAlign: 'right',
                       marginTop: FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX,
-                      fontSize: 10,
+                      fontSize: 11,
                       lineHeight: 1.45,
                       color: '#5F5E5A',
                     }}
