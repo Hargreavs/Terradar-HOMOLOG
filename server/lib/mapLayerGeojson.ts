@@ -374,3 +374,464 @@ export async function fetchMapLayerAppHidrica(
     await pool.query(sql, [minx, miny, maxx, maxy, limit, minFaixa]),
   )
 }
+function ucGrupoExpr(apAlias: string): string {
+  return `CASE
+          WHEN ${apAlias}.categoria ILIKE '%Integral%' THEN 'PI'
+          WHEN ${apAlias}.categoria ILIKE '%Sustent%' THEN 'US'
+          ELSE NULL
+        END`
+}
+
+export async function fetchMapLayerTi(
+  pool: Pool,
+  minx: number,
+  miny: number,
+  maxx: number,
+  maxy: number,
+  limit: number,
+): Promise<Record<string, unknown>> {
+  const sql = `
+    WITH fil AS (
+      SELECT
+        ap.id,
+        ap.nome,
+        ap.categoria,
+        ap.orgao,
+        ap.uf,
+        ap.geom
+      FROM geo_areas_protegidas ap
+      WHERE ap.tipo = 'TI'
+        AND ap.geom IS NOT NULL
+        AND ap.geom && ST_Transform(
+          ST_MakeEnvelope($1::float8, $2::float8, $3::float8, $4::float8, 4326),
+          4674
+        )
+      ORDER BY ap.id
+      LIMIT $5
+    )
+    SELECT jsonb_build_object(
+      'type', 'FeatureCollection',
+      'count', (SELECT count(*)::int FROM fil),
+      'truncated', (SELECT (SELECT count(*)::int FROM fil) >= $5),
+      'features', COALESCE(
+        (SELECT jsonb_agg(
+          jsonb_build_object(
+            'type', 'Feature',
+            'id', f.id::text,
+            'properties', jsonb_build_object(
+              'id', f.id::text,
+              'feature_id', f.id,
+              'nome', f.nome,
+              'categoria', f.categoria,
+              'orgao', f.orgao,
+              'uf', f.uf
+            ),
+            'geometry', ST_AsGeoJSON(
+              ST_SimplifyPreserveTopology(ST_Transform(f.geom, 4326), ${SIMPLIFY_DEG})
+            )::jsonb
+          )
+          ORDER BY f.id
+        )
+        FROM fil f),
+        '[]'::jsonb
+      )
+    ) AS geojson
+  `
+  return rowGeojson(await pool.query(sql, [minx, miny, maxx, maxy, limit]))
+}
+
+export async function fetchMapLayerUc(
+  pool: Pool,
+  minx: number,
+  miny: number,
+  maxx: number,
+  maxy: number,
+  limit: number,
+): Promise<Record<string, unknown>> {
+  const sql = `
+    WITH fil AS (
+      SELECT
+        ap.id,
+        ap.nome,
+        ap.categoria,
+        ap.orgao,
+        ap.uf,
+        ap.geom,
+        ${ucGrupoExpr('ap')} AS grupo
+      FROM geo_areas_protegidas ap
+      WHERE ap.tipo = 'UC'
+        AND ap.geom IS NOT NULL
+        AND ap.geom && ST_Transform(
+          ST_MakeEnvelope($1::float8, $2::float8, $3::float8, $4::float8, 4326),
+          4674
+        )
+      ORDER BY ap.id
+      LIMIT $5
+    )
+    SELECT jsonb_build_object(
+      'type', 'FeatureCollection',
+      'count', (SELECT count(*)::int FROM fil),
+      'truncated', (SELECT (SELECT count(*)::int FROM fil) >= $5),
+      'features', COALESCE(
+        (SELECT jsonb_agg(
+          jsonb_build_object(
+            'type', 'Feature',
+            'id', f.id::text,
+            'properties', jsonb_build_object(
+              'id', f.id::text,
+              'feature_id', f.id,
+              'nome', f.nome,
+              'categoria', f.categoria,
+              'grupo', f.grupo,
+              'orgao', f.orgao,
+              'uf', f.uf
+            ),
+            'geometry', ST_AsGeoJSON(
+              ST_SimplifyPreserveTopology(ST_Transform(f.geom, 4326), ${SIMPLIFY_DEG})
+            )::jsonb
+          )
+          ORDER BY f.id
+        )
+        FROM fil f),
+        '[]'::jsonb
+      )
+    ) AS geojson
+  `
+  return rowGeojson(await pool.query(sql, [minx, miny, maxx, maxy, limit]))
+}
+
+export async function fetchMapLayerUcPi(
+  pool: Pool,
+  minx: number,
+  miny: number,
+  maxx: number,
+  maxy: number,
+  limit: number,
+): Promise<Record<string, unknown>> {
+  const sql = `
+    WITH fil AS (
+      SELECT
+        ap.id,
+        ap.nome,
+        ap.categoria,
+        ap.orgao,
+        ap.uf,
+        ap.geom
+      FROM geo_areas_protegidas ap
+      WHERE ap.tipo = 'UC'
+        AND ap.categoria ILIKE '%Integral%'
+        AND ap.geom IS NOT NULL
+        AND ap.geom && ST_Transform(
+          ST_MakeEnvelope($1::float8, $2::float8, $3::float8, $4::float8, 4326),
+          4674
+        )
+      ORDER BY ap.id
+      LIMIT $5
+    )
+    SELECT jsonb_build_object(
+      'type', 'FeatureCollection',
+      'count', (SELECT count(*)::int FROM fil),
+      'truncated', (SELECT (SELECT count(*)::int FROM fil) >= $5),
+      'features', COALESCE(
+        (SELECT jsonb_agg(
+          jsonb_build_object(
+            'type', 'Feature',
+            'id', f.id::text,
+            'properties', jsonb_build_object(
+              'id', f.id::text,
+              'feature_id', f.id,
+              'nome', f.nome,
+              'categoria', f.categoria,
+              'grupo', 'PI',
+              'orgao', f.orgao,
+              'uf', f.uf
+            ),
+            'geometry', ST_AsGeoJSON(
+              ST_SimplifyPreserveTopology(ST_Transform(f.geom, 4326), ${SIMPLIFY_DEG})
+            )::jsonb
+          )
+          ORDER BY f.id
+        )
+        FROM fil f),
+        '[]'::jsonb
+      )
+    ) AS geojson
+  `
+  return rowGeojson(await pool.query(sql, [minx, miny, maxx, maxy, limit]))
+}
+
+export async function fetchMapLayerUcUs(
+  pool: Pool,
+  minx: number,
+  miny: number,
+  maxx: number,
+  maxy: number,
+  limit: number,
+): Promise<Record<string, unknown>> {
+  const sql = `
+    WITH fil AS (
+      SELECT
+        ap.id,
+        ap.nome,
+        ap.categoria,
+        ap.orgao,
+        ap.uf,
+        ap.geom
+      FROM geo_areas_protegidas ap
+      WHERE ap.tipo = 'UC'
+        AND ap.categoria ILIKE '%Sustent%'
+        AND ap.geom IS NOT NULL
+        AND ap.geom && ST_Transform(
+          ST_MakeEnvelope($1::float8, $2::float8, $3::float8, $4::float8, 4326),
+          4674
+        )
+      ORDER BY ap.id
+      LIMIT $5
+    )
+    SELECT jsonb_build_object(
+      'type', 'FeatureCollection',
+      'count', (SELECT count(*)::int FROM fil),
+      'truncated', (SELECT (SELECT count(*)::int FROM fil) >= $5),
+      'features', COALESCE(
+        (SELECT jsonb_agg(
+          jsonb_build_object(
+            'type', 'Feature',
+            'id', f.id::text,
+            'properties', jsonb_build_object(
+              'id', f.id::text,
+              'feature_id', f.id,
+              'nome', f.nome,
+              'categoria', f.categoria,
+              'grupo', 'US',
+              'orgao', f.orgao,
+              'uf', f.uf
+            ),
+            'geometry', ST_AsGeoJSON(
+              ST_SimplifyPreserveTopology(ST_Transform(f.geom, 4326), ${SIMPLIFY_DEG})
+            )::jsonb
+          )
+          ORDER BY f.id
+        )
+        FROM fil f),
+        '[]'::jsonb
+      )
+    ) AS geojson
+  `
+  return rowGeojson(await pool.query(sql, [minx, miny, maxx, maxy, limit]))
+}
+
+export async function fetchMapLayerQuilombola(
+  pool: Pool,
+  minx: number,
+  miny: number,
+  maxx: number,
+  maxy: number,
+  limit: number,
+): Promise<Record<string, unknown>> {
+  const sql = `
+    WITH fil AS (
+      SELECT
+        ap.id,
+        ap.nome,
+        ap.categoria,
+        ap.orgao,
+        ap.uf,
+        ap.geom
+      FROM geo_areas_protegidas ap
+      WHERE ap.tipo = 'QUILOMBOLA'
+        AND ap.geom IS NOT NULL
+        AND ap.geom && ST_Transform(
+          ST_MakeEnvelope($1::float8, $2::float8, $3::float8, $4::float8, 4326),
+          4674
+        )
+      ORDER BY ap.id
+      LIMIT $5
+    )
+    SELECT jsonb_build_object(
+      'type', 'FeatureCollection',
+      'count', (SELECT count(*)::int FROM fil),
+      'truncated', (SELECT (SELECT count(*)::int FROM fil) >= $5),
+      'features', COALESCE(
+        (SELECT jsonb_agg(
+          jsonb_build_object(
+            'type', 'Feature',
+            'id', f.id::text,
+            'properties', jsonb_build_object(
+              'id', f.id::text,
+              'feature_id', f.id,
+              'nome', f.nome,
+              'categoria', f.categoria,
+              'orgao', f.orgao,
+              'uf', f.uf
+            ),
+            'geometry', ST_AsGeoJSON(
+              ST_SimplifyPreserveTopology(ST_Transform(f.geom, 4326), ${SIMPLIFY_DEG})
+            )::jsonb
+          )
+          ORDER BY f.id
+        )
+        FROM fil f),
+        '[]'::jsonb
+      )
+    ) AS geojson
+  `
+  return rowGeojson(await pool.query(sql, [minx, miny, maxx, maxy, limit]))
+}
+
+export async function fetchMapLayerAquifero(
+  pool: Pool,
+  minx: number,
+  miny: number,
+  maxx: number,
+  maxy: number,
+  limit: number,
+): Promise<Record<string, unknown>> {
+  const sql = `
+    WITH fil AS (
+      SELECT
+        aq.id,
+        aq.nome,
+        aq.tipo,
+        aq.geom
+      FROM geo_aquiferos aq
+      WHERE aq.geom IS NOT NULL
+        AND aq.geom && ST_Transform(
+          ST_MakeEnvelope($1::float8, $2::float8, $3::float8, $4::float8, 4326),
+          4674
+        )
+      ORDER BY aq.id
+      LIMIT $5
+    )
+    SELECT jsonb_build_object(
+      'type', 'FeatureCollection',
+      'count', (SELECT count(*)::int FROM fil),
+      'truncated', (SELECT (SELECT count(*)::int FROM fil) >= $5),
+      'features', COALESCE(
+        (SELECT jsonb_agg(
+          jsonb_build_object(
+            'type', 'Feature',
+            'id', f.id::text,
+            'properties', jsonb_build_object(
+              'id', f.id::text,
+              'feature_id', f.id,
+              'nome', f.nome,
+              'tipo', f.tipo
+            ),
+            'geometry', ST_AsGeoJSON(
+              ST_SimplifyPreserveTopology(ST_Transform(f.geom, 4326), ${SIMPLIFY_DEG})
+            )::jsonb
+          )
+          ORDER BY f.id
+        )
+        FROM fil f),
+        '[]'::jsonb
+      )
+    ) AS geojson
+  `
+  return rowGeojson(await pool.query(sql, [minx, miny, maxx, maxy, limit]))
+}
+
+export async function fetchMapLayerBioma(
+  pool: Pool,
+  minx: number,
+  miny: number,
+  maxx: number,
+  maxy: number,
+  limit: number,
+): Promise<Record<string, unknown>> {
+  const sql = `
+    WITH fil AS (
+      SELECT
+        b.id,
+        b.nome,
+        b.geom
+      FROM geo_biomas b
+      WHERE b.geom IS NOT NULL
+        AND b.geom && ST_Transform(
+          ST_MakeEnvelope($1::float8, $2::float8, $3::float8, $4::float8, 4326),
+          4674
+        )
+      ORDER BY b.nome
+      LIMIT $5
+    )
+    SELECT jsonb_build_object(
+      'type', 'FeatureCollection',
+      'count', (SELECT count(*)::int FROM fil),
+      'truncated', (SELECT (SELECT count(*)::int FROM fil) >= $5),
+      'features', COALESCE(
+        (SELECT jsonb_agg(
+          jsonb_build_object(
+            'type', 'Feature',
+            'id', f.id::text,
+            'properties', jsonb_build_object(
+              'id', f.id::text,
+              'feature_id', f.id,
+              'nome', f.nome
+            ),
+            'geometry', ST_AsGeoJSON(
+              ST_SimplifyPreserveTopology(ST_Transform(f.geom, 4326), ${SIMPLIFY_DEG})
+            )::jsonb
+          )
+          ORDER BY f.nome
+        )
+        FROM fil f),
+        '[]'::jsonb
+      )
+    ) AS geojson
+  `
+  return rowGeojson(await pool.query(sql, [minx, miny, maxx, maxy, limit]))
+}
+
+export async function fetchMapLayerHidrovia(
+  pool: Pool,
+  minx: number,
+  miny: number,
+  maxx: number,
+  maxy: number,
+  limit: number,
+): Promise<Record<string, unknown>> {
+  const sql = `
+    WITH fil AS (
+      SELECT
+        gi.id,
+        gi.nome,
+        COALESCE(gi.categoria, '') AS categoria,
+        gi.geom
+      FROM geo_infraestrutura gi
+      WHERE gi.tipo = 'HIDROVIA'
+        AND gi.geom IS NOT NULL
+        AND gi.geom && ST_Transform(
+          ST_MakeEnvelope($1::float8, $2::float8, $3::float8, $4::float8, 4326),
+          4674
+        )
+      ORDER BY gi.id
+      LIMIT $5
+    )
+    SELECT jsonb_build_object(
+      'type', 'FeatureCollection',
+      'count', (SELECT count(*)::int FROM fil),
+      'truncated', (SELECT (SELECT count(*)::int FROM fil) >= $5),
+      'features', COALESCE(
+        (SELECT jsonb_agg(
+          jsonb_build_object(
+            'type', 'Feature',
+            'id', f.id::text,
+            'properties', jsonb_build_object(
+              'id', f.id::text,
+              'feature_id', f.id,
+              'nome', f.nome,
+              'categoria', f.categoria
+            ),
+            'geometry', ST_AsGeoJSON(
+              ST_SimplifyPreserveTopology(ST_Transform(f.geom, 4326), ${SIMPLIFY_DEG})
+            )::jsonb
+          )
+          ORDER BY f.id
+        )
+        FROM fil f),
+        '[]'::jsonb
+      )
+    ) AS geojson
+  `
+  return rowGeojson(await pool.query(sql, [minx, miny, maxx, maxy, limit]))
+}

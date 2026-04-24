@@ -1,11 +1,19 @@
 import { Router } from 'express'
 import {
   fetchMapLayerAppHidrica,
+  fetchMapLayerAquifero,
+  fetchMapLayerBioma,
   fetchMapLayerHidroMassa,
   fetchMapLayerHidroTrecho,
+  fetchMapLayerHidrovia,
   fetchMapLayerPorto,
+  fetchMapLayerQuilombola,
   fetchMapLayerRodovia,
   fetchMapLayerSitio,
+  fetchMapLayerTi,
+  fetchMapLayerUc,
+  fetchMapLayerUcPi,
+  fetchMapLayerUcUs,
 } from '../lib/mapLayerGeojson'
 import { pool } from '../pool'
 import { supabase } from '../supabase'
@@ -18,6 +26,7 @@ const NUP_ANM_REGEX = /^\d{3}\.\d{3}\/\d{4}$/
 /** IDs alinhados ao frontend (`TipoCamada` / useMapLayer). */
 const VALID_TIPOS = new Set([
   'ti',
+  'uc',
   'uc_pi',
   'uc_us',
   'quilombola',
@@ -109,6 +118,43 @@ router.get('/api/map/layers/:tipo', async (req, res) => {
         maxx,
         maxy,
         minFaixa,
+        limit,
+      )
+    } else if (tipoRaw === 'ti') {
+      geojson = await fetchMapLayerTi(pool, minx, miny, maxx, maxy, limit)
+    } else if (tipoRaw === 'uc') {
+      geojson = await fetchMapLayerUc(pool, minx, miny, maxx, maxy, limit)
+    } else if (tipoRaw === 'uc_pi') {
+      geojson = await fetchMapLayerUcPi(pool, minx, miny, maxx, maxy, limit)
+    } else if (tipoRaw === 'uc_us') {
+      geojson = await fetchMapLayerUcUs(pool, minx, miny, maxx, maxy, limit)
+    } else if (tipoRaw === 'quilombola') {
+      geojson = await fetchMapLayerQuilombola(
+        pool,
+        minx,
+        miny,
+        maxx,
+        maxy,
+        limit,
+      )
+    } else if (tipoRaw === 'aquifero') {
+      geojson = await fetchMapLayerAquifero(
+        pool,
+        minx,
+        miny,
+        maxx,
+        maxy,
+        limit,
+      )
+    } else if (tipoRaw === 'bioma') {
+      geojson = await fetchMapLayerBioma(pool, minx, miny, maxx, maxy, limit)
+    } else if (tipoRaw === 'hidrovia') {
+      geojson = await fetchMapLayerHidrovia(
+        pool,
+        minx,
+        miny,
+        maxx,
+        maxy,
         limit,
       )
     } else {
