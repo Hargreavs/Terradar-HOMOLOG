@@ -1930,6 +1930,27 @@ export function RelatorioCompleto({
     )
   }, [processo, dados?.dados_anm?.fase_atual])
 
+  // Imediatamente após os demais hooks, antes de qualquer return — ver comentario
+  // no bloco `dados` abaixo (sem geometria, zumbi).
+  const semGeom =
+    processo != null &&
+    (!Number.isFinite(processo.lat) || !Number.isFinite(processo.lng))
+
+  const dadosInsuficientes =
+    processo != null && processo.dados_insuficientes === true
+
+  const { data: ambiental, loading: ambientalLoading, error: ambientalError } =
+    useTerritorialAmbiental(
+      processo?.numero,
+      Boolean(
+        aberto &&
+          aba === 'territorio' &&
+          processo?.numero &&
+          !dadosInsuficientes &&
+          !semGeom,
+      ),
+    )
+
   if (!processo) return null
 
   // Estado de loading/erro usa o MESMO container + header do return completo
@@ -2078,35 +2099,8 @@ export function RelatorioCompleto({
     oportunidade,
   } = dados
 
-  // Processo sem georreferenciamento SIGMINE (geom null no DB). Drawer abre
-  // normalmente com dados cadastrais/regulatórios/fiscais; análise territorial
-  // não é gerável porque depende de polígono. Usa `!Number.isFinite` para
-  // detectar o sentinel NaN injetado por `mapDbRowToMapProcesso` quando
-  // chamado com `{ permitirSemGeom: true }`.
-  const semGeom =
-    processo != null &&
-    (!Number.isFinite(processo.lat) || !Number.isFinite(processo.lng))
-
-  // Processo zumbi: requerimento de grupamento mineiro pendente. Sem geom,
-  // sem substância, sem município. Não renderizar scores/mercado/fiscal
-  // em abas que dependem desses dados. Banner vermelho no topo.
-  // Nota: dadosInsuficientes é subconjunto estrito de semGeom (todo zumbi
-  // é sem-geom, mas nem todo sem-geom é zumbi — há 1.022 processos sem
-  // SIGMINE que têm substância e município válidos).
-  const dadosInsuficientes =
-    processo != null && processo.dados_insuficientes === true
-
-  const { data: ambiental, loading: ambientalLoading, error: ambientalError } =
-    useTerritorialAmbiental(
-      processo?.numero,
-      Boolean(
-        aberto &&
-          aba === 'territorio' &&
-          processo?.numero &&
-          !dadosInsuficientes &&
-          !semGeom,
-      ),
-    )
+  // `semGeom` e `dadosInsuficientes` + `useTerritorialAmbiental` estão no topo
+  // (antes de `if (!processo)` / `if (!dados)`) para respeitar a ordem dos hooks.
 
   // True quando o processo não tem Risk Score calculável. Ativa empty state
   // nas abas Risco e Oportunidade (Bloco 3a/3b). Casos cobertos:
