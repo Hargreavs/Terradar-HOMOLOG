@@ -83,7 +83,6 @@ import {
   appOverlapTextColor,
   distanciaTextColor,
   formatDateBR,
-  formatDistM,
 } from '../../lib/territorialAmbientalDisplay'
 
 type AbaId =
@@ -479,6 +478,15 @@ const AREAS_SENSIVEIS_DIST_TOOLTIP =
 
 const AQUIFERO_HIDROGEO_TOOLTIP =
   'Dados de aquífero (CPRM/SGB): nome, unidade hidrogeológica e sobreposição com o polígono. Estudos hidrogeológicos específicos serão exigidos no licenciamento ambiental.'
+
+const AMBIENTAL_TOOLTIP_APP_HIDRICA =
+  'Área de Preservação Permanente. Faixa de proteção ao redor de rios, lagos e nascentes exigida pelo Código Florestal (Lei 12.651/2012). Sobreposição com processo minerário impede lavra sem compensação ambiental.'
+
+const AMBIENTAL_TOOLTIP_ARQUEOLOGIA =
+  'Sítios arqueológicos registrados pelo IPHAN. Processos próximos exigem Estudo de Impacto Arqueológico (EIA-Arqueo) como condicionante de licenciamento ambiental.'
+
+const AMBIENTAL_TOOLTIP_CORPO_DAGUA =
+  'Lagos, reservatórios e barragens da base BHO/SNIRH-ANA. Define faixas APP e risco de impacto hídrico no processo.'
 
 const SIGLAS_UC_COMUNS = [
   'APA',
@@ -3700,9 +3708,28 @@ export function RelatorioCompleto({
                     }}
                   >
                     <span
-                      style={{ fontSize: FS.md, color: '#D3D1C7', flex: 1 }}
+                      style={{
+                        fontSize: FS.md,
+                        color: '#D3D1C7',
+                        flex: 1,
+                        minWidth: 0,
+                      }}
                     >
-                      APP Hídrica
+                      <CamadaTooltipHover
+                        texto={AMBIENTAL_TOOLTIP_APP_HIDRICA}
+                        maxWidthPx={300}
+                        inlineWrap
+                      >
+                        <span
+                          style={{
+                            cursor: 'help',
+                            textDecoration: 'underline dotted',
+                            textUnderlineOffset: 2,
+                          }}
+                        >
+                          APP Hídrica
+                        </span>
+                      </CamadaTooltipHover>
                     </span>
                     <span
                       style={{
@@ -3715,10 +3742,15 @@ export function RelatorioCompleto({
                     >
                       {ambiental.app_hidrica.overlap_pct > 0
                         ? `${ambiental.app_hidrica.overlap_pct.toFixed(2)}% sobreposto`
-                        : `a ${formatDistM(ambiental.app_hidrica.distancia_m)}`}
+                        : 'Não verificada'}
                     </span>
                   </div>
-                  {ambiental.sitios_arqueologicos.slice(0, 3).map((s) => (
+                  {ambiental.sitios_arqueologicos
+                    .slice(0, 3)
+                    .map((s, sitioIdx) => {
+                      const nomeSitio =
+                        s.nome?.trim() || s.tipo_bem || 'Sem nome'
+                      return (
                     <div
                       key={s.id}
                       style={{
@@ -3737,7 +3769,28 @@ export function RelatorioCompleto({
                           minWidth: 0,
                         }}
                       >
-                        Sítio: {s.nome?.trim() || s.tipo_bem || '—'}
+                        {sitioIdx === 0 ? (
+                          <>
+                            <CamadaTooltipHover
+                              texto={AMBIENTAL_TOOLTIP_ARQUEOLOGIA}
+                              maxWidthPx={300}
+                              inlineWrap
+                            >
+                              <span
+                                style={{
+                                  cursor: 'help',
+                                  textDecoration: 'underline dotted',
+                                  textUnderlineOffset: 2,
+                                }}
+                              >
+                                Arqueologia
+                              </span>
+                            </CamadaTooltipHover>
+                            {`: ${nomeSitio}`}
+                          </>
+                        ) : (
+                          `Arqueologia: ${nomeSitio}`
+                        )}
                       </span>
                       <span
                         style={{
@@ -3750,8 +3803,61 @@ export function RelatorioCompleto({
                         {s.distancia_km.toFixed(2).replace('.', ',')} km
                       </span>
                     </div>
-                  ))}
-                  {ambiental.massas_agua.slice(0, 3).map((m) => (
+                      )
+                    })}
+                  {ambiental.massas_agua
+                    .slice(0, 3)
+                    .map((m, massaIdx) => {
+                      const nomeM = m.nome?.trim()
+                      const corpoStr = (withTooltip: boolean) =>
+                        nomeM
+                          ? withTooltip
+                            ? (
+                                <>
+                                  <CamadaTooltipHover
+                                    texto={AMBIENTAL_TOOLTIP_CORPO_DAGUA}
+                                    maxWidthPx={300}
+                                    inlineWrap
+                                  >
+                                    <span
+                                      style={{
+                                        cursor: 'help',
+                                        textDecoration: 'underline dotted',
+                                        textUnderlineOffset: 2,
+                                      }}
+                                    >
+                                      {`Corpo d'água`}
+                                    </span>
+                                  </CamadaTooltipHover>
+                                  {`: ${nomeM}`}
+                                </>
+                              )
+                            : `Corpo d'água: ${nomeM}`
+                          : m.area_ha != null && !Number.isNaN(m.area_ha)
+                            ? withTooltip
+                              ? (
+                                  <>
+                                    <CamadaTooltipHover
+                                      texto={AMBIENTAL_TOOLTIP_CORPO_DAGUA}
+                                      maxWidthPx={300}
+                                      inlineWrap
+                                    >
+                                      <span
+                                        style={{
+                                          cursor: 'help',
+                                          textDecoration: 'underline dotted',
+                                          textUnderlineOffset: 2,
+                                        }}
+                                      >
+                                        {`Corpo d'água`}
+                                      </span>
+                                    </CamadaTooltipHover>
+                                    {` (${m.area_ha.toFixed(1)} ha)`}
+                                  </>
+                                )
+                              : `Corpo d'água (${m.area_ha.toFixed(1)} ha)`
+                            : "Corpo d'água"
+                      return (
                     <div
                       key={m.id}
                       style={{
@@ -3770,11 +3876,7 @@ export function RelatorioCompleto({
                           minWidth: 0,
                         }}
                       >
-                        Massa:{' '}
-                        {m.nome?.trim() ||
-                          (m.area_ha != null && !Number.isNaN(m.area_ha)
-                            ? `${m.area_ha.toFixed(1)} ha`
-                            : '—')}
+                        {corpoStr(massaIdx === 0)}
                       </span>
                       <span
                         style={{
@@ -3787,7 +3889,8 @@ export function RelatorioCompleto({
                         {m.distancia_km.toFixed(2).replace('.', ',')} km
                       </span>
                     </div>
-                  ))}
+                      )
+                    })}
                   <span
                     style={{
                       display: 'block',

@@ -1,11 +1,9 @@
 /**
- * Cor do overlap APP hidrica: 0% esmeralda; (0,5%] amarelo; (5,20%] laranja; >20% vermelho.
+ * Sobreposicao APP: 0% cinza; qualquer >0 laranja-alerta (alinhado a SOBREPOSTO do Aquifero #EF9F27).
  */
 export function appOverlapTextColor(pct: number): string {
-  if (pct === 0) return '#34d399'
-  if (pct > 0 && pct <= 5) return '#facc15'
-  if (pct > 5 && pct <= 20) return '#fb923c'
-  return '#f87171'
+  if (pct === 0) return '#9ca3af'
+  return '#EF9F27'
 }
 
 /**
