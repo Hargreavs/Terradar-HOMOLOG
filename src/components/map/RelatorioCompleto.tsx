@@ -81,6 +81,8 @@ import {
 import { useTerritorialAmbiental } from '../../hooks/useTerritorialAmbiental'
 import {
   appOverlapTextColor,
+  distanciaTextColor,
+  formatDateBR,
   formatDistM,
 } from '../../lib/territorialAmbientalDisplay'
 
@@ -3741,7 +3743,7 @@ export function RelatorioCompleto({
                         style={{
                           fontSize: FS.md,
                           fontWeight: 500,
-                          color: '#4ade80',
+                          color: distanciaTextColor(s.distancia_km),
                           flexShrink: 0,
                         }}
                       >
@@ -3778,7 +3780,7 @@ export function RelatorioCompleto({
                         style={{
                           fontSize: FS.md,
                           fontWeight: 500,
-                          color: '#4ade80',
+                          color: distanciaTextColor(m.distancia_km),
                           flexShrink: 0,
                         }}
                       >
@@ -3796,7 +3798,7 @@ export function RelatorioCompleto({
                     }}
                   >
                     Atualizado em{' '}
-                    {formatarDataIsoPtBr(ambiental.calculado_em)} · Fontes: IPHAN ·
+                    {formatDateBR(ambiental.calculado_em)} · Fontes: IPHAN ·
                     SNIRH-ANA · TERRADAR
                   </span>
                 </>
