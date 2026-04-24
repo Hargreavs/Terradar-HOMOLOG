@@ -376,8 +376,8 @@ export async function fetchMapLayerAppHidrica(
 }
 function ucGrupoExpr(apAlias: string): string {
   return `CASE
-          WHEN ${apAlias}.categoria ILIKE '%Integral%' THEN 'PI'
-          WHEN ${apAlias}.categoria ILIKE '%Sustent%' THEN 'US'
+          WHEN ${apAlias}.categoria LIKE 'PI %' THEN 'PI'
+          WHEN ${apAlias}.categoria LIKE 'US %' THEN 'US'
           ELSE NULL
         END`
 }
@@ -519,7 +519,7 @@ export async function fetchMapLayerUcPi(
         ap.geom
       FROM geo_areas_protegidas ap
       WHERE ap.tipo = 'UC'
-        AND ap.categoria ILIKE '%Integral%'
+        AND ap.categoria LIKE 'PI %'
         AND ap.geom IS NOT NULL
         AND ap.geom && ST_Transform(
           ST_MakeEnvelope($1::float8, $2::float8, $3::float8, $4::float8, 4326),
@@ -579,7 +579,7 @@ export async function fetchMapLayerUcUs(
         ap.geom
       FROM geo_areas_protegidas ap
       WHERE ap.tipo = 'UC'
-        AND ap.categoria ILIKE '%Sustent%'
+        AND ap.categoria LIKE 'US %'
         AND ap.geom IS NOT NULL
         AND ap.geom && ST_Transform(
           ST_MakeEnvelope($1::float8, $2::float8, $3::float8, $4::float8, 4326),
