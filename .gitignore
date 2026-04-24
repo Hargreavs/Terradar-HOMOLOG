@@ -31,3 +31,5 @@ tmp/
 data/
 node_modules/
 .env.local
+# Notas do Cursor (efemeras)
+CURSOR_*.md
