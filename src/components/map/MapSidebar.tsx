@@ -6,11 +6,14 @@ import {
   ChevronRight,
   Droplets,
   Home,
+  Landmark,
   Leaf,
   Search,
+  ShieldCheck,
   TrainTrack,
   TreePine,
   Users,
+  Waves,
   X,
 } from 'lucide-react'
 import {
@@ -98,10 +101,19 @@ const CAMADAS_SUB_LABEL: CSSProperties = {
 
 const CAMADAS_GEO_GROUPS: { title: string; ids: CamadaGeoId[] }[] = [
   {
-    title: 'ÁREAS PROTEGIDAS',
-    ids: ['terras_indigenas', 'unidades_conservacao', 'quilombolas', 'biomas'],
+    title: 'PROTEÇÕES LEGAIS',
+    ids: [
+      'terras_indigenas',
+      'unidades_conservacao',
+      'quilombolas',
+      'biomas',
+      'sitios_arqueologicos',
+    ],
   },
-  { title: 'RECURSOS HÍDRICOS', ids: ['aquiferos'] },
+  {
+    title: 'RECURSOS HÍDRICOS',
+    ids: ['aquiferos', 'massas_agua', 'rede_hidrografica', 'app_hidrica'],
+  },
   { title: 'INFRAESTRUTURA', ids: ['rodovias', 'ferrovias', 'hidrovias', 'portos'] },
 ]
 
@@ -137,7 +149,15 @@ const CAMADAS_GEO_ITEM: Record<
     Icon: TreePine,
   },
   quilombolas: { label: 'Quilombolas', color: '#C4915A', Icon: Home },
+  sitios_arqueologicos: {
+    label: 'Sítios Arqueológicos',
+    color: '#8B5A3C',
+    Icon: Landmark,
+  },
   aquiferos: { label: 'Aquíferos', color: '#4A90B8', Icon: Droplets },
+  massas_agua: { label: "Massas d'Água", color: '#4DA6D9', Icon: Droplets },
+  rede_hidrografica: { label: 'Rede Hidrográfica', color: '#2E8BC0', Icon: Waves },
+  app_hidrica: { label: 'APP Hídrica', color: '#2E7D5B', Icon: ShieldCheck },
   biomas: { label: 'Biomas', color: '#8FA668', Icon: Leaf },
   rodovias: { label: 'Rodovias', color: '#D9A55B', Icon: TrainTrack },
   ferrovias: { label: 'Ferrovias', color: '#B8B8B8', Icon: TrainTrack },
@@ -1196,6 +1216,14 @@ export function MapSidebar({
                     </button>
                   )
                 })}
+                {g.title === 'PROTEÇÕES LEGAIS' ? (
+                  <>
+                    {/* TODO: Cavernas — aguardando fonte granular.
+                        Dataset macro ICMBio (15 polígonos de litologia, 11% do Brasil)
+                        já descartado em S18 (tech debt SESSION18-006).
+                        Próximas fontes a avaliar: SBE/CNC, IBAMA Geoservicos, CANIE (se voltar público). */}
+                  </>
+                ) : null}
               </div>
             ))}
             <p style={{ ...s3, marginTop: 8 }}>

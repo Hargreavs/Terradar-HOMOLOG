@@ -1,4 +1,12 @@
 import { Router } from 'express'
+import {
+  fetchMapLayerAppHidrica,
+  fetchMapLayerHidroMassa,
+  fetchMapLayerHidroTrecho,
+  fetchMapLayerPorto,
+  fetchMapLayerRodovia,
+  fetchMapLayerSitio,
+} from '../lib/mapLayerGeojson'
 import { pool } from '../pool'
 import { supabase } from '../supabase'
 
@@ -19,6 +27,10 @@ const VALID_TIPOS = new Set([
   'rodovia',
   'hidrovia',
   'porto',
+  'sitio',
+  'hidro_massa',
+  'hidro_trecho',
+  'app',
 ])
 
 router.get('/api/map/layers/:tipo', async (req, res) => {
@@ -42,17 +54,74 @@ router.get('/api/map/layers/:tipo', async (req, res) => {
 
   const zoom = Number(req.query.zoom ?? 5)
   const limit = Math.min(Number(req.query.limit ?? 2000), 5000)
+  const minStrahler = (() => {
+    const n = parseInt(String(req.query.min_strahler ?? '3'), 10)
+    if (!Number.isFinite(n)) return 3
+    return Math.min(12, Math.max(0, n))
+  })()
+  const minFaixa = (() => {
+    const n = parseInt(String(req.query.min_faixa ?? '50'), 10)
+    if (!Number.isFinite(n)) return 50
+    return Math.min(1000, Math.max(0, n))
+  })()
 
   try {
-    const { rows } = await pool.query(
-      `SELECT fn_map_layer_geojson($1::text,$2::float8,$3::float8,$4::float8,$5::float8,$6::int,$7::int) AS geojson`,
-      [tipoRaw, minx, miny, maxx, maxy, Math.round(zoom), limit],
-    )
-    const geojson = rows[0]?.geojson ?? {
-      type: 'FeatureCollection',
-      count: 0,
-      truncated: false,
-      features: [],
+    let geojson: unknown
+    // fn_map_layer_geojson (não no repo) falhava: porto não está em
+    // geo_infraestrutura; rodovia exige tabela+SRID alinhados. Ver mapLayerGeojson.ts + Doc F6a.
+    if (tipoRaw === 'porto') {
+      geojson = await fetchMapLayerPorto(pool, minx, miny, maxx, maxy, limit)
+    } else if (tipoRaw === 'rodovia') {
+      geojson = await fetchMapLayerRodovia(
+        pool,
+        minx,
+        miny,
+        maxx,
+        maxy,
+        limit,
+      )
+    } else if (tipoRaw === 'sitio') {
+      geojson = await fetchMapLayerSitio(pool, minx, miny, maxx, maxy, limit)
+    } else if (tipoRaw === 'hidro_massa') {
+      geojson = await fetchMapLayerHidroMassa(
+        pool,
+        minx,
+        miny,
+        maxx,
+        maxy,
+        limit,
+      )
+    } else if (tipoRaw === 'hidro_trecho') {
+      geojson = await fetchMapLayerHidroTrecho(
+        pool,
+        minx,
+        miny,
+        maxx,
+        maxy,
+        minStrahler,
+        limit,
+      )
+    } else if (tipoRaw === 'app') {
+      geojson = await fetchMapLayerAppHidrica(
+        pool,
+        minx,
+        miny,
+        maxx,
+        maxy,
+        minFaixa,
+        limit,
+      )
+    } else {
+      const { rows } = await pool.query(
+        `SELECT fn_map_layer_geojson($1::text,$2::float8,$3::float8,$4::float8,$5::float8,$6::int,$7::int) AS geojson`,
+        [tipoRaw, minx, miny, maxx, maxy, Math.round(zoom), limit],
+      )
+      geojson = rows[0]?.geojson ?? {
+        type: 'FeatureCollection',
+        count: 0,
+        truncated: false,
+        features: [],
+      }
     }
     res.setHeader('Cache-Control', 'public, max-age=30')
     res.json(geojson)

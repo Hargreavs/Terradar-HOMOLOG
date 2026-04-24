@@ -11,6 +11,10 @@ export type TipoCamada =
   | 'rodovia'
   | 'hidrovia'
   | 'porto'
+  | 'sitio'
+  | 'hidro_massa'
+  | 'hidro_trecho'
+  | 'app'
 
 export type BBox = [number, number, number, number]
 
@@ -30,6 +34,8 @@ interface UseMapLayerOptions {
   bbox: BBox | null
   zoom: number
   limit?: number
+  /** Query string extra (ex.: min_strahler, min_faixa). */
+  extraQuery?: Record<string, string | number>
 }
 
 /**
@@ -44,9 +50,13 @@ export function useMapLayer({
   bbox,
   zoom,
   limit = 500,
+  extraQuery,
 }: UseMapLayerOptions): GeoJSONFeatureCollection | null {
   const [data, setData] = useState<GeoJSONFeatureCollection | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const extraKey = extraQuery
+    ? JSON.stringify(extraQuery, Object.keys(extraQuery).sort())
+    : ''
 
   useEffect(() => {
     if (!enabled || !bbox) {
@@ -63,6 +73,11 @@ export function useMapLayer({
       zoom: String(Math.round(zoom)),
       limit: String(limit),
     })
+    if (extraQuery) {
+      for (const [k, v] of Object.entries(extraQuery)) {
+        qs.set(k, String(v))
+      }
+    }
 
     fetch(`/api/map/layers/${tipo}?${qs.toString()}`, { signal: ctrl.signal })
       .then((r) => {
@@ -87,8 +102,17 @@ export function useMapLayer({
       })
 
     return () => ctrl.abort()
-  }, [tipo, enabled, bbox?.[0], bbox?.[1], bbox?.[2], bbox?.[3], zoom, limit])
+  }, [
+    tipo,
+    enabled,
+    bbox?.[0],
+    bbox?.[1],
+    bbox?.[2],
+    bbox?.[3],
+    zoom,
+    limit,
+    extraKey,
+  ])
 
   return data
 }
-

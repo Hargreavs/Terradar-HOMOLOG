@@ -99,6 +99,10 @@ import { relatorioDataFromReportData } from '../../lib/relatorioDataFromReportDa
 import { buildReportData } from '../report/reportDataBuilder'
 import { ProcessoPopupContent } from './ProcessoPopup'
 import { RelatorioCompleto } from './RelatorioCompleto'
+import { appHidricaFillLayer, appHidricaLineLayer } from '../../lib/mapbox/layers/appHidrica'
+import { hidrografiaMassasFillLayer, hidrografiaMassasLineLayer } from '../../lib/mapbox/layers/hidrografiaMassas'
+import { hidrografiaTrechosLayer } from '../../lib/mapbox/layers/hidrografiaTrechos'
+import { sitiosArqueologicosLayer } from '../../lib/mapbox/layers/sitiosArqueologicos'
 
 /**
  * Limit dinâmico para `useProcessosViewport` baseado no zoom.
@@ -2215,7 +2219,7 @@ export function MapView() {
     enabled: !!camadasGeo.rodovias && mapLoaded,
     bbox: viewportBbox,
     zoom: viewportZoom,
-    limit: 500,
+    limit: 5000,
   })
 
   const hidroviasData = useMapLayer({
@@ -2286,7 +2290,51 @@ export function MapView() {
     enabled: !!camadasGeo.portos && mapLoaded,
     bbox: viewportBbox,
     zoom: viewportZoom,
-    limit: 500,
+    limit: 5000,
+  })
+
+  // NOTE: min_strahler / min_faixa alinhados a mapLayerGeojson (default 3 e 50 m).
+  const trechoLayerQuery = useMemo(
+    () => ({ min_strahler: '3' }) as Record<string, string>,
+    [],
+  )
+  const appLayerQuery = useMemo(
+    () => ({ min_faixa: '50' }) as Record<string, string>,
+    [],
+  )
+
+  const sitioData = useMapLayer({
+    tipo: 'sitio',
+    enabled: !!camadasGeo.sitios_arqueologicos && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 5000,
+  })
+
+  const massasData = useMapLayer({
+    tipo: 'hidro_massa',
+    enabled: !!camadasGeo.massas_agua && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 5000,
+  })
+
+  const trechosData = useMapLayer({
+    tipo: 'hidro_trecho',
+    enabled: !!camadasGeo.rede_hidrografica && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 5000,
+    extraQuery: trechoLayerQuery,
+  })
+
+  const appHidricaData = useMapLayer({
+    tipo: 'app',
+    enabled: !!camadasGeo.app_hidrica && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 5000,
+    extraQuery: appLayerQuery,
   })
 
   // Processos por viewport (2c) — fetch bbox-aware, merge no store
@@ -2373,6 +2421,99 @@ export function MapView() {
     if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
   }, [mapLoaded, biomasData, camadasGeo.biomas])
 
+  // S18: APP hídrica, massas d'água, rede (BHO). z baixo → alto: app fill, massa fill, massa line, trecho, app line
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const fcApp = appHidricaData ?? {
+      type: 'FeatureCollection' as const,
+      features: [],
+    }
+    const fcMassa = massasData ?? {
+      type: 'FeatureCollection' as const,
+      features: [],
+    }
+    const fcTrecho = trechosData ?? {
+      type: 'FeatureCollection' as const,
+      features: [],
+    }
+
+    const Lnone = { visibility: 'none' as const }
+
+    if (!map.getSource('api-app-src')) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      map.addSource('api-app-src', { type: 'geojson', promoteId: 'id', data: fcApp as any })
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(map.getSource('api-app-src') as mapboxgl.GeoJSONSource).setData(fcApp as any)
+    }
+    if (!map.getSource('api-hidro-massa-src')) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      map.addSource('api-hidro-massa-src', { type: 'geojson', promoteId: 'id', data: fcMassa as any })
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(map.getSource('api-hidro-massa-src') as mapboxgl.GeoJSONSource).setData(
+        fcMassa as any,
+      )
+    }
+    if (!map.getSource('api-hidro-trecho-src')) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      map.addSource('api-hidro-trecho-src', { type: 'geojson', promoteId: 'id', data: fcTrecho as any })
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(map.getSource('api-hidro-trecho-src') as mapboxgl.GeoJSONSource).setData(
+        fcTrecho as any,
+      )
+    }
+
+    if (!map.getLayer('api-app-fill')) {
+      // Mesmo beforeId: último add fica imediatamente abaixo de processos (topo do grupo).
+      const before = 'processos-fill' as const
+      map.addLayer(
+        { ...appHidricaFillLayer, layout: Lnone } as mapboxgl.AddLayerObject,
+        before,
+      )
+      map.addLayer(
+        { ...hidrografiaMassasFillLayer, layout: Lnone } as mapboxgl.AddLayerObject,
+        before,
+      )
+      map.addLayer(
+        { ...hidrografiaMassasLineLayer, layout: Lnone } as mapboxgl.AddLayerObject,
+        before,
+      )
+      map.addLayer(
+        { ...hidrografiaTrechosLayer, layout: Lnone } as mapboxgl.AddLayerObject,
+        before,
+      )
+      map.addLayer(
+        { ...appHidricaLineLayer, layout: Lnone } as mapboxgl.AddLayerObject,
+        before,
+      )
+    }
+
+    const vApp = camadasGeo.app_hidrica ? 'visible' : 'none'
+    const vM = camadasGeo.massas_agua ? 'visible' : 'none'
+    const vT = camadasGeo.rede_hidrografica ? 'visible' : 'none'
+    for (const lid of ['api-app-fill', 'api-app-line']) {
+      if (map.getLayer(lid)) map.setLayoutProperty(lid, 'visibility', vApp)
+    }
+    for (const lid of ['api-hidro-massa-fill', 'api-hidro-massa-line']) {
+      if (map.getLayer(lid)) map.setLayoutProperty(lid, 'visibility', vM)
+    }
+    if (map.getLayer('api-hidro-trecho-line')) {
+      map.setLayoutProperty('api-hidro-trecho-line', 'visibility', vT)
+    }
+  }, [
+    mapLoaded,
+    appHidricaData,
+    massasData,
+    trechosData,
+    camadasGeo.app_hidrica,
+    camadasGeo.massas_agua,
+    camadasGeo.rede_hidrografica,
+  ])
+
   // Sync Rodovias no Mapbox
   useEffect(() => {
     const map = mapRef.current
@@ -2407,12 +2548,37 @@ export function MapView() {
               0.85,
             ],
             'line-width': [
-              'case',
-              ['==', ['feature-state', 'highlighted'], true],
-              4.0,
-              ['==', ['feature-state', 'highlighted'], false],
-              ['interpolate', ['linear'], ['zoom'], 4, 0.5, 12, 2.5],
-              ['interpolate', ['linear'], ['zoom'], 4, 0.5, 12, 2.5],
+              'interpolate',
+              ['linear'],
+              ['zoom'],
+              4,
+              [
+                'case',
+                ['==', ['feature-state', 'highlighted'], true],
+                4,
+                0.5,
+              ],
+              8,
+              [
+                'case',
+                ['==', ['feature-state', 'highlighted'], true],
+                4,
+                1.5,
+              ],
+              12,
+              [
+                'case',
+                ['==', ['feature-state', 'highlighted'], true],
+                4,
+                3,
+              ],
+              16,
+              [
+                'case',
+                ['==', ['feature-state', 'highlighted'], true],
+                4,
+                6,
+              ],
             ],
           },
         },
@@ -2894,12 +3060,37 @@ export function MapView() {
               0.95,
             ],
             'line-width': [
-              'case',
-              ['==', ['feature-state', 'highlighted'], true],
-              4.0,
-              ['==', ['feature-state', 'highlighted'], false],
-              ['interpolate', ['linear'], ['zoom'], 4, 0.6, 12, 2],
-              ['interpolate', ['linear'], ['zoom'], 4, 0.6, 12, 2],
+              'interpolate',
+              ['linear'],
+              ['zoom'],
+              4,
+              [
+                'case',
+                ['==', ['feature-state', 'highlighted'], true],
+                4,
+                0.6,
+              ],
+              8,
+              [
+                'case',
+                ['==', ['feature-state', 'highlighted'], true],
+                4,
+                1.0,
+              ],
+              12,
+              [
+                'case',
+                ['==', ['feature-state', 'highlighted'], true],
+                4,
+                2,
+              ],
+              16,
+              [
+                'case',
+                ['==', ['feature-state', 'highlighted'], true],
+                4,
+                3,
+              ],
             ],
           },
         },
@@ -2940,12 +3131,37 @@ export function MapView() {
         paint: {
           'circle-color': '#7EADD4',
           'circle-radius': [
-            'case',
-            ['==', ['feature-state', 'highlighted'], true],
-            10.0,
-            ['==', ['feature-state', 'highlighted'], false],
-            ['interpolate', ['linear'], ['zoom'], 4, 3, 12, 8],
-            ['interpolate', ['linear'], ['zoom'], 4, 3, 12, 8],
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            4,
+            [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              10,
+              2,
+            ],
+            8,
+            [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              10,
+              4,
+            ],
+            12,
+            [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              10,
+              7,
+            ],
+            16,
+            [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              10,
+              10,
+            ],
           ],
           'circle-stroke-color': '#FFFFFF',
           'circle-stroke-width': 1.5,
@@ -2969,6 +3185,40 @@ export function MapView() {
     if (map.getLayer(CIRCLE_ID))
       map.setLayoutProperty(CIRCLE_ID, 'visibility', vis)
   }, [mapLoaded, portoData, camadasGeo.portos])
+
+  // Sítios arqueológicos (IPHAN) — círculos abaixo de portos quando ambos existem
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const CIRCLE_ID = 'api-sitio-circle'
+    const SRC_ID = 'api-sitio-src'
+    const fc = sitioData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        promoteId: 'id',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(map.getSource(SRC_ID) as mapboxgl.GeoJSONSource).setData(fc as any)
+    }
+
+    if (!map.getLayer(CIRCLE_ID)) {
+      const before = map.getLayer('api-porto-circle')
+        ? 'api-porto-circle'
+        : 'processos-fill'
+      map.addLayer(
+        { ...sitiosArqueologicosLayer, layout: { visibility: 'none' } } as mapboxgl.AddLayerObject,
+        before,
+      )
+    }
+    const vis = camadasGeo.sitios_arqueologicos ? 'visible' : 'none'
+    if (map.getLayer(CIRCLE_ID)) map.setLayoutProperty(CIRCLE_ID, 'visibility', vis)
+  }, [mapLoaded, sitioData, camadasGeo.sitios_arqueologicos])
 
   // Força camadas estáticas dos tipos migrados para API a ficarem SEMPRE ocultas.
   // Roda a cada mudança em camadasGeo para sobrepor syncCamadasGeoVisibility.
@@ -3529,7 +3779,10 @@ export function MapView() {
                   <ul className="flex flex-col gap-2">
                     {camadasGeoLegendItems.map((id) => (
                       <li key={id} className="flex items-center gap-2.5">
-                        {id === 'ferrovias' ? (
+                        {id === 'ferrovias' ||
+                        id === 'rodovias' ||
+                        id === 'hidrovias' ||
+                        id === 'rede_hidrografica' ? (
                           <span
                             className="h-0.5 w-6 shrink-0 rounded-sm"
                             style={{

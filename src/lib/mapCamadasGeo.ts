@@ -5,7 +5,11 @@ export type CamadaGeoId =
   | 'terras_indigenas'
   | 'unidades_conservacao'
   | 'quilombolas'
+  | 'sitios_arqueologicos'
   | 'aquiferos'
+  | 'massas_agua'
+  | 'rede_hidrografica'
+  | 'app_hidrica'
   | 'ferrovias'
   | 'portos'
   | 'biomas'
@@ -22,6 +26,10 @@ export const CAMADAS_GEO_ORDER: CamadaGeoId[] = [
   'terras_indigenas',
   'unidades_conservacao',
   'quilombolas',
+  'sitios_arqueologicos',
+  'app_hidrica',
+  'massas_agua',
+  'rede_hidrografica',
   'rodovias',
   'ferrovias',
   'hidrovias',
@@ -33,8 +41,12 @@ export const CAMADAS_GEO_LEGEND_ORDER: CamadaGeoId[] = [
   'terras_indigenas',
   'unidades_conservacao',
   'quilombolas',
-  'aquiferos',
   'biomas',
+  'sitios_arqueologicos',
+  'aquiferos',
+  'massas_agua',
+  'rede_hidrografica',
+  'app_hidrica',
   'rodovias',
   'ferrovias',
   'hidrovias',
@@ -45,7 +57,11 @@ export const CAMADAS_GEO_LABEL: Record<CamadaGeoId, string> = {
   terras_indigenas: 'Terras Indígenas',
   unidades_conservacao: 'Unidades de Conservação',
   quilombolas: 'Quilombolas',
+  sitios_arqueologicos: 'Sítios arqueológicos (IPHAN)',
   aquiferos: 'Aquíferos',
+  massas_agua: "Massas d'água (BHO)",
+  rede_hidrografica: 'Rede hidrográfica (BHO)',
+  app_hidrica: 'APP hídrica (derivada)',
   ferrovias: 'Ferrovias',
   portos: 'Portos',
   biomas: 'Biomas',
@@ -57,7 +73,11 @@ export const CAMADAS_GEO_COLOR: Record<CamadaGeoId, string> = {
   terras_indigenas: '#E07A5F',
   unidades_conservacao: '#4A9E4A',
   quilombolas: '#C4915A',
+  sitios_arqueologicos: '#8B5A3C',
   aquiferos: '#4A90B8',
+  massas_agua: '#4DA6D9',
+  rede_hidrografica: '#2E8BC0',
+  app_hidrica: '#2E7D5B',
   ferrovias: '#B8B8B8',
   portos: '#7EADD4',
   biomas: '#8FA668',
@@ -113,6 +133,11 @@ export const CAMADA_GEO_HOVER_LAYER_IDS: string[] = [
   'api-aquifero-fill',
   'api-ferrovia-line',
   'api-porto-circle',
+  'api-sitio-circle',
+  'api-hidro-massa-fill',
+  'api-hidro-trecho-line',
+  'api-app-fill',
+  'api-app-line',
 ]
 
 const LAYERS_BY_CAMADA: Record<CamadaGeoId, string[]> = {
@@ -138,6 +163,10 @@ const LAYERS_BY_CAMADA: Record<CamadaGeoId, string[]> = {
   biomas: [],
   rodovias: [],
   hidrovias: [],
+  sitios_arqueologicos: [],
+  massas_agua: [],
+  rede_hidrografica: [],
+  app_hidrica: [],
 }
 
 export function camadasGeoLayersPresent(map: mapboxgl.Map): boolean {
@@ -499,6 +528,10 @@ export function camadaGeoIdFromLayerId(layerId: string): CamadaGeoId | null {
     if (layerId.startsWith('api-rodovia-')) return 'rodovias'
     if (layerId.startsWith('api-hidrovia-')) return 'hidrovias'
     if (layerId.startsWith('api-biomas-')) return 'biomas'
+    if (layerId.startsWith('api-sitio-')) return 'sitios_arqueologicos'
+    if (layerId.startsWith('api-hidro-massa-')) return 'massas_agua'
+    if (layerId.startsWith('api-hidro-trecho-')) return 'rede_hidrografica'
+    if (layerId.startsWith('api-app-')) return 'app_hidrica'
     return null
   }
 
@@ -521,6 +554,44 @@ export function formatCamadaGeoTooltip(
   // === RAMO API ===
   // Features vindas de /api/map/layers/:tipo têm contrato { nome, uf, orgao, categoria }
   if (layerId.startsWith('api-')) {
+    if (camada === 'sitios_arqueologicos') {
+      const title = strProp(props, 'identifica') ?? 'Sítio arqueológico'
+      const parts: string[] = []
+      const a = strProp(props, 'ds_naturez')
+      const b = strProp(props, 'ds_classif')
+      const c = strProp(props, 'ds_tipo_be')
+      if (a) parts.push(a)
+      if (b) parts.push(b)
+      if (c) parts.push(c)
+      return { title, meta: parts.join(' · '), borderColor }
+    }
+    if (camada === 'massas_agua') {
+      const title = strProp(props, 'nome') ?? "Massa d'água"
+      const ha = props?.nuareaha
+      const meta =
+        ha != null && Number.isFinite(Number(ha))
+          ? `${Number(ha).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} ha`
+          : ''
+      return { title, meta, borderColor }
+    }
+    if (camada === 'rede_hidrografica') {
+      const title = strProp(props, 'nome') || 'Trecho fluvial'
+      const n = props?.nustrahler
+      const meta =
+        n != null && n !== '' ? `Strahler ${String(n)}` : ''
+      return { title, meta, borderColor }
+    }
+    if (camada === 'app_hidrica') {
+      const title = 'APP hídrica'
+      const parts: string[] = []
+      const f = strProp(props, 'fonte')
+      const fa = props?.faixa_m
+      const ns = props?.nustrahler
+      if (f) parts.push(f)
+      if (fa != null && fa !== '') parts.push(`Faixa ${String(fa)} m`)
+      if (ns != null && ns !== '') parts.push(`Strahler ${String(ns)}`)
+      return { title, meta: parts.join(' · '), borderColor }
+    }
     const nome = strProp(props, 'nome') ?? CAMADAS_GEO_LABEL[camada]
     const uf = strProp(props, 'uf')
     const orgao = strProp(props, 'orgao')
@@ -623,7 +694,11 @@ export function defaultCamadasGeo(): Record<CamadaGeoId, boolean> {
     terras_indigenas: false,
     unidades_conservacao: false,
     quilombolas: false,
+    sitios_arqueologicos: false,
     aquiferos: false,
+    massas_agua: false,
+    rede_hidrografica: false,
+    app_hidrica: false,
     ferrovias: false,
     portos: false,
     biomas: false,
