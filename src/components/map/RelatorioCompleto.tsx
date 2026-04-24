@@ -70,7 +70,7 @@ import { RiskDecomposicaoRelatorioPanel } from './RiskDecomposicaoRelatorioPanel
 import { OportunidadeDecomposicaoRelatorioPanel } from './OportunidadeDecomposicaoRelatorioPanel'
 import { OportunidadePerfilCalcTooltipContent } from './OportunidadeScoreCalcTooltipContent'
 import { RiskTotalCalcTooltipContent } from './RiskScoreCalcTooltipContent'
-import { DrawerRegulatoryBadges } from './DrawerRegulatoryBadges'
+// import { DrawerRegulatoryBadges } from "./DrawerRegulatoryBadges"; // TODO: arquivo nunca existiu no repo, componente referenciado mas nao criado (bug pre-existente em b30d6ad)
 import { ProcessoEventosTimeline } from './ProcessoEventosTimeline'
 import { useExchangeRate } from '../../context/ExchangeRateContext'
 import {
@@ -1978,7 +1978,7 @@ export function RelatorioCompleto({
             }}
           >
             <RegimeBadge regime={regimeDrawerUi} variant="drawer" />
-            <DrawerRegulatoryBadges processo={processo} />
+            {/* <DrawerRegulatoryBadges processo={processo} /> */}
           </div>
           <div
             style={{
@@ -2322,7 +2322,7 @@ export function RelatorioCompleto({
           }}
         >
           <RegimeBadge regime={regimeDrawerUi} variant="drawer" />
-          <DrawerRegulatoryBadges processo={processo} />
+          {/* <DrawerRegulatoryBadges processo={processo} /> */}
         </div>
         <div
           style={{
