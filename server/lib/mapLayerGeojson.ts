@@ -214,7 +214,8 @@ export async function fetchMapLayerHidroMassa(
         m.id,
         m.nmoriginal,
         m.nuareaha,
-        m.geom
+        m.geom,
+        m.geom_simplified_4326
       FROM geo_hidrografia_massas m
       WHERE m.geom IS NOT NULL
         AND COALESCE(m.nuareaha, 0) >= $5
@@ -239,9 +240,7 @@ export async function fetchMapLayerHidroMassa(
               'nome', COALESCE(f.nmoriginal, ''),
               'nuareaha', f.nuareaha
             ),
-            'geometry', ST_AsGeoJSON(
-              ST_SimplifyPreserveTopology(ST_Transform(f.geom, 4326), ${SIMPLIFY_DEG})
-            )::jsonb
+            'geometry', ST_AsGeoJSON(f.geom_simplified_4326)::jsonb
           )
         )
         FROM fil f),
@@ -270,7 +269,8 @@ export async function fetchMapLayerHidroTrecho(
         t.cotrecho,
         t.nustrahler,
         t.nooriginal,
-        t.geom
+        t.geom,
+        t.geom_simplified_4326
       FROM geo_hidrografia_trechos t
       WHERE t.geom IS NOT NULL
         AND t.nustrahler >= $6
@@ -297,9 +297,7 @@ export async function fetchMapLayerHidroTrecho(
               'nooriginal', f.nooriginal,
               'nustrahler', f.nustrahler
             ),
-            'geometry', ST_AsGeoJSON(
-              ST_SimplifyPreserveTopology(ST_Transform(f.geom, 4326), ${SIMPLIFY_DEG})
-            )::jsonb
+            'geometry', ST_AsGeoJSON(f.geom_simplified_4326)::jsonb
           )
         )
         FROM fil f),
@@ -330,7 +328,8 @@ export async function fetchMapLayerAppHidrica(
         a.faixa_m,
         a.nustrahler,
         a.area_ha_origem,
-        a.geom
+        a.geom,
+        a.geom_simplified_4326
       FROM geo_app_hidrica a
       WHERE a.geom IS NOT NULL
         AND a.faixa_m >= $6
@@ -358,9 +357,7 @@ export async function fetchMapLayerAppHidrica(
               'nustrahler', f.nustrahler,
               'area_ha_origem', f.area_ha_origem
             ),
-            'geometry', ST_AsGeoJSON(
-              ST_SimplifyPreserveTopology(ST_Transform(f.geom, 4326), ${SIMPLIFY_DEG})
-            )::jsonb
+            'geometry', ST_AsGeoJSON(f.geom_simplified_4326)::jsonb
           )
         )
         FROM fil f),
