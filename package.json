@@ -23,7 +23,9 @@
     "ingest:autuacao": "tsx server/scripts/ingest-cfem-autuacao.ts",
     "ingest:tier1": "npm run ingest:autuacao && npm run ingest:tah && npm run ingest:cfem",
     "ingest:eventos": "tsx server/scripts/ingest-processo-eventos.ts",
-    "batch:scores": "tsx server/scripts/batch-scores.ts"
+    "batch:scores": "tsx server/scripts/batch-scores.ts",
+    "s30:geog": "tsx server/scripts/s30-backfill-processos-geog.ts",
+    "s30:backfill": "tsx server/scripts/s30-run-backfill.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",
@@ -40,6 +42,7 @@
     "lucide-react": "^1.7.0",
     "mapbox-gl": "^3.20.0",
     "pg": "^8.20.0",
+    "postgres": "^3.4.5",
     "puppeteer": "^24.40.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
