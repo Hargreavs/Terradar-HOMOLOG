@@ -89,6 +89,9 @@ type MapSidebarProps = {
 const TOGGLE_ON_TRACK = 'rgba(239, 159, 39, 0.4)'
 const TOGGLE_ON_KNOB = '#EF9F27'
 
+/** S29: PERÍODO e LOCALIZAÇÃO fora do render (não usados). Zustand e defaults inalterados. */
+const MOSTRAR_FILTROS_PERIODO_LOCALIZACAO = false
+
 const CAMADAS_SUB_LABEL: CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
@@ -250,7 +253,7 @@ export function MapSidebar({
   const [openSituacaoRegulatoria, setOpenSituacaoRegulatoria] = useState(true)
   const [openSubst, setOpenSubst] = useState(true)
   const [openPeriodo, setOpenPeriodo] = useState(true)
-  const [openCamadas, setOpenCamadas] = useState(false)
+  const [openCamadas, setOpenCamadas] = useState(true)
   const [openLoc, setOpenLoc] = useState(true)
   const [modoExplorador, setModoExplorador] = useState(false)
   const [buscaSubstancia, setBuscaSubstancia] = useState('')
@@ -1232,6 +1235,8 @@ export function MapSidebar({
           </div>
         ) : null}
 
+        {MOSTRAR_FILTROS_PERIODO_LOCALIZACAO ? (
+        <>
         <div
           className="my-4"
           style={{ borderTop: '1px solid #2C2C2A' }}
@@ -1568,6 +1573,8 @@ export function MapSidebar({
                 : null}
             </div>
           </div>
+        ) : null}
+        </>
         ) : null}
       </div>
       </>
