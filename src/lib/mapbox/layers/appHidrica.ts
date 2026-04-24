@@ -6,7 +6,7 @@ export const appHidricaFillLayer: FillLayerSpecification = {
   source: 'api-app-src',
   paint: {
     'fill-color': '#2E7D5B',
-    'fill-opacity': 0.18,
+    'fill-opacity': 0.12,
   },
 }
 
@@ -16,7 +16,7 @@ export const appHidricaLineLayer: LineLayerSpecification = {
   source: 'api-app-src',
   paint: {
     'line-color': '#1B5E3F',
-    'line-width': 0.6,
-    'line-opacity': 0.6,
+    'line-width': 0.4,
+    'line-opacity': 0.4,
   },
 }

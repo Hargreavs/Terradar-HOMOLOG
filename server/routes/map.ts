@@ -73,6 +73,11 @@ router.get('/api/map/layers/:tipo', async (req, res) => {
     if (!Number.isFinite(n)) return 50
     return Math.min(1000, Math.max(0, n))
   })()
+  const minAreaHa = (() => {
+    const n = Number(req.query.min_area_ha ?? 0)
+    if (!Number.isFinite(n)) return 0
+    return Math.max(0, n)
+  })()
 
   try {
     let geojson: unknown
@@ -98,6 +103,7 @@ router.get('/api/map/layers/:tipo', async (req, res) => {
         miny,
         maxx,
         maxy,
+        minAreaHa,
         limit,
       )
     } else if (tipoRaw === 'hidro_trecho') {

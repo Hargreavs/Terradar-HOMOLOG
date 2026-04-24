@@ -5,8 +5,8 @@ export const hidrografiaMassasFillLayer: FillLayerSpecification = {
   type: 'fill',
   source: 'api-hidro-massa-src',
   paint: {
-    'fill-color': '#4DA6D9',
-    'fill-opacity': 0.35,
+    'fill-color': '#5AB4E8',
+    'fill-opacity': 0.25,
   },
 }
 

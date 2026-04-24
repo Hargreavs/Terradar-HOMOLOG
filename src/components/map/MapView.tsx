@@ -65,6 +65,7 @@ import {
 } from '../../store/useMapStore'
 import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion'
 import { useMapLayer, type BBox } from '../../hooks/useMapLayer'
+import { zoomThresholds } from '../../lib/zoomThresholds'
 import { useProcessosViewport } from '../../hooks/useProcessosViewport'
 import { mapViewportFeaturesToProcessos } from '../../lib/mapProcessoFromDbRow'
 import {
@@ -2293,14 +2294,22 @@ export function MapView() {
     limit: 5000,
   })
 
-  // NOTE: min_strahler / min_faixa alinhados a mapLayerGeojson (default 3 e 50 m).
+  const heavyZoomKey = Math.floor(viewportZoom ?? 4)
+  const heavyLayerThresholds = useMemo(
+    () => zoomThresholds(heavyZoomKey),
+    [heavyZoomKey],
+  )
   const trechoLayerQuery = useMemo(
-    () => ({ min_strahler: '3' }) as Record<string, string>,
-    [],
+    () => ({ min_strahler: String(heavyLayerThresholds.minStrahler) }),
+    [heavyLayerThresholds],
   )
   const appLayerQuery = useMemo(
-    () => ({ min_faixa: '50' }) as Record<string, string>,
-    [],
+    () => ({ min_faixa: String(heavyLayerThresholds.minFaixa) }),
+    [heavyLayerThresholds],
+  )
+  const massasLayerQuery = useMemo(
+    () => ({ min_area_ha: String(heavyLayerThresholds.minAreaHa) }),
+    [heavyLayerThresholds],
   )
 
   const sitioData = useMapLayer({
@@ -2315,15 +2324,16 @@ export function MapView() {
     tipo: 'hidro_massa',
     enabled: !!camadasGeo.massas_agua && mapLoaded,
     bbox: viewportBbox,
-    zoom: viewportZoom,
+    zoom: heavyZoomKey,
     limit: 5000,
+    extraQuery: massasLayerQuery,
   })
 
   const trechosData = useMapLayer({
     tipo: 'hidro_trecho',
     enabled: !!camadasGeo.rede_hidrografica && mapLoaded,
     bbox: viewportBbox,
-    zoom: viewportZoom,
+    zoom: heavyZoomKey,
     limit: 5000,
     extraQuery: trechoLayerQuery,
   })
@@ -2332,7 +2342,7 @@ export function MapView() {
     tipo: 'app',
     enabled: !!camadasGeo.app_hidrica && mapLoaded,
     bbox: viewportBbox,
-    zoom: viewportZoom,
+    zoom: heavyZoomKey,
     limit: 5000,
     extraQuery: appLayerQuery,
   })

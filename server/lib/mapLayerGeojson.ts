@@ -205,7 +205,8 @@ export async function fetchMapLayerHidroMassa(
   miny: number,
   maxx: number,
   maxy: number,
-  limit: number,
+  minAreaHa: number = 0,
+  limit: number = 5000,
 ): Promise<Record<string, unknown>> {
   const sql = `
     WITH fil AS (
@@ -216,17 +217,17 @@ export async function fetchMapLayerHidroMassa(
         m.geom
       FROM geo_hidrografia_massas m
       WHERE m.geom IS NOT NULL
+        AND COALESCE(m.nuareaha, 0) >= $5
         AND m.geom && ST_Transform(
           ST_MakeEnvelope($1::float8, $2::float8, $3::float8, $4::float8, 4326),
           4674
         )
-      ORDER BY m.nuareaha DESC NULLS LAST
-      LIMIT $5
+      LIMIT $6
     )
     SELECT jsonb_build_object(
       'type', 'FeatureCollection',
       'count', (SELECT count(*)::int FROM fil),
-      'truncated', (SELECT (SELECT count(*)::int FROM fil) >= $5),
+      'truncated', (SELECT (SELECT count(*)::int FROM fil) >= $6),
       'features', COALESCE(
         (SELECT jsonb_agg(
           jsonb_build_object(
@@ -242,14 +243,15 @@ export async function fetchMapLayerHidroMassa(
               ST_SimplifyPreserveTopology(ST_Transform(f.geom, 4326), ${SIMPLIFY_DEG})
             )::jsonb
           )
-          ORDER BY f.nuareaha DESC NULLS LAST
         )
         FROM fil f),
         '[]'::jsonb
       )
     ) AS geojson
   `
-  return rowGeojson(await pool.query(sql, [minx, miny, maxx, maxy, limit]))
+  return rowGeojson(
+    await pool.query(sql, [minx, miny, maxx, maxy, minAreaHa, limit]),
+  )
 }
 
 export async function fetchMapLayerHidroTrecho(
@@ -276,7 +278,6 @@ export async function fetchMapLayerHidroTrecho(
           ST_MakeEnvelope($1::float8, $2::float8, $3::float8, $4::float8, 4326),
           4674
         )
-      ORDER BY t.nustrahler DESC
       LIMIT $5
     )
     SELECT jsonb_build_object(
@@ -300,7 +301,6 @@ export async function fetchMapLayerHidroTrecho(
               ST_SimplifyPreserveTopology(ST_Transform(f.geom, 4326), ${SIMPLIFY_DEG})
             )::jsonb
           )
-          ORDER BY f.nustrahler DESC
         )
         FROM fil f),
         '[]'::jsonb
@@ -338,7 +338,6 @@ export async function fetchMapLayerAppHidrica(
           ST_MakeEnvelope($1::float8, $2::float8, $3::float8, $4::float8, 4326),
           4674
         )
-      ORDER BY a.faixa_m DESC
       LIMIT $5
     )
     SELECT jsonb_build_object(
@@ -363,7 +362,6 @@ export async function fetchMapLayerAppHidrica(
               ST_SimplifyPreserveTopology(ST_Transform(f.geom, 4326), ${SIMPLIFY_DEG})
             )::jsonb
           )
-          ORDER BY f.faixa_m DESC
         )
         FROM fil f),
         '[]'::jsonb
