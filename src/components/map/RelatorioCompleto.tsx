@@ -78,6 +78,11 @@ import {
   textoExplicativoFonte,
   type SubstanceMarketState,
 } from '../../lib/substanceMarketState'
+import { useTerritorialAmbiental } from '../../hooks/useTerritorialAmbiental'
+import {
+  appOverlapTextColor,
+  formatDistM,
+} from '../../lib/territorialAmbientalDisplay'
 
 type AbaId =
   | 'processo'
@@ -2091,6 +2096,18 @@ export function RelatorioCompleto({
   const dadosInsuficientes =
     processo != null && processo.dados_insuficientes === true
 
+  const { data: ambiental, loading: ambientalLoading, error: ambientalError } =
+    useTerritorialAmbiental(
+      processo?.numero,
+      Boolean(
+        aberto &&
+          aba === 'territorio' &&
+          processo?.numero &&
+          !dadosInsuficientes &&
+          !semGeom,
+      ),
+    )
+
   // True quando o processo não tem Risk Score calculável. Ativa empty state
   // nas abas Risco e Oportunidade (Bloco 3a/3b). Casos cobertos:
   //   - processo é zumbi (dadosInsuficientes=true, sem score persistido)
@@ -3646,6 +3663,150 @@ export function RelatorioCompleto({
                   />
                 </>
               )}
+            </Card>
+
+            <Card>
+              <SecLabel branco>Ambiental</SecLabel>
+              {ambientalLoading ? (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '24px 0',
+                  }}
+                >
+                  <Loader2
+                    className="h-8 w-8 shrink-0 animate-spin"
+                    style={{ color: '#888780' }}
+                    aria-hidden
+                  />
+                </div>
+              ) : ambientalError ? (
+                <p
+                  style={{
+                    fontSize: FS.md,
+                    color: '#E24B4A',
+                    margin: '8px 0 0 0',
+                  }}
+                >
+                  {ambientalError.message}
+                </p>
+              ) : ambiental ? (
+                <>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 8,
+                      marginBottom: 8,
+                    }}
+                  >
+                    <span
+                      style={{ fontSize: FS.md, color: '#D3D1C7', flex: 1 }}
+                    >
+                      APP Hídrica
+                    </span>
+                    <span
+                      style={{
+                        fontSize: FS.md,
+                        fontWeight: 500,
+                        color: appOverlapTextColor(ambiental.app_hidrica.overlap_pct),
+                        flexShrink: 0,
+                        textAlign: 'right',
+                      }}
+                    >
+                      {ambiental.app_hidrica.overlap_pct > 0
+                        ? `${ambiental.app_hidrica.overlap_pct.toFixed(2)}% sobreposto`
+                        : `a ${formatDistM(ambiental.app_hidrica.distancia_m)}`}
+                    </span>
+                  </div>
+                  {ambiental.sitios_arqueologicos.slice(0, 3).map((s) => (
+                    <div
+                      key={s.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        marginBottom: 8,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: FS.md,
+                          color: '#D3D1C7',
+                          flex: 1,
+                          minWidth: 0,
+                        }}
+                      >
+                        Sítio: {s.nome?.trim() || s.tipo_bem || '—'}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: FS.md,
+                          fontWeight: 500,
+                          color: '#4ade80',
+                          flexShrink: 0,
+                        }}
+                      >
+                        {s.distancia_km.toFixed(2).replace('.', ',')} km
+                      </span>
+                    </div>
+                  ))}
+                  {ambiental.massas_agua.slice(0, 3).map((m) => (
+                    <div
+                      key={m.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        marginBottom: 8,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: FS.md,
+                          color: '#D3D1C7',
+                          flex: 1,
+                          minWidth: 0,
+                        }}
+                      >
+                        Massa:{' '}
+                        {m.nome?.trim() ||
+                          (m.area_ha != null && !Number.isNaN(m.area_ha)
+                            ? `${m.area_ha.toFixed(1)} ha`
+                            : '—')}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: FS.md,
+                          fontWeight: 500,
+                          color: '#4ade80',
+                          flexShrink: 0,
+                        }}
+                      >
+                        {m.distancia_km.toFixed(2).replace('.', ',')} km
+                      </span>
+                    </div>
+                  ))}
+                  <span
+                    style={{
+                      display: 'block',
+                      marginTop: FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX,
+                      fontSize: 10,
+                      lineHeight: 1.45,
+                      color: '#5F5E5A',
+                    }}
+                  >
+                    Atualizado em{' '}
+                    {formatarDataIsoPtBr(ambiental.calculado_em)} · Fontes: IPHAN ·
+                    SNIRH-ANA · TERRADAR
+                  </span>
+                </>
+              ) : null}
             </Card>
               </>
             )}
