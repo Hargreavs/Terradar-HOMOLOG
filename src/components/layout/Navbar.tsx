@@ -18,7 +18,7 @@ export function Navbar() {
       className="flex h-12 shrink-0 items-center justify-between border-b border-dark-border bg-dark-primary px-4"
       style={{ height: 48 }}
     >
-      <a href="/" className="flex items-center gap-2" aria-label="Terrae">
+      <a href="/" className="flex items-center gap-2" aria-label="TERRADAR">
         <img
           src="/terradar-navbar-dark.png"
           alt=""

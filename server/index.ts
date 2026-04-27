@@ -5,8 +5,10 @@ import express from 'express'
 
 import mapRouter from './routes/map'
 import processosViewportRouter from './routes/processos-viewport'
+import radarRouter from './routes/radar'
 import { POST } from '../app/api/generate-report/route'
 import { supabase } from './supabase'
+import { pool } from './pool'
 import {
   computeScoresAuto,
   getCapag,
@@ -30,6 +32,7 @@ app.use(cors())
 app.use(express.json({ limit: '50mb' }))
 app.use(mapRouter)
 app.use(processosViewportRouter)
+app.use(radarRouter)
 
 function hasManualRiskScore(
   scores: Record<string, unknown> | null,
@@ -57,8 +60,6 @@ app.get('/api/processo/busca', async (req, res) => {
   try {
     const processo = await getProcesso(numero)
     const proc = processo as Record<string, unknown>
-    const municipioIbge = String(proc.municipio_ibge ?? '')
-    const substanciaAnm = String(proc.substancia ?? '')
 
     let scores_persistido: Record<string, unknown> | null = null
     try {
@@ -73,32 +74,12 @@ app.get('/api/processo/busca', async (req, res) => {
 
     let scores_auto: ScoreResult | null = null
     try {
-      const [capag, mercado, analise, fiscalMun] = await Promise.all([
-        getCapag(municipioIbge),
-        getSubstancia(substanciaAnm),
-        getTerritoralAnalysis(numero),
-        getFiscal(municipioIbge),
-      ])
-
-      const processoParaScore = {
-        numero: String(proc.numero ?? numero),
-        substancia: String(proc.substancia ?? ''),
-        substancia_familia: String(proc.substancia_familia ?? 'outros'),
-        fase: String(proc.fase ?? ''),
-        regime: proc.regime != null ? String(proc.regime) : null,
-        area_ha: Number(proc.area_ha) || 0,
-        alvara_validade:
-          proc.alvara_validade != null ? String(proc.alvara_validade) : null,
-        uf: String(proc.uf ?? ''),
+      const processoIdBusca = proc.id
+      if (processoIdBusca != null && String(processoIdBusca).trim() !== '') {
+        scores_auto = await computeScoresAuto(String(processoIdBusca), {
+          persist: false,
+        })
       }
-
-      scores_auto = await computeScoresAuto(
-        processoParaScore,
-        analise,
-        mercado as Record<string, unknown> | null,
-        capag as Record<string, unknown> | null,
-        fiscalMun,
-      )
     } catch (scoreErr) {
       console.error('[api/processo/busca] scores_auto:', scoreErr)
     }
@@ -121,6 +102,62 @@ app.get('/api/processo/busca', async (req, res) => {
       return res.json({ ok: false, error: 'Processo não encontrado' })
     }
     return res.json({ ok: false, error: msg })
+  }
+})
+
+/**
+ * Lista eventos SCM/ANM de um processo. Usa RPC `fn_processo_eventos_list`
+ * que retorna { total, limit, offset, eventos: [...] }.
+ *
+ * NOTA: Número ANM contém "/" (ex: 864.231/2017). Use query string
+ * com encodeURIComponent no client.
+ */
+app.get('/api/processo/eventos', async (req, res) => {
+  const raw = req.query.numero
+  const numero =
+    typeof raw === 'string' ? decodeURIComponent(raw.trim()) : ''
+
+  const limitRaw = Number(req.query.limit ?? 40)
+  const offsetRaw = Number(req.query.offset ?? 0)
+  const limit = Number.isFinite(limitRaw) && limitRaw > 0 && limitRaw <= 200
+    ? Math.floor(limitRaw)
+    : 40
+  const offset = Number.isFinite(offsetRaw) && offsetRaw >= 0
+    ? Math.floor(offsetRaw)
+    : 0
+
+  if (!numero) {
+    return res
+      .status(400)
+      .json({ ok: false, error: 'Parâmetro "numero" é obrigatório.' })
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('fn_processo_eventos_list', {
+      p_processo_numero: numero,
+      p_limit: limit,
+      p_offset: offset,
+    })
+
+    if (error) {
+      console.error('[api/processo/eventos] RPC error:', error.message)
+      return res.status(500).json({ ok: false, error: error.message })
+    }
+
+    // RPC sempre retorna shape válido (mesmo com 0 eventos),
+    // mas defensiva pra null:
+    const payload = (data ?? { total: 0, limit, offset, eventos: [] }) as {
+      total: number
+      limit: number
+      offset: number
+      eventos: unknown[]
+    }
+
+    return res.json({ ok: true, data: payload })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Erro interno'
+    console.error('[api/processo/eventos] Exception:', msg)
+    return res.status(500).json({ ok: false, error: msg })
   }
 })
 
@@ -315,41 +352,13 @@ app.get('/api/processo', async (req, res) => {
     let scores_final: Record<string, unknown> | null =
       scores as Record<string, unknown> | null
 
-    const processoParaScore = {
-      numero: String(proc.numero ?? numero),
-      substancia: String(proc.substancia ?? ''),
-      substancia_familia: String(proc.substancia_familia ?? 'outros'),
-      fase: String(proc.fase ?? ''),
-      regime: proc.regime != null ? String(proc.regime) : null,
-      area_ha: Number(proc.area_ha) || 0,
-      alvara_validade:
-        proc.alvara_validade != null ? String(proc.alvara_validade) : null,
-      uf: String(proc.uf ?? ''),
-    }
-
     try {
-      // Guard 1: processos sem geom têm `analise === null` (ver .catch no
-      // Promise.all acima). Skip scores_auto nesse caso porque
-      // computeScoresAuto depende de `analise.areas_protegidas`, `.bioma`,
-      // `.aquiferos`, `.infraestrutura`, `.portos`. Sem análise territorial
-      // não há como calcular risk_breakdown.
-      //
-      // Guard 2: processos zumbis (sem geom + sem substância + sem município)
-      // são marcados com `dados_insuficientes = true` no DB. Mesmo que algum
-      // pedaço de `analise` fosse obtido, não faz sentido calcular scores
-      // sintéticos para registros ANM fantasmas — o frontend deve mostrar
-      // só o banner de dados insuficientes.
+      // S31: motor lê camadas e fiscal no Postgres; skip zumbis/dados insuficientes.
       const dadosInsuficientes = Boolean(
         (proc as Record<string, unknown>).dados_insuficientes,
       )
-      if (analise && !dadosInsuficientes) {
-        scores_auto = await computeScoresAuto(
-          processoParaScore,
-          analise,
-          mercado as Record<string, unknown> | null,
-          capag as Record<string, unknown> | null,
-          fiscalMun,
-        )
+      if (processoId && !dadosInsuficientes) {
+        scores_auto = await computeScoresAuto(processoId, { persist: false })
         if (!hasManualRiskScore(scores_final) && scores_auto) {
           scores_final = {
             ...(scores_final ?? {}),
@@ -436,6 +445,155 @@ app.get('/api/processo', async (req, res) => {
         ? 'Dados ainda não disponíveis para este processo.'
         : msg,
     })
+  }
+})
+
+/**
+ * Análise territorial da dimensão Ambiental (sítios, APP hídrica, massas d’água).
+ * GET /api/processo/:numero/territorial-ambiental — use `encodeURIComponent(numero)` no
+ * segmento (ex.: 864.231%2F2017). Chama `fn_territorial_analysis_ambiental` no Postgres.
+ */
+app.get(
+  '/api/processo/:numero/territorial-ambiental',
+  async (req, res) => {
+    if (!pool) {
+      return res.status(503).json({ error: 'DATABASE_URL não configurada' })
+    }
+    const raw = req.params.numero
+    const numero = typeof raw === 'string' ? decodeURIComponent(raw.trim()) : ''
+    if (!numero) {
+      return res.status(400).json({ error: 'numero obrigatorio' })
+    }
+    try {
+      const { rows } = await pool.query(
+        'SELECT fn_territorial_analysis_ambiental($1) AS resultado',
+        [numero],
+      )
+      const resultado = rows[0]?.resultado
+      if (resultado == null) {
+        return res.status(404).json({ error: 'Análise ambiental indisponível' })
+      }
+      res.json(resultado)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      const lower = msg.toLowerCase()
+      if (
+        lower.includes('nao encontrado') ||
+        lower.includes('não encontrado') ||
+        lower.includes('not found')
+      ) {
+        return res.status(404).json({ error: msg })
+      }
+      console.error('[/api/processo/.../territorial-ambiental]', err)
+      res.status(500).json({ error: 'erro ao calcular analise ambiental' })
+    }
+  },
+)
+
+app.get('/api/cpt/uf/:uf', async (req, res) => {
+  if (!pool) {
+    return res.status(503).json({ error: 'DATABASE_URL não configurada' })
+  }
+  const uf = String(req.params.uf ?? '')
+    .trim()
+    .toUpperCase()
+  if (uf.length !== 2) {
+    return res.status(400).json({ error: 'UF inválida' })
+  }
+  try {
+    const { rows } = await pool.query(
+      `WITH agregado AS (
+        SELECT
+          ano,
+          SUM(ocorrencias) AS ocorrencias,
+          SUM(familias) AS familias
+        FROM geo_conflitos_cpt_uf
+        WHERE UPPER(TRIM(uf)) = $1 AND categoria = 'terra'
+        GROUP BY ano
+        ORDER BY ano
+      ),
+      totais AS (
+        SELECT
+          COALESCE(SUM(ocorrencias), 0) AS total_ocorrencias_5anos,
+          COALESCE(SUM(familias), 0) AS total_familias_5anos,
+          MAX(ano) FILTER (WHERE ocorrencias > 0) AS ultimo_ano,
+          (SELECT ocorrencias FROM agregado WHERE ano = 2024) AS ocorrencias_2024,
+          (SELECT familias FROM agregado WHERE ano = 2024) AS familias_2024,
+          (SELECT ocorrencias FROM agregado WHERE ano = 2020) AS ocorrencias_2020,
+          (SELECT familias FROM agregado WHERE ano = 2020) AS familias_2020
+        FROM agregado
+      )
+      SELECT
+        t.*,
+        fn_cpt_multiplicador_uf($1::text) AS multiplicador,
+        CASE
+          WHEN fn_cpt_multiplicador_uf($1::text) >= 1.30 THEN 'super_critica'
+          WHEN fn_cpt_multiplicador_uf($1::text) >= 1.20 THEN 'critica'
+          WHEN fn_cpt_multiplicador_uf($1::text) >= 1.10 THEN 'media'
+          ELSE 'baixa'
+        END AS tier,
+        (SELECT json_agg(row_to_json(a)) FROM agregado a) AS serie_anual
+      FROM totais t`,
+      [uf],
+    )
+    res.json(rows[0] ?? null)
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[/api/cpt/uf]', err)
+    res.status(500).json({ error: msg })
+  }
+})
+
+/**
+ * Contexto S31 mínimo para subfatores (fiscal, CPT, autuações, master_substância).
+ * GET /api/processo/score-context?numero=864.231%2F2017
+ */
+app.get('/api/processo/score-context', async (req, res) => {
+  if (!pool) {
+    return res.status(503).json({ error: 'DATABASE_URL não configurada' })
+  }
+  const raw = req.query.numero
+  const numero =
+    typeof raw === 'string' ? decodeURIComponent(raw.trim()) : ''
+  if (!numero) {
+    return res.status(400).json({ error: 'query numero obrigatório' })
+  }
+  try {
+    const { rows } = await pool.query(
+      `SELECT
+        f.idh,
+        f.populacao,
+        f.pib_municipal_mi,
+        f.densidade,
+        c.nota AS capag_nota,
+        ms.gap_pp,
+        ms.preco_brl,
+        ms.tendencia,
+        ms.val_reserva_brl_ha,
+        ms.mineral_critico_2025,
+        (SELECT COUNT(*)::int FROM cfem_autuacao a WHERE a.processo_minerario = p.numero) AS aut_qtd,
+        (SELECT COALESCE(SUM(a.valor), 0) FROM cfem_autuacao a WHERE a.processo_minerario = p.numero) AS aut_total,
+        fn_cpt_multiplicador_uf(p.uf) AS cpt_mult,
+        CASE
+          WHEN fn_cpt_multiplicador_uf(p.uf) >= 1.30 THEN 'super_critica'
+          WHEN fn_cpt_multiplicador_uf(p.uf) >= 1.20 THEN 'critica'
+          WHEN fn_cpt_multiplicador_uf(p.uf) >= 1.10 THEN 'media'
+          ELSE 'baixa'
+        END AS cpt_tier
+      FROM processos p
+      LEFT JOIN fiscal_municipios f ON f.municipio_ibge = p.municipio_ibge
+      LEFT JOIN capag_municipios c ON c.municipio_ibge = p.municipio_ibge
+      LEFT JOIN master_substancias ms
+        ON UPPER(TRIM(ms.substancia_anm::text)) = UPPER(TRIM(p.substancia::text))
+      WHERE p.numero = $1
+      LIMIT 1`,
+      [numero],
+    )
+    res.json(rows[0] ?? null)
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[/api/processo/score-context]', err)
+    res.status(500).json({ error: msg })
   }
 })
 

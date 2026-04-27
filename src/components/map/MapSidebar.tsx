@@ -6,12 +6,14 @@ import {
   ChevronRight,
   Droplets,
   Home,
-  Layers,
+  Landmark,
   Leaf,
   Search,
+  ShieldCheck,
   TrainTrack,
   TreePine,
   Users,
+  Waves,
   X,
 } from 'lucide-react'
 import {
@@ -87,6 +89,9 @@ type MapSidebarProps = {
 const TOGGLE_ON_TRACK = 'rgba(239, 159, 39, 0.4)'
 const TOGGLE_ON_KNOB = '#EF9F27'
 
+/** S29: PERÍODO e LOCALIZAÇÃO fora do render (não usados). Zustand e defaults inalterados. */
+const MOSTRAR_FILTROS_PERIODO_LOCALIZACAO = false
+
 const CAMADAS_SUB_LABEL: CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
@@ -99,10 +104,20 @@ const CAMADAS_SUB_LABEL: CSSProperties = {
 
 const CAMADAS_GEO_GROUPS: { title: string; ids: CamadaGeoId[] }[] = [
   {
-    title: 'ÁREAS PROTEGIDAS',
-    ids: ['terras_indigenas', 'unidades_conservacao', 'quilombolas', 'app_car', 'biomas'],
+    title: 'PROTEÇÕES LEGAIS',
+    ids: [
+      'terras_indigenas',
+      'unidades_conservacao',
+      'quilombolas',
+      'assentamentos',
+      'biomas',
+      'sitios_arqueologicos',
+    ],
   },
-  { title: 'RECURSOS HÍDRICOS', ids: ['aquiferos'] },
+  {
+    title: 'RECURSOS HÍDRICOS',
+    ids: ['aquiferos', 'massas_agua', 'rede_hidrografica', 'app_hidrica'],
+  },
   { title: 'INFRAESTRUTURA', ids: ['rodovias', 'ferrovias', 'hidrovias', 'portos'] },
 ]
 
@@ -138,8 +153,20 @@ const CAMADAS_GEO_ITEM: Record<
     Icon: TreePine,
   },
   quilombolas: { label: 'Quilombolas', color: '#C4915A', Icon: Home },
-  app_car: { label: 'Áreas de Preservação', color: '#5B9A6F', Icon: Leaf },
+  assentamentos: {
+    label: 'Assentamentos INCRA',
+    color: '#7B8B3D',
+    Icon: Home,
+  },
+  sitios_arqueologicos: {
+    label: 'Sítios Arqueológicos',
+    color: '#8B5A3C',
+    Icon: Landmark,
+  },
   aquiferos: { label: 'Aquíferos', color: '#4A90B8', Icon: Droplets },
+  massas_agua: { label: "Massas d'Água", color: '#4DA6D9', Icon: Droplets },
+  rede_hidrografica: { label: 'Rede Hidrográfica', color: '#2E8BC0', Icon: Waves },
+  app_hidrica: { label: 'APP Hídrica', color: '#2E7D5B', Icon: ShieldCheck },
   biomas: { label: 'Biomas', color: '#8FA668', Icon: Leaf },
   rodovias: { label: 'Rodovias', color: '#D9A55B', Icon: TrainTrack },
   ferrovias: { label: 'Ferrovias', color: '#B8B8B8', Icon: TrainTrack },
@@ -216,8 +243,6 @@ export function MapSidebar({
   const toggleCamada = useMapStore((s) => s.toggleCamada)
   const camadasGeo = useMapStore((s) => s.camadasGeo)
   const toggleCamadaGeo = useMapStore((s) => s.toggleCamadaGeo)
-  const territorioSimuladoVisivel = useMapStore((s) => s.territorioSimuladoVisivel)
-  const toggleTerritorioSimulado = useMapStore((s) => s.toggleTerritorioSimulado)
   const substancias = filtros.substancias
   const setFiltro = useMapStore((s) => s.setFiltro)
   const resetFiltros = useMapStore((s) => s.resetFiltros)
@@ -234,7 +259,7 @@ export function MapSidebar({
   const [openSituacaoRegulatoria, setOpenSituacaoRegulatoria] = useState(true)
   const [openSubst, setOpenSubst] = useState(true)
   const [openPeriodo, setOpenPeriodo] = useState(true)
-  const [openCamadas, setOpenCamadas] = useState(false)
+  const [openCamadas, setOpenCamadas] = useState(true)
   const [openLoc, setOpenLoc] = useState(true)
   const [modoExplorador, setModoExplorador] = useState(false)
   const [buscaSubstancia, setBuscaSubstancia] = useState('')
@@ -1200,49 +1225,24 @@ export function MapSidebar({
                     </button>
                   )
                 })}
+                {g.title === 'PROTEÇÕES LEGAIS' ? (
+                  <>
+                    {/* TODO: Cavernas — aguardando fonte granular.
+                        Dataset macro ICMBio (15 polígonos de litologia, 11% do Brasil)
+                        já descartado em S18 (tech debt SESSION18-006).
+                        Próximas fontes a avaliar: SBE/CNC, IBAMA Geoservicos, CANIE (se voltar público). */}
+                  </>
+                ) : null}
               </div>
             ))}
-            <button
-              type="button"
-              onClick={() => toggleTerritorioSimulado()}
-              className="mt-2 flex w-full cursor-pointer items-center rounded-md border-0 px-1 py-0 text-left hover:bg-[#1A1A18]"
-              style={{ height: 32, gap: 8 }}
-            >
-              <span
-                className="flex shrink-0 items-center justify-center border border-solid"
-                style={{
-                  width: 16,
-                  height: 16,
-                  borderRadius: 4,
-                  borderColor: territorioSimuladoVisivel ? '#EF9F27' : '#5F5E5A',
-                  borderWidth: territorioSimuladoVisivel ? 0 : 1.5,
-                  backgroundColor: territorioSimuladoVisivel ? '#EF9F27' : 'transparent',
-                }}
-                aria-hidden
-              >
-                {territorioSimuladoVisivel ? (
-                  <Check size={10} className="text-[#0D0D0C]" strokeWidth={3} aria-hidden />
-                ) : null}
-              </span>
-              <Layers
-                size={14}
-                strokeWidth={2}
-                className="shrink-0"
-                style={{ color: territorioSimuladoVisivel ? '#888780' : '#5F5E5A' }}
-                aria-hidden
-              />
-              <span
-                className={`min-w-0 flex-1 ${territorioSimuladoVisivel ? cActive : cInactive}`}
-              >
-                Território (simulado)
-              </span>
-            </button>
             <p style={{ ...s3, marginTop: 8 }}>
               {camadasGeoAtivasCount} de {CAMADAS_GEO_ORDER.length} camadas ativas
             </p>
           </div>
         ) : null}
 
+        {MOSTRAR_FILTROS_PERIODO_LOCALIZACAO ? (
+        <>
         <div
           className="my-4"
           style={{ borderTop: '1px solid #2C2C2A' }}
@@ -1579,6 +1579,8 @@ export function MapSidebar({
                 : null}
             </div>
           </div>
+        ) : null}
+        </>
         ) : null}
       </div>
       </>

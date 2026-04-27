@@ -1,4 +1,21 @@
 import { Router } from 'express'
+import {
+  fetchMapLayerAppHidrica,
+  fetchMapLayerAquifero,
+  fetchMapLayerBioma,
+  fetchMapLayerHidroMassa,
+  fetchMapLayerHidroTrecho,
+  fetchMapLayerHidrovia,
+  fetchMapLayerPorto,
+  fetchMapLayerQuilombola,
+  fetchMapLayerRodovia,
+  fetchMapLayerSitio,
+  fetchMapLayerTi,
+  fetchMapLayerUc,
+  fetchMapLayerUcPi,
+  fetchMapLayerUcUs,
+  fetchMapLayerAssentamentoIncra,
+} from '../lib/mapLayerGeojson'
 import { pool } from '../pool'
 import { supabase } from '../supabase'
 
@@ -10,15 +27,21 @@ const NUP_ANM_REGEX = /^\d{3}\.\d{3}\/\d{4}$/
 /** IDs alinhados ao frontend (`TipoCamada` / useMapLayer). */
 const VALID_TIPOS = new Set([
   'ti',
+  'uc',
   'uc_pi',
   'uc_us',
   'quilombola',
+  'assentamento',
   'aquifero',
   'bioma',
   'ferrovia',
   'rodovia',
   'hidrovia',
   'porto',
+  'sitio',
+  'hidro_massa',
+  'hidro_trecho',
+  'app',
 ])
 
 router.get('/api/map/layers/:tipo', async (req, res) => {
@@ -42,17 +65,126 @@ router.get('/api/map/layers/:tipo', async (req, res) => {
 
   const zoom = Number(req.query.zoom ?? 5)
   const limit = Math.min(Number(req.query.limit ?? 2000), 5000)
+  const minStrahler = (() => {
+    const n = parseInt(String(req.query.min_strahler ?? '3'), 10)
+    if (!Number.isFinite(n)) return 3
+    return Math.min(12, Math.max(0, n))
+  })()
+  const minFaixa = (() => {
+    const n = parseInt(String(req.query.min_faixa ?? '50'), 10)
+    if (!Number.isFinite(n)) return 50
+    return Math.min(1000, Math.max(0, n))
+  })()
+  const minAreaHa = (() => {
+    const n = Number(req.query.min_area_ha ?? 0)
+    if (!Number.isFinite(n)) return 0
+    return Math.max(0, n)
+  })()
 
   try {
-    const { rows } = await pool.query(
-      `SELECT fn_map_layer_geojson($1::text,$2::float8,$3::float8,$4::float8,$5::float8,$6::int,$7::int) AS geojson`,
-      [tipoRaw, minx, miny, maxx, maxy, Math.round(zoom), limit],
-    )
-    const geojson = rows[0]?.geojson ?? {
-      type: 'FeatureCollection',
-      count: 0,
-      truncated: false,
-      features: [],
+    let geojson: unknown
+    // fn_map_layer_geojson (não no repo) falhava: porto não está em
+    // geo_infraestrutura; rodovia exige tabela+SRID alinhados. Ver mapLayerGeojson.ts + Doc F6a.
+    if (tipoRaw === 'porto') {
+      geojson = await fetchMapLayerPorto(pool, minx, miny, maxx, maxy, limit)
+    } else if (tipoRaw === 'rodovia') {
+      geojson = await fetchMapLayerRodovia(
+        pool,
+        minx,
+        miny,
+        maxx,
+        maxy,
+        limit,
+      )
+    } else if (tipoRaw === 'assentamento') {
+      geojson = await fetchMapLayerAssentamentoIncra(
+        pool,
+        minx,
+        miny,
+        maxx,
+        maxy,
+        limit,
+      )
+    } else if (tipoRaw === 'sitio') {
+      geojson = await fetchMapLayerSitio(pool, minx, miny, maxx, maxy, limit)
+    } else if (tipoRaw === 'hidro_massa') {
+      geojson = await fetchMapLayerHidroMassa(
+        pool,
+        minx,
+        miny,
+        maxx,
+        maxy,
+        minAreaHa,
+        limit,
+      )
+    } else if (tipoRaw === 'hidro_trecho') {
+      geojson = await fetchMapLayerHidroTrecho(
+        pool,
+        minx,
+        miny,
+        maxx,
+        maxy,
+        minStrahler,
+        limit,
+      )
+    } else if (tipoRaw === 'app') {
+      geojson = await fetchMapLayerAppHidrica(
+        pool,
+        minx,
+        miny,
+        maxx,
+        maxy,
+        minFaixa,
+        limit,
+      )
+    } else if (tipoRaw === 'ti') {
+      geojson = await fetchMapLayerTi(pool, minx, miny, maxx, maxy, limit)
+    } else if (tipoRaw === 'uc') {
+      geojson = await fetchMapLayerUc(pool, minx, miny, maxx, maxy, limit)
+    } else if (tipoRaw === 'uc_pi') {
+      geojson = await fetchMapLayerUcPi(pool, minx, miny, maxx, maxy, limit)
+    } else if (tipoRaw === 'uc_us') {
+      geojson = await fetchMapLayerUcUs(pool, minx, miny, maxx, maxy, limit)
+    } else if (tipoRaw === 'quilombola') {
+      geojson = await fetchMapLayerQuilombola(
+        pool,
+        minx,
+        miny,
+        maxx,
+        maxy,
+        limit,
+      )
+    } else if (tipoRaw === 'aquifero') {
+      geojson = await fetchMapLayerAquifero(
+        pool,
+        minx,
+        miny,
+        maxx,
+        maxy,
+        limit,
+      )
+    } else if (tipoRaw === 'bioma') {
+      geojson = await fetchMapLayerBioma(pool, minx, miny, maxx, maxy, limit)
+    } else if (tipoRaw === 'hidrovia') {
+      geojson = await fetchMapLayerHidrovia(
+        pool,
+        minx,
+        miny,
+        maxx,
+        maxy,
+        limit,
+      )
+    } else {
+      const { rows } = await pool.query(
+        `SELECT fn_map_layer_geojson($1::text,$2::float8,$3::float8,$4::float8,$5::float8,$6::int,$7::int) AS geojson`,
+        [tipoRaw, minx, miny, maxx, maxy, Math.round(zoom), limit],
+      )
+      geojson = rows[0]?.geojson ?? {
+        type: 'FeatureCollection',
+        count: 0,
+        truncated: false,
+        features: [],
+      }
     }
     res.setHeader('Cache-Control', 'public, max-age=30')
     res.json(geojson)

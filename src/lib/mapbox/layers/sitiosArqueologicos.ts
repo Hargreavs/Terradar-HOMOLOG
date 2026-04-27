@@ -1,0 +1,26 @@
+import type { CircleLayerSpecification } from 'mapbox-gl'
+
+export const sitiosArqueologicosLayer: CircleLayerSpecification = {
+  id: 'api-sitio-circle',
+  type: 'circle',
+  source: 'api-sitio-src',
+  paint: {
+    'circle-radius': [
+      'interpolate',
+      ['linear'],
+      ['zoom'],
+      4,
+      1.5,
+      8,
+      3,
+      12,
+      5,
+      16,
+      7,
+    ],
+    'circle-color': '#8B5A3C',
+    'circle-stroke-width': 1,
+    'circle-stroke-color': '#3D2817',
+    'circle-opacity': 0.85,
+  },
+}

@@ -6,7 +6,8 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import type { RiskScoreDecomposicao } from '../../types'
+import type { DadosANM, DadosFiscaisRicos, DadosTerritoriais } from '../../data/relatorio.mock'
+import type { Processo, RiskScoreDecomposicao } from '../../types'
 import {
   CORES_DIMENSAO_RISK,
   PESOS_RISK_DIMENSAO,
@@ -14,6 +15,7 @@ import {
 } from '../../lib/riskScoreDecomposicao'
 import { CamadaTooltipHover } from '../filters/CamadaTooltipHover'
 import { RiskDimensionCalcTooltipContent } from './RiskScoreCalcTooltipContent'
+import { RiskDimensaoSubfatorLazy } from './riskDimensaoSubfatorLazy'
 
 /** Escala tipográfica alinhada ao drawer (`RelatorioCompleto` FS). */
 const FS = {
@@ -133,8 +135,16 @@ function RiskPesosBarraQuatro() {
 
 export function RiskDecomposicaoRelatorioPanel({
   decomposicao,
+  processo,
+  territorial,
+  fiscalRico,
+  dadosAnm,
 }: {
   decomposicao: RiskScoreDecomposicao
+  processo: Processo
+  territorial?: DadosTerritoriais
+  fiscalRico?: DadosFiscaisRicos
+  dadosAnm?: DadosANM
 }) {
   const [aberto, setAberto] = useState<DimKey | null>(null)
 
@@ -423,6 +433,25 @@ export function RiskDecomposicaoRelatorioPanel({
                   </div>
                 )
               })}
+              {isExp &&
+                (d.det.variaveis.length === 0 || d.key === 'ambiental') ? (
+                <div
+                  style={{
+                    marginTop: varsMostrar.length > 0 ? 16 : 0,
+                    paddingTop: varsMostrar.length > 0 ? 12 : 0,
+                    borderTop: varsMostrar.length > 0 ? '1px solid #2C2C2A' : undefined,
+                  }}
+                >
+                  <RiskDimensaoSubfatorLazy
+                    dim={d.key}
+                    habilitar={isExp}
+                    processo={processo}
+                    territorial={territorial}
+                    fiscalRico={fiscalRico}
+                    dadosAnm={dadosAnm}
+                  />
+                </div>
+              ) : null}
             </PainelDetalheDimensaoAnimado>
           </div>
         )

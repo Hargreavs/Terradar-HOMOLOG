@@ -1,0 +1,6 @@
+janela,soma_ocorrencias_serie_grafico1,media_anual,n_anos,nota
+1985-1995,6866,624.18,11,calculado a partir de cpt_serie_temporal_1985_2023.csv
+2000-2010,15069,1369.91,11,
+2010-2020,16972,1542.91,11,
+2015-2023,16258,1806.44,9,compare com media narrativa 1806 (2015-2023)
+1985-2023,48901,1253.87,39,a soma da serie do Grafico 1 e 48901; total oficial Quadro 1 do Atlas = 50950 ocorrencias

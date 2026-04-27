@@ -1,5 +1,4 @@
 import rawAquiferos from './aquiferos.geojson?raw'
-import rawAppCar from './app-car.geojson?raw'
 import rawFerrovias from './ferrovias.geojson?raw'
 import rawPortos from './portos.geojson?raw'
 import rawQuilombolas from './quilombolas.geojson?raw'
@@ -16,7 +15,6 @@ export type CamadasGeoJSONData = {
   terras_indigenas: FeatureCollectionJson
   unidades_conservacao: FeatureCollectionJson
   quilombolas: FeatureCollectionJson
-  app_car: FeatureCollectionJson
   ferrovias: FeatureCollectionJson
   portos: FeatureCollectionJson
   biomas: FeatureCollectionJson
@@ -27,7 +25,8 @@ export type CamadasGeoJSONData = {
 const EMPTY_FC: FeatureCollectionJson = { type: 'FeatureCollection', features: [] }
 
 function parse(raw: string): FeatureCollectionJson {
-  return JSON.parse(raw) as FeatureCollectionJson
+  const cleaned = raw.replace(/^\uFEFF/, '').replace(/\0/g, '')
+  return JSON.parse(cleaned) as FeatureCollectionJson
 }
 
 export const CAMADAS_GEO_JSON: CamadasGeoJSONData = {
@@ -35,7 +34,6 @@ export const CAMADAS_GEO_JSON: CamadasGeoJSONData = {
   terras_indigenas: parse(rawTerrasIndigenas),
   unidades_conservacao: parse(rawUc),
   quilombolas: parse(rawQuilombolas),
-  app_car: parse(rawAppCar),
   ferrovias: parse(rawFerrovias),
   portos: parse(rawPortos),
   biomas: EMPTY_FC,

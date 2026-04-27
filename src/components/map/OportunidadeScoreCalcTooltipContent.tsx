@@ -88,11 +88,11 @@ const FORMULA: Record<
 > = {
   conservador: {
     linhas: [
-      ['Atratividade', 25],
+      ['Atratividade', 20],
       ['Viabilidade', 30],
-      ['Segurança', 45],
+      ['Segurança', 50],
     ],
-    formula: 'OS Conservador = Atrat × 0.25 + Viab × 0.30 + Seg × 0.45',
+    formula: 'OS Conservador = Atrat × 0.20 + Viab × 0.30 + Seg × 0.50',
   },
   moderado: {
     linhas: [

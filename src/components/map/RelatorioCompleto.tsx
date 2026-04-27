@@ -9,10 +9,11 @@ import {
   type CSSProperties,
   type ReactNode,
 } from 'react'
-import { ArrowUpRight, Loader2, Sparkles } from 'lucide-react'
+import { ArrowUpRight, Ban, Info, Loader2, Sparkles } from 'lucide-react'
 import { relatoriosMock } from '../../data/relatorio.mock'
 import type {
   DadosANM,
+  IntelMineral,
   ObservacoesTecnicas,
   ObservacoesTecnicasItem,
   RelatorioData,
@@ -32,10 +33,7 @@ import {
   labelSubstanciaParaExibicao,
   substanciaDesconhecida,
 } from '../../lib/substancias'
-import {
-  PREFIX_SEM_FONTE_RES_PROD,
-  textoAposSemFonteOficial,
-} from '../../lib/reportFonteResProd'
+import { textoAposSemFonteOficial } from '../../lib/reportFonteResProd'
 import {
   formatarPctTopUf,
   formatarPrecoMedioBrBrlPorT,
@@ -72,6 +70,27 @@ import { RiskDecomposicaoRelatorioPanel } from './RiskDecomposicaoRelatorioPanel
 import { OportunidadeDecomposicaoRelatorioPanel } from './OportunidadeDecomposicaoRelatorioPanel'
 import { OportunidadePerfilCalcTooltipContent } from './OportunidadeScoreCalcTooltipContent'
 import { RiskTotalCalcTooltipContent } from './RiskScoreCalcTooltipContent'
+// import { DrawerRegulatoryBadges } from "./DrawerRegulatoryBadges"; // TODO: arquivo nunca existiu no repo, componente referenciado mas nao criado (bug pre-existente em b30d6ad)
+import { ProcessoEventosTimeline } from './ProcessoEventosTimeline'
+import { useExchangeRate } from '../../context/ExchangeRateContext'
+import {
+  getSubstanceMarketState,
+  textoExplicativoFonte,
+  type SubstanceMarketState,
+} from '../../lib/substanceMarketState'
+import { useTerritorialAmbiental } from '../../hooks/useTerritorialAmbiental'
+import {
+  appOverlapTextColor,
+  distanciaTextColor,
+  formatDateBR,
+} from '../../lib/territorialAmbientalDisplay'
+import {
+  CORES_DISTANCIA,
+  type TipoAreaSensivel,
+  corDistancia,
+  textoCorDistS31,
+} from '../../lib/distanciaCor'
+import { biomaMultiplicadorS31, corMultiplicadorBioma } from '../../lib/biomaS31'
 
 type AbaId =
   | 'processo'
@@ -110,6 +129,35 @@ const FS = {
   jumbo: 58,
   highlight: 32,
 } as const
+
+const GRAMAS_POR_ONCA_TROY = 31.1034768
+
+/** Preço BRL no drawer: USD × câmbio ao vivo; se indisponível, legado da master. */
+function computePrecoBrlDrawer(
+  intel: IntelMineral,
+  liveRate: number | null,
+): { brlPorGrama: number | null; brlPorTonelada: number | null } {
+  if (liveRate != null && liveRate > 0) {
+    let brlPorGrama: number | null = null
+    if (
+      intel.unidade_preco === 'oz' &&
+      intel.preco_referencia_usd_oz != null &&
+      intel.preco_referencia_usd_oz > 0
+    ) {
+      brlPorGrama =
+        (intel.preco_referencia_usd_oz * liveRate) / GRAMAS_POR_ONCA_TROY
+    }
+    const brlPorTonelada =
+      intel.preco_medio_usd_t > 0 ? intel.preco_medio_usd_t * liveRate : null
+    return { brlPorGrama, brlPorTonelada }
+  }
+  const legG = intel.preco_brl_por_g_legacy
+  const legT = intel.preco_brl_por_t_legacy
+  return {
+    brlPorGrama: legG != null && legG > 0 ? legG : null,
+    brlPorTonelada: legT != null && legT > 0 ? legT : null,
+  }
+}
 
 /** Borda superior inativa (faixa com opacidade). */
 function hexCorParaRgba(hex: string, alpha: number): string {
@@ -437,6 +485,15 @@ const AREAS_SENSIVEIS_DIST_TOOLTIP =
 
 const AQUIFERO_HIDROGEO_TOOLTIP =
   'Dados de aquífero (CPRM/SGB): nome, unidade hidrogeológica e sobreposição com o polígono. Estudos hidrogeológicos específicos serão exigidos no licenciamento ambiental.'
+
+const AMBIENTAL_TOOLTIP_APP_HIDRICA =
+  'Área de Preservação Permanente. Faixa de proteção ao redor de rios, lagos e nascentes exigida pelo Código Florestal (Lei 12.651/2012). Sobreposição com processo minerário impede lavra sem compensação ambiental.'
+
+const AMBIENTAL_TOOLTIP_ARQUEOLOGIA =
+  'Sítios arqueológicos registrados pelo IPHAN. Processos próximos exigem Estudo de Impacto Arqueológico (EIA-Arqueo) como condicionante de licenciamento ambiental.'
+
+const AMBIENTAL_TOOLTIP_CORPO_DAGUA =
+  'Lagos, reservatórios e barragens da base BHO/SNIRH-ANA. Define faixas APP e risco de impacto hídrico no processo.'
 
 const SIGLAS_UC_COMUNS = [
   'APA',
@@ -1774,20 +1831,79 @@ export function RelatorioCompleto({
 
   const dados: RelatorioData | undefined = dadosResolved
 
+  const {
+    rate: cambioAoVivo,
+    isStale: cambioStale,
+    loading: cambioLoading,
+    fetchedAt: cambioFetchedAt,
+  } = useExchangeRate()
+
+  const commodityMarketState = useMemo((): SubstanceMarketState | null => {
+    const im = dados?.intel_mineral
+    if (!im) return null
+    const r =
+      im.reservas_br_pct_dado !== undefined
+        ? im.reservas_br_pct_dado
+        : im.reservas_brasil_mundial_pct
+    const p =
+      im.producao_br_pct_dado !== undefined
+        ? im.producao_br_pct_dado
+        : im.producao_brasil_mundial_pct
+    return getSubstanceMarketState({
+      fonte_preco: im.fonte_preco,
+      fonte_res_prod: im.fonte_res_prod,
+      reservas_br_pct: r,
+      producao_br_pct: p,
+    })
+  }, [dados?.intel_mineral])
+
+  const drawerPrecoBrl = useMemo(
+    () =>
+      dados?.intel_mineral
+        ? computePrecoBrlDrawer(dados.intel_mineral, cambioAoVivo)
+        : { brlPorGrama: null, brlPorTonelada: null },
+    [dados?.intel_mineral, cambioAoVivo],
+  )
+
+  const valorReservaBrlBiPorHaAoVivo = useMemo(() => {
+    const im = dados?.intel_mineral
+    if (
+      im?.valor_estimado_usd_ha != null &&
+      im.valor_estimado_usd_ha > 0 &&
+      cambioAoVivo != null &&
+      cambioAoVivo > 0
+    ) {
+      return (im.valor_estimado_usd_ha * cambioAoVivo) / 1_000_000_000
+    }
+    return null
+  }, [dados?.intel_mineral, cambioAoVivo])
+
   const [aba, setAba] = useState<AbaId>(abaInicial)
   const [perfilOportunidadeAtivo, setPerfilOportunidadeAtivo] =
     useState<PerfilOportunidadeOSKey>('conservador')
   const [hoverPerfilOportunidade, setHoverPerfilOportunidade] =
     useState<PerfilOportunidadeOSKey | null>(null)
+  const [cptUfData, setCptUfData] = useState<Record<string, unknown> | null>(null)
 
   useEffect(() => {
     if (aberto) setAba(abaInicial)
   }, [aberto, abaInicial, abaRiscoRequestId])
 
+  useEffect(() => {
+    if (!processo?.uf || aba !== 'territorio') return
+    const ac = new AbortController()
+    void fetch(`/api/cpt/uf/${processo.uf}`, { signal: ac.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => setCptUfData(j))
+      .catch(() => setCptUfData(null))
+    return () => ac.abort()
+  }, [aba, processo?.id, processo?.uf])
+
   const alertasOrdenados = useMemo(() => {
     if (!processo) return []
     const extras: AlertaLegislativo[] = []
     if (processo.exigencia_pendente === true) {
+      const historico = processo.ativo_derivado === false
       extras.push({
         id: 'terr-exigencia-pendente-scm',
         fonte: 'ANM',
@@ -1795,12 +1911,13 @@ export function RelatorioCompleto({
         data:
           processo.ultimo_evento_data?.trim() ||
           new Date().toISOString().slice(0, 10),
-        titulo: 'Exigência pendente',
-        resumo:
-          'Existe exigência publicada sem cumprimento registrado nos Microdados SCM.',
-        nivel_impacto: 2,
-        tipo_impacto: 'restritivo',
-        urgencia: 'imediata',
+        titulo: historico ? 'Exigência (histórico)' : 'Exigência pendente',
+        resumo: historico
+          ? 'Exigência registrada nos Microdados SCM ao encerrar o processo — consulta histórica.'
+          : 'Existe exigência publicada sem cumprimento registrado nos Microdados SCM.',
+        nivel_impacto: historico ? 1 : 2,
+        tipo_impacto: historico ? 'neutro' : 'restritivo',
+        urgencia: historico ? 'medio_prazo' : 'imediata',
       })
     }
     return [...extras, ...processo.alertas].sort(
@@ -1840,6 +1957,27 @@ export function RelatorioCompleto({
       dados?.dados_anm?.fase_atual,
     )
   }, [processo, dados?.dados_anm?.fase_atual])
+
+  // Imediatamente após os demais hooks, antes de qualquer return — ver comentario
+  // no bloco `dados` abaixo (sem geometria, zumbi).
+  const semGeom =
+    processo != null &&
+    (!Number.isFinite(processo.lat) || !Number.isFinite(processo.lng))
+
+  const dadosInsuficientes =
+    processo != null && processo.dados_insuficientes === true
+
+  const { data: ambiental, loading: ambientalLoading, error: ambientalError } =
+    useTerritorialAmbiental(
+      processo?.numero,
+      Boolean(
+        aberto &&
+          aba === 'territorio' &&
+          processo?.numero &&
+          !dadosInsuficientes &&
+          !semGeom,
+      ),
+    )
 
   if (!processo) return null
 
@@ -1887,12 +2025,14 @@ export function RelatorioCompleto({
             style={{
               display: 'flex',
               alignItems: 'center',
+              flexWrap: 'wrap',
               gap: 8,
               minWidth: 0,
               flex: 1,
             }}
           >
             <RegimeBadge regime={regimeDrawerUi} variant="drawer" />
+            {/* <DrawerRegulatoryBadges processo={processo} /> */}
           </div>
           <div
             style={{
@@ -1987,23 +2127,8 @@ export function RelatorioCompleto({
     oportunidade,
   } = dados
 
-  // Processo sem georreferenciamento SIGMINE (geom null no DB). Drawer abre
-  // normalmente com dados cadastrais/regulatórios/fiscais; análise territorial
-  // não é gerável porque depende de polígono. Usa `!Number.isFinite` para
-  // detectar o sentinel NaN injetado por `mapDbRowToMapProcesso` quando
-  // chamado com `{ permitirSemGeom: true }`.
-  const semGeom =
-    processo != null &&
-    (!Number.isFinite(processo.lat) || !Number.isFinite(processo.lng))
-
-  // Processo zumbi: requerimento de grupamento mineiro pendente. Sem geom,
-  // sem substância, sem município. Não renderizar scores/mercado/fiscal
-  // em abas que dependem desses dados. Banner vermelho no topo.
-  // Nota: dadosInsuficientes é subconjunto estrito de semGeom (todo zumbi
-  // é sem-geom, mas nem todo sem-geom é zumbi — há 1.022 processos sem
-  // SIGMINE que têm substância e município válidos).
-  const dadosInsuficientes =
-    processo != null && processo.dados_insuficientes === true
+  // `semGeom` e `dadosInsuficientes` + `useTerritorialAmbiental` estão no topo
+  // (antes de `if (!processo)` / `if (!dados)`) para respeitar a ordem dos hooks.
 
   // True quando o processo não tem Risk Score calculável. Ativa empty state
   // nas abas Risco e Oportunidade (Bloco 3a/3b). Casos cobertos:
@@ -2049,6 +2174,8 @@ export function RelatorioCompleto({
       : `${Number(processo.area_ha).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} ha`
 
   const cambioIntel = intel_mineral.cambio_brl_usd ?? metadata?.cambio
+  const cambioLegendaDrawer =
+    cambioAoVivo != null && cambioAoVivo > 0 ? cambioAoVivo : cambioIntel
   const areaHa = processo.area_ha
   /** Mi USD/ha — valor in-situ teórico por hectare (sem multiplicar pela área do processo). */
   const valorReservaUsdMiPorHa =
@@ -2068,6 +2195,8 @@ export function RelatorioCompleto({
           : intel_mineral.valor_estimado_brl_tri != null && areaHa > 0
             ? (intel_mineral.valor_estimado_brl_tri * 1000) / areaHa
             : null
+  const valorReservaBrlBiPorHaEfetivo =
+    valorReservaBrlBiPorHaAoVivo ?? valorReservaBrlBiPorHa
 
   const cfemMunicipioParaContexto =
     fiscal.cfem_municipio.length > 0
@@ -2159,13 +2288,21 @@ export function RelatorioCompleto({
       ? `UC Uso sustentável · ${ucUsNome}`
       : rotuloUcUmaLinha(ucUsNome ?? '', ucUsTipo ?? null)
 
-  const areasSensiveisTiUcRows = [
+  const areasSensiveisTiUcRows: {
+    dot: string
+    nome: string
+    tipo: string
+    km: number | null | undefined
+    semIdTexto: string
+    fator: TipoAreaSensivel
+  }[] = [
     {
       dot: DOT_TI,
       nome: nomeTiLinha,
       tipo: 'Terra Indígena' as const,
       km: territorial.distancia_ti_km,
       semIdTexto: 'Sem terra indígena na região',
+      fator: 'TI',
     },
     ...(temUcPi
       ? [
@@ -2176,6 +2313,7 @@ export function RelatorioCompleto({
             km: territorial.distancia_uc_pi_km as number,
             semIdTexto:
               'Sem unidade de conservação identificada na região monitorada',
+            fator: 'UC_PI' as TipoAreaSensivel,
           },
         ]
       : []),
@@ -2186,6 +2324,7 @@ export function RelatorioCompleto({
       km: ucUsKm,
       semIdTexto:
         'Sem unidade de conservação identificada na região monitorada',
+      fator: 'UC_US',
     },
   ]
 
@@ -2225,12 +2364,14 @@ export function RelatorioCompleto({
           style={{
             display: 'flex',
             alignItems: 'center',
+            flexWrap: 'wrap',
             gap: 8,
             minWidth: 0,
             flex: 1,
           }}
         >
           <RegimeBadge regime={regimeDrawerUi} variant="drawer" />
+          {/* <DrawerRegulatoryBadges processo={processo} /> */}
         </div>
         <div
           style={{
@@ -2341,6 +2482,53 @@ export function RelatorioCompleto({
             semGeom={semGeom}
             classificacaoZumbi={dados_anm.classificacao_zumbi ?? null}
           />
+          {processo.ativo_derivado === false ? (
+            <div
+              style={{
+                padding: '10px 12px',
+                borderRadius: 8,
+                backgroundColor: 'rgba(180, 178, 169, 0.1)',
+                border: '1px solid #2C2C2A',
+                display: 'flex',
+                gap: 10,
+                alignItems: 'flex-start',
+              }}
+            >
+              <span
+                style={{
+                  color: '#888780',
+                  fontSize: FS.md,
+                  lineHeight: 1.4,
+                  flexShrink: 0,
+                }}
+                aria-hidden
+              >
+                ⓘ
+              </span>
+              <div>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: FS.md,
+                    fontWeight: 600,
+                    color: '#D3D1C7',
+                  }}
+                >
+                  Processo encerrado
+                </p>
+                <p
+                  style={{
+                    margin: '4px 0 0',
+                    fontSize: FS.sm,
+                    color: '#888780',
+                    lineHeight: 1.45,
+                  }}
+                >
+                  Dados exibidos são históricos.
+                </p>
+              </div>
+            </div>
+          ) : null}
         {aba === 'processo' ? (
           <>
             <Card>
@@ -2532,49 +2720,13 @@ export function RelatorioCompleto({
             </Card>
 
             <Card>
-              <SecLabel branco>Último despacho ANM</SecLabel>
-              <p
-                style={{
-                  fontSize: FS.lg,
-                  color: '#888780',
-                  margin: '0 0 6px 0',
-                  lineHeight: 1.5,
-                }}
-              >
-                {formatarDataIsoPtBr(dados_anm.data_ultimo_despacho)}
-              </p>
-              <p
-                style={{
-                  fontSize: FS.lg,
-                  color: '#D3D1C7',
-                  margin: '0 0 8px 0',
-                  lineHeight: 1.5,
-                }}
-              >
-                {dados_anm.ultimo_despacho}
-              </p>
-              <a
-                href={SEI_ANM_PESQUISA_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  fontSize: FS.lg,
-                  color: '#EF9F27',
-                  margin: 0,
-                  lineHeight: 1.5,
-                  cursor: 'pointer',
-                  textDecoration: 'none',
-                  display: 'inline-block',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.textDecoration = 'underline'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.textDecoration = 'none'
-                }}
-              >
-                SEI: {dados_anm.numero_sei}
-              </a>
+              <ProcessoEventosTimeline
+                numero={processo.numero}
+                totalEventos={processo.total_eventos}
+                ativoDerivado={processo.ativo_derivado}
+                numeroSei={dados_anm.numero_sei}
+                cadastroDataIso={timestamps.cadastro_mineiro}
+              />
               {mostrarDisclaimerSEI(processo) ? (
                 <div
                   style={{
@@ -2590,15 +2742,24 @@ export function RelatorioCompleto({
                   {TEXTO_DISCLAIMER_SEI_ANM.replace(/!/g, '')}
                 </div>
               ) : null}
-              <FonteLabel
-                dataIso={timestamps.cadastro_mineiro}
-                fonte="SEI-ANM"
-              />
             </Card>
 
             {dados_anm.pendencias.length > 0 ? (
               <Card>
                 <SecLabel branco>Pendências</SecLabel>
+                {processo.ativo_derivado === false ? (
+                  <p
+                    style={{
+                      fontSize: FS.sm,
+                      color: '#888780',
+                      margin: '0 0 10px 0',
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    Registros históricos ao encerrar o processo — não indicam
+                    pendência administrativa atual.
+                  </p>
+                ) : null}
                 <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
                   {dados_anm.pendencias.map((p, i) => (
                     <li
@@ -2610,8 +2771,17 @@ export function RelatorioCompleto({
                         marginBottom: i < dados_anm.pendencias.length - 1 ? 10 : 0,
                       }}
                     >
-                      <span style={{ color: '#E24B4A', fontSize: FS.md, lineHeight: 1.4 }}>
-                        ▲
+                      <span
+                        style={{
+                          color:
+                            processo.ativo_derivado === false
+                              ? '#888780'
+                              : '#E24B4A',
+                          fontSize: FS.md,
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        {processo.ativo_derivado === false ? '◆' : '▲'}
                       </span>
                       <span style={{ fontSize: FS.md, color: '#D3D1C7', lineHeight: 1.4 }}>
                         {p}
@@ -2845,7 +3015,17 @@ export function RelatorioCompleto({
                     ? DOT_AUSENCIA_POSITIVA
                     : '#D3D1C7'
                   const distSens =
-                    row.km != null ? distanciaSensivelLabel(row.km) : null
+                    row.km != null && !Number.isNaN(Number(row.km))
+                      ? (() => {
+                          const k = Number(row.km)
+                          const s31 = textoCorDistS31(
+                            row.fator,
+                            k,
+                            k <= 0.01,
+                          )
+                          return { text: s31.text, color: s31.color }
+                        })()
+                      : null
                   return (
                     <Fragment key={i}>
                       {i > 0 ? (
@@ -3164,6 +3344,185 @@ export function RelatorioCompleto({
               />
             </Card>
 
+            {cptUfData != null && typeof cptUfData.tier === 'string' ? (
+              <Card>
+                <SecLabel branco>Pressão social · CPT</SecLabel>
+                <p style={{ fontSize: FS.sm, color: '#888780', margin: '0 0 8px 0' }}>
+                  Conflitos no campo — UF:{' '}
+                  <span style={{ color: '#D3D1C7', fontWeight: 500 }}>
+                    {processo.uf}
+                  </span>
+                </p>
+                {(() => {
+                  const mult = Number(cptUfData.multiplicador)
+                  const tier = String(cptUfData.tier)
+                  const tierMap: Record<
+                    string,
+                    { label: string; cor: string; emoji: string }
+                  > = {
+                    super_critica: {
+                      label: 'SUPER CRÍTICA',
+                      cor: '#E24B4A',
+                      emoji: '🔴',
+                    },
+                    critica: { label: 'CRÍTICA', cor: '#EF9F27', emoji: '🟠' },
+                    media: { label: 'MÉDIA', cor: '#E8A830', emoji: '🟡' },
+                    baixa: { label: 'BAIXA', cor: '#1D9E75', emoji: '🟢' },
+                  }
+                  const t = tierMap[tier] ?? tierMap.baixa
+                  const f20 = Number(cptUfData.familias_2020) || 0
+                  const f24 = Number(cptUfData.familias_2024) || 0
+                  const tend =
+                    f20 > 0 ? Math.round(((f24 - f20) / f20) * 100) : null
+                  return (
+                    <>
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: '1fr 1fr',
+                          gap: 10,
+                          marginBottom: 10,
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontSize: FS.sm, color: '#888780' }}>
+                            Ocorrências (5 anos)
+                          </div>
+                          <div style={{ fontSize: FS.lg, color: '#D3D1C7' }}>
+                            {cptUfData.total_ocorrencias_5anos != null
+                              ? Number(
+                                  cptUfData.total_ocorrencias_5anos,
+                                ).toLocaleString('pt-BR')
+                              : '—'}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: FS.sm, color: '#888780' }}>
+                            Famílias afetadas
+                          </div>
+                          <div style={{ fontSize: FS.lg, color: '#D3D1C7' }}>
+                            {cptUfData.total_familias_5anos != null
+                              ? Number(
+                                  cptUfData.total_familias_5anos,
+                                ).toLocaleString('pt-BR')
+                              : '—'}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: FS.sm, color: '#888780' }}>
+                            Tier
+                          </div>
+                          <div style={{ fontSize: FS.lg, color: t.cor }}>
+                            {t.emoji} {t.label}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: FS.sm, color: '#888780' }}>
+                            Mult. risco social
+                          </div>
+                          <div style={{ fontSize: FS.lg, color: t.cor }}>
+                            ×{Number.isFinite(mult) ? mult.toFixed(2) : '—'}
+                          </div>
+                        </div>
+                      </div>
+                      {tend != null ? (
+                        <p
+                          style={{
+                            fontSize: FS.md,
+                            color: '#888780',
+                            borderTop: '1px solid #2C2C2A',
+                            paddingTop: 8,
+                            margin: 0,
+                          }}
+                        >
+                          Tendência famílias 2020 → 2024:{' '}
+                          <span
+                            style={{
+                              color: tend > 0 ? '#E8A830' : '#1D9E75',
+                            }}
+                          >
+                            {tend > 0 ? '↗' : '↘'} {Math.abs(tend)}%
+                          </span>
+                        </p>
+                      ) : null}
+                      <p
+                        style={{
+                          fontSize: 11,
+                          color: '#5F5E5A',
+                          margin: '10px 0 0 0',
+                        }}
+                      >
+                        Fonte: Atlas CPT (Cedoc/CPT)
+                      </p>
+                    </>
+                  )
+                })()}
+              </Card>
+            ) : null}
+
+            {processo.amb_assentamento_sobrepoe === true ||
+            processo.amb_assentamento_2km === true ? (
+              <Card>
+                <SecLabel branco>Assentamento INCRA</SecLabel>
+                {processo.amb_assentamento_sobrepoe ? (
+                  <div
+                    style={{
+                      borderRadius: 6,
+                      border: '1px solid rgba(245, 158, 11, 0.4)',
+                      background: 'rgba(245, 158, 11, 0.06)',
+                      padding: 8,
+                    }}
+                  >
+                    <p
+                      style={{
+                        fontSize: FS.md,
+                        color: '#E8A830',
+                        fontWeight: 600,
+                        margin: 0,
+                      }}
+                    >
+                      Processo sobrepõe assentamento
+                    </p>
+                    <p
+                      style={{ fontSize: FS.sm, color: '#888780', margin: '6px 0 0 0' }}
+                    >
+                      Pode haver conflito fundiário · impacto no risco social
+                      (modelo S31).
+                    </p>
+                  </div>
+                ) : null}
+                {!processo.amb_assentamento_sobrepoe &&
+                processo.amb_assentamento_2km ? (
+                  <div
+                    style={{
+                      borderRadius: 6,
+                      border: '1px solid #2C2C2A',
+                      background: 'rgba(0,0,0,0.2)',
+                      padding: 8,
+                    }}
+                  >
+                    <p style={{ fontSize: FS.md, color: '#D3D1C7', margin: 0 }}>
+                      Assentamento a ≤ 2 km do processo
+                    </p>
+                    <p
+                      style={{ fontSize: FS.sm, color: '#888780', margin: '6px 0 0 0' }}
+                    >
+                      Modelo S31: atenção em licenciamento e consultas.
+                    </p>
+                  </div>
+                ) : null}
+                <p
+                  style={{
+                    fontSize: 11,
+                    color: '#5F5E5A',
+                    margin: '10px 0 0 0',
+                  }}
+                >
+                  Fonte: INCRA · polígono de assentamentos
+                </p>
+              </Card>
+            ) : null}
+
             <Card>
               <SecLabel branco>Logística</SecLabel>
               <div style={{ display: 'flex', flexDirection: 'column' }}>
@@ -3358,6 +3717,34 @@ export function RelatorioCompleto({
               >
                 {biomaImplicacoes(territorial.bioma)}
               </p>
+              {territorial.bioma && territorial.bioma.trim() !== '' ? (
+                <div
+                  style={{
+                    borderTop: '1px solid #2C2C2A',
+                    marginTop: 12,
+                    paddingTop: 10,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                  }}
+                >
+                  <span style={{ fontSize: FS.md, color: '#888780' }}>
+                    Multiplicador risco ambiental
+                  </span>
+                  <span
+                    style={{
+                      fontSize: FS.lg,
+                      fontWeight: 600,
+                      color: corMultiplicadorBioma(
+                        biomaMultiplicadorS31(territorial.bioma),
+                      ),
+                    }}
+                  >
+                    ×{biomaMultiplicadorS31(territorial.bioma).toFixed(2)}
+                  </span>
+                </div>
+              ) : null}
               <FonteLabel
                 dataIso={timestamps.unidades_conservacao}
                 fonte="IBGE / Biomas"
@@ -3525,6 +3912,247 @@ export function RelatorioCompleto({
                   />
                 </>
               )}
+            </Card>
+
+            <Card>
+              <SecLabel branco>Ambiental</SecLabel>
+              {ambientalLoading ? (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '24px 0',
+                  }}
+                >
+                  <Loader2
+                    className="h-8 w-8 shrink-0 animate-spin"
+                    style={{ color: '#888780' }}
+                    aria-hidden
+                  />
+                </div>
+              ) : ambientalError ? (
+                <p
+                  style={{
+                    fontSize: FS.md,
+                    color: '#E24B4A',
+                    margin: '8px 0 0 0',
+                  }}
+                >
+                  {ambientalError.message}
+                </p>
+              ) : ambiental ? (
+                <>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 8,
+                      marginBottom: 8,
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: FS.md,
+                        color: '#D3D1C7',
+                        flex: 1,
+                        minWidth: 0,
+                      }}
+                    >
+                      <CamadaTooltipHover
+                        texto={AMBIENTAL_TOOLTIP_APP_HIDRICA}
+                        maxWidthPx={300}
+                        inlineWrap
+                      >
+                        <span
+                          style={{
+                            cursor: 'help',
+                            textDecoration: 'underline dotted',
+                            textUnderlineOffset: 2,
+                          }}
+                        >
+                          APP Hídrica
+                        </span>
+                      </CamadaTooltipHover>
+                    </span>
+                    <span
+                      style={{
+                        fontSize: FS.md,
+                        fontWeight: 500,
+                        color: appOverlapTextColor(ambiental.app_hidrica.overlap_pct),
+                        flexShrink: 0,
+                        textAlign: 'right',
+                      }}
+                    >
+                      {ambiental.app_hidrica.overlap_pct > 0
+                        ? `${ambiental.app_hidrica.overlap_pct.toFixed(2)}% sobreposto`
+                        : 'Não verificada'}
+                    </span>
+                  </div>
+                  {ambiental.sitios_arqueologicos
+                    .slice(0, 3)
+                    .map((s, sitioIdx) => {
+                      const nomeSitio =
+                        s.nome?.trim() || s.tipo_bem || 'Sem nome'
+                      return (
+                    <div
+                      key={s.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        marginBottom: 8,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: FS.md,
+                          color: '#D3D1C7',
+                          flex: 1,
+                          minWidth: 0,
+                        }}
+                      >
+                        {sitioIdx === 0 ? (
+                          <>
+                            <CamadaTooltipHover
+                              texto={AMBIENTAL_TOOLTIP_ARQUEOLOGIA}
+                              maxWidthPx={300}
+                              inlineWrap
+                            >
+                              <span
+                                style={{
+                                  cursor: 'help',
+                                  textDecoration: 'underline dotted',
+                                  textUnderlineOffset: 2,
+                                }}
+                              >
+                                Arqueologia
+                              </span>
+                            </CamadaTooltipHover>
+                            {`: ${nomeSitio}`}
+                          </>
+                        ) : (
+                          `Arqueologia: ${nomeSitio}`
+                        )}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: FS.md,
+                          fontWeight: 500,
+                          color: CORES_DISTANCIA[corDistancia('SITIO_ARQ', s.distancia_km)]
+                            .texto,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {s.distancia_km.toFixed(2).replace('.', ',')} km
+                      </span>
+                    </div>
+                      )
+                    })}
+                  {ambiental.massas_agua
+                    .slice(0, 3)
+                    .map((m, massaIdx) => {
+                      const nomeM = m.nome?.trim()
+                      const corpoStr = (withTooltip: boolean) =>
+                        nomeM
+                          ? withTooltip
+                            ? (
+                                <>
+                                  <CamadaTooltipHover
+                                    texto={AMBIENTAL_TOOLTIP_CORPO_DAGUA}
+                                    maxWidthPx={300}
+                                    inlineWrap
+                                  >
+                                    <span
+                                      style={{
+                                        cursor: 'help',
+                                        textDecoration: 'underline dotted',
+                                        textUnderlineOffset: 2,
+                                      }}
+                                    >
+                                      {`Corpo d'água`}
+                                    </span>
+                                  </CamadaTooltipHover>
+                                  {`: ${nomeM}`}
+                                </>
+                              )
+                            : `Corpo d'água: ${nomeM}`
+                          : m.area_ha != null && !Number.isNaN(m.area_ha)
+                            ? withTooltip
+                              ? (
+                                  <>
+                                    <CamadaTooltipHover
+                                      texto={AMBIENTAL_TOOLTIP_CORPO_DAGUA}
+                                      maxWidthPx={300}
+                                      inlineWrap
+                                    >
+                                      <span
+                                        style={{
+                                          cursor: 'help',
+                                          textDecoration: 'underline dotted',
+                                          textUnderlineOffset: 2,
+                                        }}
+                                      >
+                                        {`Corpo d'água`}
+                                      </span>
+                                    </CamadaTooltipHover>
+                                    {` (${m.area_ha.toFixed(1)} ha)`}
+                                  </>
+                                )
+                              : `Corpo d'água (${m.area_ha.toFixed(1)} ha)`
+                            : "Corpo d'água"
+                      return (
+                    <div
+                      key={m.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        marginBottom: 8,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: FS.md,
+                          color: '#D3D1C7',
+                          flex: 1,
+                          minWidth: 0,
+                        }}
+                      >
+                        {corpoStr(massaIdx === 0)}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: FS.md,
+                          fontWeight: 500,
+                          color: distanciaTextColor(m.distancia_km),
+                          flexShrink: 0,
+                        }}
+                      >
+                        {m.distancia_km.toFixed(2).replace('.', ',')} km
+                      </span>
+                    </div>
+                      )
+                    })}
+                  <span
+                    style={{
+                      display: 'block',
+                      textAlign: 'right',
+                      marginTop: FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX,
+                      fontSize: 11,
+                      lineHeight: 1.45,
+                      color: '#5F5E5A',
+                    }}
+                  >
+                    Atualizado em{' '}
+                    {formatDateBR(ambiental.calculado_em)} · Fontes: IPHAN ·
+                    SNIRH-ANA · TERRADAR
+                  </span>
+                </>
+              ) : null}
             </Card>
               </>
             )}
@@ -3699,7 +4327,7 @@ export function RelatorioCompleto({
               ) : (
                 <>
               <SecLabel branco style={{ marginBottom: 2 }}>
-                Contexto global
+                Mercado desta commodity
               </SecLabel>
               <p
                 style={{
@@ -3711,310 +4339,652 @@ export function RelatorioCompleto({
               >
                 {processo.substancia.toUpperCase()}
               </p>
-              {intel_mineral.fonte_res_prod != null &&
-              intel_mineral.fonte_res_prod.startsWith(PREFIX_SEM_FONTE_RES_PROD) ? (
-                <>
-                  <p
-                    style={{
-                      fontSize: FS.md,
-                      color: '#D3D1C7',
-                      lineHeight: 1.55,
-                      margin: '0 0 12px 0',
-                      textAlign: 'center',
-                    }}
-                  >
-                    Não há fonte oficial publicada para reservas ou produção
-                    mundial desta substância.
-                  </p>
-                  {textoAposSemFonteOficial(intel_mineral.fonte_res_prod) !==
-                  '' ? (
-                    <p
+              {(() => {
+                const mercadoST = commodityMarketState ?? 'BR_PRODUTOR'
+                const temPrecoUsd =
+                  (intel_mineral.unidade_preco === 'oz' &&
+                    intel_mineral.preco_referencia_usd_oz != null &&
+                    intel_mineral.preco_referencia_usd_oz > 0) ||
+                  intel_mineral.preco_medio_usd_t > 0
+                const explicaSemFonte =
+                  textoExplicativoFonte(intel_mineral.fonte_preco) ||
+                  textoExplicativoFonte(intel_mineral.fonte_res_prod) ||
+                  textoAposSemFonteOficial(intel_mineral.fonte_res_prod ?? '')
+                if (mercadoST === 'PROIBIDO') {
+                  return (
+                    <>
+                      <div
+                        style={{
+                          borderLeft: '3px solid #E8A830',
+                          padding: '12px 14px 12px 14px',
+                          marginBottom: 12,
+                          borderRadius: 6,
+                          backgroundColor: 'rgba(232, 168, 48, 0.08)',
+                        }}
+                      >
+                        <p
+                          style={{
+                            display: 'flex',
+                            gap: 10,
+                            alignItems: 'flex-start',
+                            margin: 0,
+                            fontSize: FS.md,
+                            color: '#D3D1C7',
+                            lineHeight: 1.55,
+                          }}
+                        >
+                          <Ban
+                            size={18}
+                            style={{
+                              color: '#E8A830',
+                              flexShrink: 0,
+                              marginTop: 2,
+                            }}
+                            aria-hidden
+                          />
+                          <span>
+                            <span style={{ color: '#F1EFE8', fontWeight: 600 }}>
+                              Produção proibida no Brasil
+                            </span>
+                            <br />
+                            Material regulamentado por Lei 12.635/2012 e decisão
+                            STF 2017 (ADI 3406/3470).
+                            <br />
+                            <br />
+                            Reservas geológicas existem mas são inexploráveis
+                            legalmente.
+                          </span>
+                        </p>
+                      </div>
+                      <FonteLabel
+                        dataIso={timestamps.usgs}
+                        fonte={
+                          intel_mineral.fonte_preco != null &&
+                          intel_mineral.fonte_preco.trim() !== ''
+                            ? intel_mineral.fonte_preco
+                            : 'Fontes curadas TERRADAR'
+                        }
+                        marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
+                      />
+                    </>
+                  )
+                }
+                if (mercadoST === 'SEM_FONTE') {
+                  return (
+                    <>
+                      {temPrecoUsd ? (
+                        <p
+                          style={{
+                            fontSize: FS.sm,
+                            color: '#888780',
+                            margin: '0 0 12px 0',
+                            lineHeight: 1.45,
+                          }}
+                        >
+                          Dados de reservas e produção Brasil indisponíveis em
+                          fontes oficiais comparáveis. O preço spot segue na
+                          secção «Preço e tendência».
+                        </p>
+                      ) : null}
+                      <div
+                        style={{
+                          borderLeft: '3px solid #888780',
+                          paddingLeft: 12,
+                          marginBottom: 12,
+                        }}
+                      >
+                        <p
+                          style={{
+                            display: 'flex',
+                            gap: 8,
+                            alignItems: 'flex-start',
+                            margin: 0,
+                            fontSize: FS.md,
+                            color: '#D3D1C7',
+                            lineHeight: 1.55,
+                          }}
+                        >
+                          <Info
+                            size={18}
+                            style={{
+                              color: '#888780',
+                              flexShrink: 0,
+                              marginTop: 2,
+                            }}
+                            aria-hidden
+                          />
+                          <span>
+                            <span style={{ color: '#F1EFE8', fontWeight: 600 }}>
+                              Dados indisponíveis em fontes oficiais
+                            </span>
+                            {explicaSemFonte ? (
+                              <>
+                                <br />
+                                <br />
+                                <span style={{ color: '#888780' }}>
+                                  {explicaSemFonte}
+                                </span>
+                              </>
+                            ) : null}
+                          </span>
+                        </p>
+                      </div>
+                      <FonteLabel
+                        dataIso={timestamps.usgs}
+                        fonte={
+                          intel_mineral.fonte_res_prod != null &&
+                          intel_mineral.fonte_res_prod.trim() !== ''
+                            ? intel_mineral.fonte_res_prod
+                            : 'USGS Mineral Commodity Summaries'
+                        }
+                        marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
+                      />
+                    </>
+                  )
+                }
+                if (mercadoST === 'BR_NAO_PRODUTOR') {
+                  const { brlPorGrama, brlPorTonelada } = drawerPrecoBrl
+                  const txtRes =
+                    intel_mineral.fonte_res_prod != null &&
+                    intel_mineral.fonte_res_prod.trim() !== ''
+                      ? textoExplicativoFonte(intel_mineral.fonte_res_prod) ||
+                        intel_mineral.fonte_res_prod
+                      : ''
+                  return (
+                    <>
+                      {temPrecoUsd ? (
+                        <div style={{ marginBottom: 14 }}>
+                          {intel_mineral.unidade_preco === 'oz' &&
+                          intel_mineral.preco_referencia_usd_oz != null ? (
+                            <>
+                              <p
+                                style={{
+                                  fontSize: FS.h2,
+                                  fontWeight: 500,
+                                  color: '#F1EFE8',
+                                  margin: '0 0 6px 0',
+                                }}
+                              >
+                                USD{' '}
+                                {intel_mineral.preco_referencia_usd_oz.toLocaleString(
+                                  'pt-BR',
+                                )}
+                                /oz
+                              </p>
+                              {brlPorGrama != null ? (
+                                <p
+                                  style={{
+                                    fontSize: FS.lg,
+                                    color: 'rgba(241, 239, 232, 0.65)',
+                                    margin: '0 0 4px 0',
+                                  }}
+                                >
+                                  ≈ R${' '}
+                                  {brlPorGrama.toLocaleString('pt-BR', {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  })}
+                                  /g
+                                  {cambioLegendaDrawer != null ? (
+                                    <span
+                                      style={{
+                                        fontSize: FS.min,
+                                        color: 'rgba(241,239,232,0.4)',
+                                        fontStyle: 'italic',
+                                      }}
+                                    >
+                                      {' '}
+                                      (câmbio {cambioLegendaDrawer.toFixed(4)}
+                                      {cambioStale
+                                        ? ' — última cotação disponível'
+                                        : ''}
+                                      )
+                                    </span>
+                                  ) : null}
+                                </p>
+                              ) : cambioLoading ? (
+                                <p
+                                  style={{
+                                    fontSize: FS.sm,
+                                    color: '#888780',
+                                    margin: 0,
+                                  }}
+                                >
+                                  Obtendo câmbio…
+                                </p>
+                              ) : null}
+                            </>
+                          ) : (
+                            <>
+                              <p
+                                style={{
+                                  fontSize: FS.h2,
+                                  fontWeight: 500,
+                                  color: '#F1EFE8',
+                                  margin: '0 0 6px 0',
+                                }}
+                              >
+                                {intel_mineral.preco_medio_usd_t.toLocaleString(
+                                  'pt-BR',
+                                )}{' '}
+                                USD/t
+                              </p>
+                              {brlPorTonelada != null ? (
+                                <p
+                                  style={{
+                                    fontSize: FS.lg,
+                                    color: 'rgba(241, 239, 232, 0.65)',
+                                    margin: 0,
+                                  }}
+                                >
+                                  ≈ R${' '}
+                                  {brlPorTonelada.toLocaleString('pt-BR', {
+                                    maximumFractionDigits: 2,
+                                  })}
+                                  /t
+                                  {cambioLegendaDrawer != null ? (
+                                    <span
+                                      style={{
+                                        fontSize: FS.min,
+                                        color: 'rgba(241,239,232,0.4)',
+                                        fontStyle: 'italic',
+                                      }}
+                                    >
+                                      {' '}
+                                      (câmbio {cambioLegendaDrawer.toFixed(4)}
+                                      {cambioStale
+                                        ? ' — última cotação disponível'
+                                        : ''}
+                                      )
+                                    </span>
+                                  ) : null}
+                                </p>
+                              ) : null}
+                            </>
+                          )}
+                        </div>
+                      ) : null}
+                      <div
+                        style={{
+                          borderLeft: '3px solid #888780',
+                          paddingLeft: 12,
+                          marginBottom: 12,
+                        }}
+                      >
+                        <p
+                          style={{
+                            display: 'flex',
+                            gap: 8,
+                            alignItems: 'flex-start',
+                            margin: 0,
+                            fontSize: FS.md,
+                            color: '#D3D1C7',
+                            lineHeight: 1.55,
+                          }}
+                        >
+                          <Info
+                            size={18}
+                            style={{ color: '#888780', flexShrink: 0 }}
+                            aria-hidden
+                          />
+                          <span>
+                            <span style={{ color: '#F1EFE8', fontWeight: 600 }}>
+                              Brasil não é produtor desta commodity
+                            </span>
+                            {txtRes ? (
+                              <>
+                                <br />
+                                <br />
+                                <span style={{ color: '#888780' }}>{txtRes}</span>
+                              </>
+                            ) : null}
+                          </span>
+                        </p>
+                      </div>
+                      <FonteLabel
+                        dataIso={timestamps.usgs}
+                        fonte="USGS MCS 2026"
+                        marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
+                      />
+                    </>
+                  )
+                }
+                return (
+                  <>
+                    <div
                       style={{
-                        fontSize: FS.md,
-                        color: '#888780',
-                        lineHeight: 1.5,
-                        margin: '0 0 0 0',
-                        textAlign: 'center',
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 1fr',
+                        gap: 16,
                       }}
                     >
-                      {textoAposSemFonteOficial(intel_mineral.fonte_res_prod)}
-                    </p>
-                  ) : null}
-                </>
-              ) : (
-                <>
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '1fr 1fr',
-                      gap: 16,
-                    }}
-                  >
+                      {(() => {
+                        const pctR = intel_mineral.reservas_brasil_mundial_pct
+                        const corR =
+                          pctR > 20
+                            ? '#1D9E75'
+                            : pctR >= 5
+                              ? '#EF9F27'
+                              : '#888780'
+                        const pctP = intel_mineral.producao_brasil_mundial_pct
+                        const corP =
+                          pctP > 20
+                            ? '#1D9E75'
+                            : pctP < 5
+                              ? '#E24B4A'
+                              : '#EF9F27'
+                        return (
+                          <>
+                            <div>
+                              <p
+                                style={{
+                                  ...subsecaoTituloStyle,
+                                  margin: '0 0 2px 0',
+                                }}
+                              >
+                                Reservas Brasil
+                              </p>
+                              <p
+                                style={{
+                                  fontSize: FS.display,
+                                  fontWeight: 500,
+                                  color: corR,
+                                  margin: '0 0 6px 0',
+                                }}
+                              >
+                                {pctR}%
+                              </p>
+                              <div
+                                style={{
+                                  height: 6,
+                                  borderRadius: 3,
+                                  backgroundColor: '#2C2C2A',
+                                  overflow: 'hidden',
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    width: `${Math.min(100, pctR)}%`,
+                                    height: '100%',
+                                    backgroundColor: corR,
+                                  }}
+                                />
+                              </div>
+                              <p
+                                style={{
+                                  fontSize: FS.md,
+                                  color: SECTION_TITLE,
+                                  margin: '6px 0 0 0',
+                                }}
+                              >
+                                das reservas mundiais
+                              </p>
+                            </div>
+                            <div>
+                              <p
+                                style={{
+                                  ...subsecaoTituloStyle,
+                                  margin: '0 0 2px 0',
+                                }}
+                              >
+                                Produção Brasil
+                              </p>
+                              <p
+                                style={{
+                                  fontSize: FS.display,
+                                  fontWeight: 500,
+                                  color: corP,
+                                  margin: '0 0 6px 0',
+                                }}
+                              >
+                                {pctP}%
+                              </p>
+                              <div
+                                style={{
+                                  height: 6,
+                                  borderRadius: 3,
+                                  backgroundColor: '#2C2C2A',
+                                  overflow: 'hidden',
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    width: `${Math.min(100, pctP)}%`,
+                                    height: '100%',
+                                    backgroundColor: corP,
+                                  }}
+                                />
+                              </div>
+                              <p
+                                style={{
+                                  fontSize: FS.md,
+                                  color: SECTION_TITLE,
+                                  margin: '6px 0 0 0',
+                                }}
+                              >
+                                da produção mundial
+                              </p>
+                            </div>
+                          </>
+                        )
+                      })()}
+                    </div>
                     {(() => {
                       const pctR = intel_mineral.reservas_brasil_mundial_pct
-                      const corR =
-                        pctR > 20 ? '#1D9E75' : pctR >= 5 ? '#EF9F27' : '#888780'
                       const pctP = intel_mineral.producao_brasil_mundial_pct
-                      const corP =
-                        pctP > 20
-                          ? '#1D9E75'
-                          : pctP < 5
-                            ? '#E24B4A'
-                            : '#EF9F27'
+                      const diff = pctR - pctP
+                      const fPg = formatarGapPontosPercentuais(diff)
+                      const fX = formatarPctContextoGlobal(pctP)
+                      const fY = formatarPctContextoGlobal(pctR)
+
+                      let corGap: string
+                      let gapTxt: string
+                      let explic: string
+
+                      if (Math.abs(diff) < 0.5) {
+                        corGap = '#888780'
+                        gapTxt =
+                          Math.abs(diff) < 0.05
+                            ? 'Gap: 0 p.p.'
+                            : `Gap: ${fPg} p.p.`
+                        explic = `A participação brasileira na produção mundial (${fX}%) está alinhada à sua proporção de reservas (${fY}%).`
+                      } else if (diff > 0) {
+                        corGap = '#1D9E75'
+                        gapTxt = `Gap: +${fPg} p.p.`
+                        explic = `A produção brasileira (${fX}%) está abaixo da proporção de reservas (${fY}%), indicando potencial de expansão de ${fPg} p.p.`
+                      } else {
+                        corGap = '#E8A830'
+                        gapTxt = `Gap: ${fPg} p.p.`
+                        explic = `A produção brasileira (${fX}%) supera a proporção de reservas (${fY}%), indicando ritmo de extração acelerado`
+                      }
+
                       return (
                         <>
-                          <div>
-                            <p
-                              style={{
-                                ...subsecaoTituloStyle,
-                                margin: '0 0 2px 0',
-                              }}
-                            >
-                              Reservas Brasil
-                            </p>
-                            <p
-                              style={{
-                                fontSize: FS.display,
-                                fontWeight: 500,
-                                color: corR,
-                                margin: '0 0 6px 0',
-                              }}
-                            >
-                              {pctR}%
-                            </p>
-                            <div
-                              style={{
-                                height: 6,
-                                borderRadius: 3,
-                                backgroundColor: '#2C2C2A',
-                                overflow: 'hidden',
-                              }}
-                            >
-                              <div
-                                style={{
-                                  width: `${Math.min(100, pctR)}%`,
-                                  height: '100%',
-                                  backgroundColor: corR,
-                                }}
-                              />
-                            </div>
-                            <p
-                              style={{
-                                fontSize: FS.md,
-                                color: SECTION_TITLE,
-                                margin: '6px 0 0 0',
-                              }}
-                            >
-                              das reservas mundiais
-                            </p>
-                          </div>
-                          <div>
-                            <p
-                              style={{
-                                ...subsecaoTituloStyle,
-                                margin: '0 0 2px 0',
-                              }}
-                            >
-                              Produção Brasil
-                            </p>
-                            <p
-                              style={{
-                                fontSize: FS.display,
-                                fontWeight: 500,
-                                color: corP,
-                                margin: '0 0 6px 0',
-                              }}
-                            >
-                              {pctP}%
-                            </p>
-                            <div
-                              style={{
-                                height: 6,
-                                borderRadius: 3,
-                                backgroundColor: '#2C2C2A',
-                                overflow: 'hidden',
-                              }}
-                            >
-                              <div
-                                style={{
-                                  width: `${Math.min(100, pctP)}%`,
-                                  height: '100%',
-                                  backgroundColor: corP,
-                                }}
-                              />
-                            </div>
-                            <p
-                              style={{
-                                fontSize: FS.md,
-                                color: SECTION_TITLE,
-                                margin: '6px 0 0 0',
-                              }}
-                            >
-                              da produção mundial
-                            </p>
-                          </div>
+                          <p
+                            style={{
+                              fontSize: FS.lg,
+                              fontWeight: 500,
+                              color: corGap,
+                              margin: '16px 0 0 0',
+                              lineHeight: 1.45,
+                            }}
+                          >
+                            {gapTxt}
+                          </p>
+                          <p
+                            style={{
+                              fontSize: FS.md,
+                              color: '#888780',
+                              margin: '6px 0 0 0',
+                              lineHeight: 1.45,
+                            }}
+                          >
+                            {explic}
+                          </p>
                         </>
                       )
                     })()}
-                  </div>
-                  {(() => {
-                    const pctR = intel_mineral.reservas_brasil_mundial_pct
-                    const pctP = intel_mineral.producao_brasil_mundial_pct
-                    const diff = pctR - pctP
-                    const fPg = formatarGapPontosPercentuais(diff)
-                    const fX = formatarPctContextoGlobal(pctP)
-                    const fY = formatarPctContextoGlobal(pctR)
-
-                    let corGap: string
-                    let gapTxt: string
-                    let explic: string
-
-                    if (Math.abs(diff) < 0.5) {
-                      corGap = '#888780'
-                      gapTxt =
-                        Math.abs(diff) < 0.05
-                          ? 'Gap: 0 p.p.'
-                          : `Gap: ${fPg} p.p.`
-                      explic = `A participação brasileira na produção mundial (${fX}%) está alinhada à sua proporção de reservas (${fY}%).`
-                    } else if (diff > 0) {
-                      corGap = '#1D9E75'
-                      gapTxt = `Gap: +${fPg} p.p.`
-                      explic = `A produção brasileira (${fX}%) está abaixo da proporção de reservas (${fY}%), indicando potencial de expansão de ${fPg} p.p.`
-                    } else {
-                      corGap = '#E8A830'
-                      gapTxt = `Gap: ${fPg} p.p.`
-                      explic = `A produção brasileira (${fX}%) supera a proporção de reservas (${fY}%), indicando ritmo de extração acelerado`
-                    }
-
-                    return (
-                      <>
-                        <p
-                          style={{
-                            fontSize: FS.lg,
-                            fontWeight: 500,
-                            color: corGap,
-                            margin: '16px 0 0 0',
-                            lineHeight: 1.45,
-                          }}
-                        >
-                          {gapTxt}
-                        </p>
-                        <p
-                          style={{
-                            fontSize: FS.md,
-                            color: '#888780',
-                            margin: '6px 0 0 0',
-                            lineHeight: 1.45,
-                          }}
-                        >
-                          {explic}
-                        </p>
-                      </>
-                    )
-                  })()}
-                  <FonteLabel
-                    dataIso={timestamps.usgs}
-                    fonte={
-                      intel_mineral.fonte_res_prod != null &&
-                      intel_mineral.fonte_res_prod.trim() !== ''
-                        ? intel_mineral.fonte_res_prod
-                        : 'USGS Mineral Commodity Summaries'
-                    }
-                    marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
-                  />
-                </>
-              )}
+                    <FonteLabel
+                      dataIso={timestamps.usgs}
+                      fonte={
+                        intel_mineral.fonte_res_prod != null &&
+                        intel_mineral.fonte_res_prod.trim() !== ''
+                          ? intel_mineral.fonte_res_prod
+                          : 'USGS Mineral Commodity Summaries'
+                      }
+                      marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
+                    />
+                  </>
+                )
+              })()}
                 </>
               )}
             </Card>
 
+            {commodityMarketState !== 'PROIBIDO' ? (
             <Card>
               <SecLabel branco>Preço e tendência</SecLabel>
-              {intel_mineral.unidade_preco === 'oz' &&
-              intel_mineral.preco_referencia_usd_oz != null ? (
-                <>
-                  <p
-                    style={{
-                      fontSize: FS.h2,
-                      fontWeight: 500,
-                      color: '#F1EFE8',
-                      margin: '0 0 10px 0',
-                    }}
-                  >
-                    USD{' '}
-                    {intel_mineral.preco_referencia_usd_oz.toLocaleString('pt-BR')}
-                    /oz
-                  </p>
-                  {intel_mineral.preco_referencia_brl_g != null &&
-                  (intel_mineral.cambio_brl_usd ?? metadata?.cambio) != null ? (
-                    <>
+              {(() => {
+                const { brlPorGrama, brlPorTonelada } = drawerPrecoBrl
+                const legendaCambio =
+                  cambioLegendaDrawer != null && cambioLegendaDrawer > 0
+                    ? cambioLegendaDrawer
+                    : null
+                const dataCambioFmt = formatarDataIsoPtBr(
+                  cambioFetchedAt != null
+                    ? cambioFetchedAt.toISOString().slice(0, 10)
+                    : intel_mineral.cambio_data ?? metadata?.cambio_data,
+                )
+                return intel_mineral.unidade_preco === 'oz' &&
+                  intel_mineral.preco_referencia_usd_oz != null ? (
+                  <>
+                    <p
+                      style={{
+                        fontSize: FS.h2,
+                        fontWeight: 500,
+                        color: '#F1EFE8',
+                        margin: '0 0 10px 0',
+                      }}
+                    >
+                      USD{' '}
+                      {intel_mineral.preco_referencia_usd_oz.toLocaleString('pt-BR')}
+                      /oz
+                    </p>
+                    {cambioLoading &&
+                    brlPorGrama == null &&
+                    intel_mineral.preco_referencia_usd_oz > 0 ? (
                       <p
                         style={{
-                          fontSize: FS.h2,
-                          fontWeight: 400,
-                          color: 'rgba(241, 239, 232, 0.6)',
-                          margin: '0 0 4px 0',
+                          fontSize: FS.sm,
+                          color: '#888780',
+                          margin: '0 0 10px 0',
                         }}
                       >
-                        ≈ R${' '}
-                        {intel_mineral.preco_referencia_brl_g.toLocaleString(
-                          'pt-BR',
-                          {
+                        Obtendo câmbio USD/BRL…
+                      </p>
+                    ) : null}
+                    {brlPorGrama != null ? (
+                      <>
+                        <p
+                          style={{
+                            fontSize: FS.h2,
+                            fontWeight: 400,
+                            color: 'rgba(241, 239, 232, 0.6)',
+                            margin: '0 0 4px 0',
+                          }}
+                        >
+                          ≈ R${' '}
+                          {brlPorGrama.toLocaleString('pt-BR', {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
-                          },
-                        )}
-                        /g
-                      </p>
+                          })}
+                          /g
+                        </p>
+                        <p
+                          style={{
+                            fontSize: FS.min,
+                            color: 'rgba(241, 239, 232, 0.4)',
+                            fontStyle: 'italic',
+                            margin: '0 0 10px 0',
+                            lineHeight: 1.45,
+                          }}
+                        >
+                          (câmbio {legendaCambio != null ? legendaCambio.toFixed(4) : '—'}
+                          {cambioStale ? ' — última cotação disponível' : ''}
+                          {dataCambioFmt ? ` · ${dataCambioFmt}` : ''})
+                        </p>
+                      </>
+                    ) : null}
+                    <p
+                      style={{
+                        fontSize: FS.sm,
+                        color: 'rgba(241, 239, 232, 0.45)',
+                        margin: '0 0 10px 0',
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      {intel_mineral.preco_medio_usd_t.toLocaleString('pt-BR')} USD/t
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p
+                      style={{
+                        fontSize: FS.h2,
+                        fontWeight: 500,
+                        color: '#F1EFE8',
+                        margin: '0 0 4px 0',
+                      }}
+                    >
+                      {intel_mineral.preco_medio_usd_t.toLocaleString('pt-BR')} USD/t
+                    </p>
+                    {cambioLoading &&
+                    brlPorTonelada == null &&
+                    intel_mineral.preco_medio_usd_t > 0 ? (
                       <p
                         style={{
-                          fontSize: FS.min,
-                          color: 'rgba(241, 239, 232, 0.4)',
-                          fontStyle: 'italic',
-                          margin: '0 0 10px 0',
-                          lineHeight: 1.45,
+                          fontSize: FS.sm,
+                          color: '#888780',
+                          margin: '0 0 8px 0',
                         }}
                       >
-                        (câmbio R${' '}
-                        {(
-                          intel_mineral.cambio_brl_usd ?? metadata?.cambio
-                        )!.toLocaleString('pt-BR', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}{' '}
-                        {(() => {
-                          const d = formatarDataIsoPtBr(
-                            intel_mineral.cambio_data ?? metadata?.cambio_data,
-                          )
-                          return d ? ` em ${d}` : ''
-                        })()}
-                        )
+                        Obtendo câmbio USD/BRL…
                       </p>
-                    </>
-                  ) : null}
-                  <p
-                    style={{
-                      fontSize: FS.sm,
-                      color: 'rgba(241, 239, 232, 0.45)',
-                      margin: '0 0 10px 0',
-                      lineHeight: 1.45,
-                    }}
-                  >
-                    {intel_mineral.preco_medio_usd_t.toLocaleString('pt-BR')} USD/t
-                  </p>
-                </>
-              ) : (
-                <p
-                  style={{
-                    fontSize: FS.h2,
-                    fontWeight: 500,
-                    color: '#F1EFE8',
-                    margin: '0 0 4px 0',
-                  }}
-                >
-                  {intel_mineral.preco_medio_usd_t.toLocaleString('pt-BR')} USD/t
-                </p>
-              )}
+                    ) : null}
+                    {brlPorTonelada != null ? (
+                      <>
+                        <p
+                          style={{
+                            fontSize: FS.lg,
+                            fontWeight: 400,
+                            color: 'rgba(241, 239, 232, 0.6)',
+                            margin: '0 0 4px 0',
+                          }}
+                        >
+                          ≈ R${' '}
+                          {brlPorTonelada.toLocaleString('pt-BR', {
+                            maximumFractionDigits: 2,
+                          })}
+                          /t
+                        </p>
+                        <p
+                          style={{
+                            fontSize: FS.min,
+                            color: 'rgba(241, 239, 232, 0.4)',
+                            fontStyle: 'italic',
+                            margin: '0 0 10px 0',
+                            lineHeight: 1.45,
+                          }}
+                        >
+                          (câmbio {legendaCambio != null ? legendaCambio.toFixed(4) : '—'}
+                          {cambioStale ? ' — última cotação disponível' : ''}
+                          {dataCambioFmt ? ` · ${dataCambioFmt}` : ''})
+                        </p>
+                      </>
+                    ) : null}
+                  </>
+                )
+              })()}
               {(() => {
                 const t = intel_mineral.tendencia_preco
                 const cfg =
@@ -4143,6 +5113,7 @@ export function RelatorioCompleto({
                 marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
               />
             </Card>
+            ) : null}
 
             <Card>
               <SecLabel branco>Aplicações</SecLabel>
@@ -4248,14 +5219,16 @@ export function RelatorioCompleto({
                   fontWeight: 500,
                   color: '#EF9F27',
                   margin:
-                    valorReservaBrlBiPorHa != null ? '0 0 8px 0' : '0 0 20px 0',
+                    valorReservaBrlBiPorHaEfetivo != null
+                      ? '0 0 8px 0'
+                      : '0 0 20px 0',
                 }}
               >
                 {valorReservaUsdMiPorHa != null
                   ? `${formatarUsdMiInteligente(valorReservaUsdMiPorHa)}/ha`
                   : '—'}
               </p>
-              {valorReservaBrlBiPorHa != null ? (
+              {valorReservaBrlBiPorHaEfetivo != null ? (
                 <>
                   <p
                     style={{
@@ -4263,20 +5236,17 @@ export function RelatorioCompleto({
                       fontWeight: 500,
                       color: 'rgba(232, 168, 48, 0.7)',
                       margin:
-                        (intel_mineral.cambio_brl_usd ?? metadata?.cambio) !=
-                        null
-                          ? '0 0 4px 0'
-                          : '0 0 16px 0',
+                        cambioLegendaDrawer != null ? '0 0 4px 0' : '0 0 16px 0',
                     }}
                   >
                     ≈ R${' '}
-                    {valorReservaBrlBiPorHa.toLocaleString('pt-BR', {
+                    {valorReservaBrlBiPorHaEfetivo.toLocaleString('pt-BR', {
                       minimumFractionDigits: 2,
                       maximumFractionDigits: 2,
                     })}{' '}
                     bi/ha
                   </p>
-                  {(intel_mineral.cambio_brl_usd ?? metadata?.cambio) != null ? (
+                  {cambioLegendaDrawer != null ? (
                     <p
                       style={{
                         fontSize: FS.min,
@@ -4286,18 +5256,15 @@ export function RelatorioCompleto({
                         lineHeight: 1.45,
                       }}
                     >
-                      (câmbio R${' '}
-                      {(
-                        intel_mineral.cambio_brl_usd ?? metadata?.cambio
-                      )!.toLocaleString('pt-BR', {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
+                      (câmbio {cambioLegendaDrawer.toFixed(4)}
+                      {cambioStale ? ' — última cotação disponível' : ''}
                       {(() => {
                         const d = formatarDataIsoPtBr(
-                          intel_mineral.cambio_data ?? metadata?.cambio_data,
+                          cambioFetchedAt != null
+                            ? cambioFetchedAt.toISOString().slice(0, 10)
+                            : intel_mineral.cambio_data ?? metadata?.cambio_data,
                         )
-                        return d ? ` em ${d}` : ''
+                        return d ? ` · ${d}` : ''
                       })()}
                       )
                     </p>
@@ -4626,7 +5593,7 @@ export function RelatorioCompleto({
                       risco operacional para processo encerrado ou extinto.
                     </p>
                   ) : null}
-                  {processo.risk_breakdown ? (
+                  {(riskDecomposicaoMemo || processo.risk_breakdown) ? (
                     <div
                       style={{
                         marginTop: 18,
@@ -4639,12 +5606,21 @@ export function RelatorioCompleto({
                       }}
                     >
                       {(
-                        [
-                          ['Geológico', processo.risk_breakdown.geologico],
-                          ['Ambiental', processo.risk_breakdown.ambiental],
-                          ['Social', processo.risk_breakdown.social],
-                          ['Regulatório', processo.risk_breakdown.regulatorio],
-                        ] as const
+                        riskDecomposicaoMemo
+                          ? [
+                              ['Geológico', riskDecomposicaoMemo.geologico.score],
+                              ['Ambiental', riskDecomposicaoMemo.ambiental.score],
+                              ['Social', riskDecomposicaoMemo.social.score],
+                              ['Regulatório', riskDecomposicaoMemo.regulatorio.score],
+                            ] as const
+                          : processo.risk_breakdown
+                            ? [
+                                ['Geológico', processo.risk_breakdown.geologico],
+                                ['Ambiental', processo.risk_breakdown.ambiental],
+                                ['Social', processo.risk_breakdown.social],
+                                ['Regulatório', processo.risk_breakdown.regulatorio],
+                              ] as const
+                            : []
                       ).map(([label, val]) => {
                         const cor = corFaixaRisco(val)
                         return (
@@ -4709,7 +5685,7 @@ export function RelatorioCompleto({
               )}
               <FonteLabel
                 dataIso={timestamps.cadastro_mineiro}
-                fonte="Terrae, com dados ANM, FUNAI, ICMBio e IBGE"
+                fonte="TERRADAR, com dados ANM, FUNAI, ICMBio e IBGE"
                 marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
               />
             </Card>
@@ -4718,6 +5694,10 @@ export function RelatorioCompleto({
               <Card>
                 <RiskDecomposicaoRelatorioPanel
                   decomposicao={riskDecomposicaoMemo}
+                  processo={processo}
+                  territorial={territorial}
+                  fiscalRico={fiscal}
+                  dadosAnm={dados_anm}
                 />
               </Card>
             ) : null}

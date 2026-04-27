@@ -1,0 +1,209 @@
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
+
+const CACHE_MS = 60 * 60 * 1000
+const LS_KEY = 'terrae-usd-brl-exchange-v1'
+
+type LsPayload = { rate: number; fetchedAt: string }
+
+export type ExchangeRateContextValue = {
+  rate: number | null
+  loading: boolean
+  error: string | null
+  fetchedAt: Date | null
+  isStale: boolean
+  refresh: () => Promise<void>
+}
+
+const defaultValue: ExchangeRateContextValue = {
+  rate: null,
+  loading: false,
+  error: null,
+  fetchedAt: null,
+  isStale: false,
+  refresh: async () => {},
+}
+
+const ExchangeRateContext = createContext<ExchangeRateContextValue | null>(
+  null,
+)
+
+let inFlight: Promise<number> | null = null
+
+function readLs(): LsPayload | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(LS_KEY)
+    if (!raw) return null
+    const p = JSON.parse(raw) as LsPayload
+    if (
+      typeof p.rate !== 'number' ||
+      !Number.isFinite(p.rate) ||
+      typeof p.fetchedAt !== 'string'
+    ) {
+      return null
+    }
+    return p
+  } catch {
+    return null
+  }
+}
+
+function writeLs(rate: number, fetchedAt: Date): void {
+  if (typeof window === 'undefined') return
+  try {
+    const payload: LsPayload = { rate, fetchedAt: fetchedAt.toISOString() }
+    localStorage.setItem(LS_KEY, JSON.stringify(payload))
+  } catch {
+    /* ignore quota */
+  }
+}
+
+async function fetchAwesomeUsdBrl(): Promise<number> {
+  const res = await fetch(
+    'https://economia.awesomeapi.com.br/json/last/USD-BRL',
+    { cache: 'no-store' },
+  )
+  if (!res.ok) throw new Error(`AwesomeAPI ${res.status}`)
+  const j = (await res.json()) as { USDBRL?: { bid?: string } }
+  const bid = j.USDBRL?.bid
+  const n = bid != null ? Number.parseFloat(bid) : NaN
+  if (!Number.isFinite(n) || n <= 0) throw new Error('AwesomeAPI bid inválido')
+  return n
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0')
+}
+
+async function fetchBcbPtaxUsdBrl(): Promise<number> {
+  const d = new Date()
+  const dataCotacao = `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}-${d.getFullYear()}`
+  const url =
+    `https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/CotacaoDolarDia(dataCotacao=@dataCotacao)?@dataCotacao='${dataCotacao}'&$format=json`
+  const res = await fetch(url, { cache: 'no-store' })
+  if (!res.ok) throw new Error(`BCB PTAX ${res.status}`)
+  const json = (await res.json()) as {
+    value?: Array<{ cotacaoCompra?: number; cotacaoVenda?: number }>
+  }
+  const row = json.value?.[0]
+  if (!row) throw new Error('BCB PTAX vazio')
+  const c = Number(row.cotacaoCompra)
+  const v = Number(row.cotacaoVenda)
+  if (!Number.isFinite(c) || !Number.isFinite(v) || c <= 0 || v <= 0) {
+    throw new Error('BCB cotação inválida')
+  }
+  return (c + v) / 2
+}
+
+async function fetchUsdBrlRate(): Promise<number> {
+  if (inFlight) return inFlight
+  inFlight = (async () => {
+    try {
+      return await fetchAwesomeUsdBrl()
+    } catch {
+      return await fetchBcbPtaxUsdBrl()
+    }
+  })().finally(() => {
+    inFlight = null
+  })
+  return inFlight
+}
+
+export function ExchangeRateProvider({ children }: { children: ReactNode }) {
+  const [rate, setRate] = useState<number | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [fetchedAt, setFetchedAt] = useState<Date | null>(null)
+  const [isStale, setIsStale] = useState(false)
+  const memoryRef = useRef<{ rate: number; at: number } | null>(null)
+
+  const runFetch = useCallback(
+    async (opts?: { allowStaleFallback?: boolean }) => {
+      const allowStale = opts?.allowStaleFallback !== false
+      const now = Date.now()
+      const mem = memoryRef.current
+      if (mem && now - mem.at < CACHE_MS) {
+        setRate(mem.rate)
+        setFetchedAt(new Date(mem.at))
+        setIsStale(false)
+        setLoading(false)
+        setError(null)
+        return
+      }
+
+      setLoading(true)
+      setError(null)
+      try {
+        const r = await fetchUsdBrlRate()
+        const at = Date.now()
+        memoryRef.current = { rate: r, at }
+        writeLs(r, new Date(at))
+        setRate(r)
+        setFetchedAt(new Date(at))
+        setIsStale(false)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Falha ao obter câmbio'
+        setError(msg)
+        const ls = readLs()
+        if (allowStale && ls != null && Number.isFinite(ls.rate) && ls.rate > 0) {
+          setRate(ls.rate)
+          setFetchedAt(new Date(ls.fetchedAt))
+          setIsStale(true)
+        } else if (mem && allowStale) {
+          setRate(mem.rate)
+          setFetchedAt(new Date(mem.at))
+          setIsStale(true)
+        } else {
+          setRate(null)
+          setFetchedAt(null)
+          setIsStale(false)
+        }
+      } finally {
+        setLoading(false)
+      }
+    },
+    [],
+  )
+
+  useEffect(() => {
+    void runFetch()
+  }, [runFetch])
+
+  const refresh = useCallback(async () => {
+    memoryRef.current = null
+    await runFetch()
+  }, [runFetch])
+
+  const value = useMemo(
+    () => ({
+      rate,
+      loading,
+      error,
+      fetchedAt,
+      isStale,
+      refresh,
+    }),
+    [rate, loading, error, fetchedAt, isStale, refresh],
+  )
+
+  return (
+    <ExchangeRateContext.Provider value={value}>
+      {children}
+    </ExchangeRateContext.Provider>
+  )
+}
+
+export function useExchangeRate(): ExchangeRateContextValue {
+  const ctx = useContext(ExchangeRateContext)
+  if (!ctx) return defaultValue
+  return ctx
+}

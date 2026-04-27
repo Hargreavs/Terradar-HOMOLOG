@@ -158,7 +158,7 @@ export function MapSearchBar({
     if (processoEhInativoParaCamadaMapa(p) && !st.filtros.exibirProcessosInativos) {
       st.setFiltro('exibirProcessosInativos', true)
     }
-    st.selecionarProcesso(p)
+    st.selecionarProcesso(p, 'busca')
   }, [])
 
   const sugestoes = useMemo(

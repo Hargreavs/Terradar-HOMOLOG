@@ -39,7 +39,7 @@ export interface UseProcessosViewportOptions {
 
 /**
  * Fetch bbox-aware do endpoint /api/processos/viewport.
- * - Debounce padrão 300ms pra pan suave não disparar 20 requests.
+ * - Debounce padrão 200ms pra pan suave não disparar 20 requests.
  * - Aborta fetch anterior ao mudar bbox/zoom.
  * - Retorna FeatureCollection vazia quando disabled ou bbox nulo.
  * - Em falha, retorna null (chamador decide).
@@ -49,7 +49,7 @@ export function useProcessosViewport({
   bbox,
   zoom,
   limit = 5000,
-  debounceMs = 300,
+  debounceMs = 200,
   exibirProcessosAtivos,
   exibirProcessosInativos,
 }: UseProcessosViewportOptions): GeoJSONFeatureCollection | null {
@@ -59,6 +59,12 @@ export function useProcessosViewport({
 
   useEffect(() => {
     if (!enabled || !bbox) {
+      abortRef.current?.abort()
+      abortRef.current = null
+      if (timerRef.current != null) {
+        window.clearTimeout(timerRef.current)
+        timerRef.current = null
+      }
       setData(EMPTY_FC)
       return
     }
@@ -112,6 +118,8 @@ export function useProcessosViewport({
         window.clearTimeout(timerRef.current)
         timerRef.current = null
       }
+      abortRef.current?.abort()
+      abortRef.current = null
     }
   }, [
     enabled,

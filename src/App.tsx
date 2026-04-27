@@ -20,6 +20,7 @@ import {
   motionMs,
   motionStaggerBaseMs,
 } from './lib/motionDurations'
+import { ExchangeRateProvider } from './context/ExchangeRateContext'
 
 function readCssMs(varName: string, fallback: number): number {
   if (typeof window === 'undefined') return fallback
@@ -204,6 +205,7 @@ export default function App() {
   const intelStaggerBase = motionStaggerBaseMs(reducedMotion)
 
   return (
+    <ExchangeRateProvider>
     <div className="flex h-screen flex-col overflow-hidden bg-dark-primary">
       <Navbar />
       <div
@@ -260,5 +262,6 @@ export default function App() {
         ) : null}
       </div>
     </div>
+    </ExchangeRateProvider>
   )
 }

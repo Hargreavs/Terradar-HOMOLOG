@@ -30,4 +30,7 @@ Docs/export-pdf/
 tmp/
 data/
 node_modules/
+.env
 .env.local
+# Notas do Cursor (efemeras)
+CURSOR_*.md

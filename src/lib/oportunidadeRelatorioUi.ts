@@ -16,7 +16,7 @@ export const PESOS_OS_CONSERVADOR = {
 
 /** Pesos por perfil (Config-Scores). */
 export const PESOS_OS_POR_PERFIL = {
-  conservador: { atratividade: 0.25, viabilidade: 0.3, seguranca: 0.45 },
+  conservador: { atratividade: 0.2, viabilidade: 0.3, seguranca: 0.5 },
   moderado: { atratividade: 0.4, viabilidade: 0.3, seguranca: 0.3 },
   arrojado: { atratividade: 0.55, viabilidade: 0.25, seguranca: 0.2 },
 } as const

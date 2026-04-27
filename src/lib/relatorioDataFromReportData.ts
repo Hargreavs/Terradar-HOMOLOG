@@ -18,8 +18,9 @@ import type {
   Timestamps,
   VariavelOportunidadeMock,
 } from '../data/relatorio.mock'
-import type { ReportData } from './reportTypes'
+import type { MasterSubstancia, ReportData } from './reportTypes'
 import type { Processo } from '../types'
+import { buildAtratividadeItemsS31 } from './s31SubfatorDecomp'
 import {
   PESOS_OS_POR_PERFIL,
   corFaixaOS,
@@ -271,11 +272,34 @@ function territorialFromReport(
     }
   }
 
+  const dTiDenorm = processo.dist_ti
+  if (dTiDenorm != null && Number.isFinite(Number(dTiDenorm))) {
+    distancia_ti_km = Number(dTiDenorm)
+  }
+  const dUcDenorm = processo.dist_uc
+  if (dUcDenorm != null && Number.isFinite(Number(dUcDenorm))) {
+    distancia_uc_us_km = Number(dUcDenorm)
+  }
+  const dAqDenorm = processo.dist_aquifero
+  if (dAqDenorm != null && Number.isFinite(Number(dAqDenorm))) {
+    distancia_aquifero_km = Number(dAqDenorm)
+    if (Number(dAqDenorm) === 0) sobreposicao_aquifero = true
+  }
+  const dFvDenorm = processo.dist_ferrovia
+  if (dFvDenorm != null && Number.isFinite(Number(dFvDenorm))) {
+    const df = Number(dFvDenorm)
+    distancia_ferrovia_km = df
+    distancia_ferrovia_operacional_km = df
+  }
+
   return {
     distancia_ti_km,
     nome_ti_proxima,
     fase_ti: null,
-    distancia_uc_km: nome_uc_us_proxima ? distancia_uc_us_km : null,
+    distancia_uc_km:
+      nome_uc_us_proxima || distancia_uc_us_km != null
+        ? distancia_uc_us_km
+        : null,
     nome_uc_proxima: nome_uc_us_proxima ?? nome_uc_pi_proxima,
     tipo_uc: tipo_uc_us ?? tipo_uc_pi,
     nome_uc_us_proxima,
@@ -344,7 +368,15 @@ function intelFromReport(rd: ReportData, _processo: Processo): IntelMineral {
 
   return {
     substancia_contexto: rd.substancia_anm,
+    fonte_preco: rd.fonte_preco,
     fonte_res_prod: rd.fonte_res_prod,
+    reservas_br_pct_dado: rd.reservas_br_pct_raw,
+    producao_br_pct_dado: rd.producao_br_pct_raw,
+    preco_brl_por_t_legacy: rd.preco_brl_por_t,
+    preco_brl_por_g_legacy:
+      rd.preco_g_brl > 0 && Number.isFinite(rd.preco_g_brl)
+        ? rd.preco_g_brl
+        : null,
     tipo_mercado: rd.tipo_mercado ?? null,
     producao_br_absoluta_t: rd.producao_br_absoluta_t ?? null,
     valor_producao_br_brl: rd.valor_producao_br_brl ?? null,
@@ -379,7 +411,8 @@ function intelFromReport(rd: ReportData, _processo: Processo): IntelMineral {
     potencial_reserva_estimado_t: null,
     valor_estimado_usd_mi: 0,
     valor_estimado_usd_ha: rd.valor_insitu_usd_ha,
-    valor_estimado_brl_ha: rd.valor_insitu_usd_ha * rd.ptax,
+    valor_estimado_brl_ha:
+      rd.ptax > 0 ? rd.valor_insitu_usd_ha * rd.ptax : 0,
     metodologia_estimativa:
       'Valores derivados do motor de scores e master de substâncias.',
     processos_vizinhos: [],
@@ -596,17 +629,36 @@ function cruzamentoOportunidadeDrawer(
   }
 }
 
+function parsePenalidadesMotor(
+  dimOportunidadePersistida?: Processo['dimensoes_oportunidade_persistido'],
+): string[] {
+  if (dimOportunidadePersistida == null || typeof dimOportunidadePersistida !== 'object') {
+    return []
+  }
+  const raw = dimOportunidadePersistida as Record<string, unknown>
+  const p = raw.penalidades
+  if (!Array.isArray(p)) return []
+  return p.filter((x): x is string => typeof x === 'string' && x.trim() !== '')
+}
+
 function oportunidadeFromReport(
   rd: ReportData,
-  dimOportunidadePersistida?: Processo['dimensoes_oportunidade_persistido'],
+  dimOportunidadePersistida: Processo['dimensoes_oportunidade_persistido'],
+  processo: Processo,
+  mercado: MasterSubstancia | null,
 ): RelatorioOportunidadeData {
-  const mkVar = (nome: string, texto: string): VariavelOportunidadeMock => ({
-    nome,
-    valor: 0,
-    peso: 0,
-    texto,
-    impacto_neutro: true as const,
-  })
+  const labelMap = {
+    atratividade: 'Atratividade',
+    viabilidade: 'Viabilidade',
+    seguranca: 'Segurança',
+  } as const
+
+  const dimValOf = (dimKey: keyof typeof labelMap) =>
+    dimKey === 'atratividade'
+      ? rd.os_merc.valor
+      : dimKey === 'viabilidade'
+        ? rd.os_viab.valor
+        : rd.os_seg.valor
 
   const mapSub = (s: Record<string, unknown>): VariavelOportunidadeMock => ({
     nome: String(s.nome ?? ''),
@@ -640,12 +692,38 @@ function oportunidadeFromReport(
         )
       }
     }
-    const labelMap = {
-      atratividade: 'Atratividade',
-      viabilidade: 'Viabilidade',
-      seguranca: 'Segurança',
-    } as const
-    return [mkVar(labelMap[dimKey], 'Dimensão calculada automaticamente.')]
+    if (dimKey === 'atratividade') {
+      const items = buildAtratividadeItemsS31(processo, mercado)
+      const rows: VariavelOportunidadeMock[] = items.map((it) => ({
+        nome: it.nome,
+        valor: Math.round(it.valor),
+        peso: Math.round(it.peso * 100),
+        texto:
+          it.fonte ??
+          'Subfator ilustrativo (S31 v1.1; motor preenche JSONB em v1.1+).',
+        valor_bruto: it.valor,
+        impacto_neutro: false,
+      }))
+      if (mercado?.mineral_critico_2025) {
+        rows.push({
+          nome: 'Bônus mineral crítico 2025',
+          valor: 10,
+          peso: 0,
+          texto: 'Condicionado ao consolidado do motor S31.',
+          impacto_neutro: true,
+        })
+      }
+      return rows
+    }
+    return [
+      {
+        nome: labelMap[dimKey],
+        valor: dimValOf(dimKey),
+        peso: 100,
+        texto: 'Dimensão calculada automaticamente (motor S31).',
+        impacto_neutro: false,
+      },
+    ]
   }
 
   // Helper: gera perfil consistente mesmo quando o OS vem `null` (processo
@@ -667,6 +745,7 @@ function oportunidadeFromReport(
       moderado: perfilDe(rd.os_moderado, 'moderado'),
       arrojado: perfilDe(rd.os_arrojado, 'arrojado'),
     },
+    penalidades: parsePenalidadesMotor(dimOportunidadePersistida),
     dimensoes: {
       atratividade: {
         valor: rd.os_merc.valor,
@@ -817,6 +896,7 @@ function observacoesTecnicasFromReport(
 export function relatorioDataFromReportData(
   rd: ReportData,
   processo: Processo,
+  mercado?: MasterSubstancia | null,
 ): RelatorioData {
   const ts = todayIso()
   const timestamps: Timestamps = {
@@ -924,6 +1004,8 @@ export function relatorioDataFromReportData(
     oportunidade: oportunidadeFromReport(
       rd,
       processo.dimensoes_oportunidade_persistido,
+      processo,
+      mercado ?? null,
     ),
   }
 }

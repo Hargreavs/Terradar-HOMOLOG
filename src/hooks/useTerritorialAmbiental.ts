@@ -1,0 +1,47 @@
+import { useEffect, useState } from 'react'
+import { fetchTerritorialAmbiental } from '../lib/processoApi'
+import type { TerritorialAmbientalResponse } from '../types/territorialAmbiental'
+
+export function useTerritorialAmbiental(
+  processoNumero: string | null | undefined,
+  enabled: boolean,
+) {
+  const [data, setData] = useState<TerritorialAmbientalResponse | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<Error | null>(null)
+
+  useEffect(() => {
+    if (!enabled || !processoNumero?.trim()) {
+      setData(null)
+      setError(null)
+      setLoading(false)
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+    const ac = new AbortController()
+
+    fetchTerritorialAmbiental(processoNumero, ac.signal)
+      .then((d) => {
+        if (ac.signal.aborted) return
+        setData(d)
+        setError(null)
+      })
+      .catch((e: unknown) => {
+        if (e instanceof Error && e.name === 'AbortError') return
+        if (ac.signal.aborted) return
+        setData(null)
+        setError(e instanceof Error ? e : new Error(String(e)))
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setLoading(false)
+      })
+
+    return () => {
+      ac.abort()
+    }
+  }, [processoNumero, enabled])
+
+  return { data, loading, error }
+}

@@ -1,33 +1,20 @@
 import { useCallback, useMemo, useState, type CSSProperties } from 'react'
 import { BarChart3, MapPin, Scale, Shield, TrendingUp } from 'lucide-react'
-import { UFS_INTEL_DASHBOARD } from './InteligenciaDashboard'
+import { UFS_BRASIL } from '../../lib/radar/ufs'
 import { ProspeccaoAnimations } from './ProspeccaoAnimations'
 import { ObjetivoCard, RiscoCard } from './ProspeccaoCards'
 import type { ObjetivoProspeccao, PerfilRisco } from '../../lib/opportunityScore'
-import { corSubstanciaOuUndefined } from '../../lib/corSubstancia'
-import { TODAS_SUBST } from '../../lib/substancias'
 
-
-/** Exibição das pills (title case por palavra); valores internos permanecem como no catálogo. */
-function substanciaPillLabel(raw: string): string {
-  return raw
-    .split(/\s+/)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(' ')
-}
-
-const STEP_TITLES: Record<1 | 2 | 3 | 4, string> = {
+const STEP_TITLES: Record<1 | 2 | 3, string> = {
   1: 'Qual seu objetivo com esta prospecção?',
-  2: 'Quais substâncias te interessam?',
-  3: 'Qual seu apetite de risco?',
-  4: 'Preferência geográfica',
+  2: 'Qual seu apetite de risco?',
+  3: 'Preferência geográfica',
 }
 
-const STEP_SUBTEXTS: Record<1 | 2 | 3 | 4, string> = {
+const STEP_SUBTEXTS: Record<1 | 2 | 3, string> = {
   1: 'Escolha o que melhor descreve sua busca.',
-  2: 'Selecione uma ou mais substâncias.',
-  3: 'Isso ajusta os pesos da Pontuação de Oportunidade.',
-  4: 'Opcional. Deixe em branco para analisar todo o Brasil.',
+  2: 'Isso ajusta os pesos da Pontuação de Oportunidade.',
+  3: 'Opcional. Deixe em branco para analisar todo o Brasil.',
 }
 
 const navGhostButtonStyle: CSSProperties = {
@@ -42,64 +29,50 @@ const navGhostButtonStyle: CSSProperties = {
 
 export function ProspeccaoWizard({
   reducedMotion,
-  prospeccaoSubstOpcoes,
-  proPrefixSub: _proPrefixSub,
   proObjetivo,
   setProObjetivo,
-  proSubst,
-  setProSubst,
   proRisco,
   setProRisco,
   proUfs,
   setProUfs,
-  proDdSub: _proDdSub,
-  setProDdSub: _setProDdSub,
   onCancel,
   onAnalisar,
   exiting = false,
   initialStep,
 }: {
   reducedMotion: boolean
-  prospeccaoSubstOpcoes: string[]
-  proPrefixSub: string
   proObjetivo: ObjetivoProspeccao | null
   setProObjetivo: (o: ObjetivoProspeccao | null) => void
-  proSubst: string[]
-  setProSubst: (s: string[]) => void
   proRisco: PerfilRisco | null
   setProRisco: (r: PerfilRisco | null) => void
   proUfs: string[]
   setProUfs: (u: string[]) => void
-  proDdSub: boolean
-  setProDdSub: (v: boolean) => void
   onCancel: () => void
   onAnalisar: () => void
   exiting?: boolean
-  initialStep?: 1 | 2 | 3 | 4
+  initialStep?: 1 | 2 | 3
 }) {
-  const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(() => initialStep ?? 1)
+  const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(() => initialStep ?? 1)
   const [stepContentVisible, setStepContentVisible] = useState(true)
   const [animationVisible, setAnimationVisible] = useState(true)
-  const [animationStep, setAnimationStep] = useState<1 | 2 | 3 | 4>(() => initialStep ?? 1)
+  const [animationStep, setAnimationStep] = useState<1 | 2 | 3>(() => initialStep ?? 1)
 
   const stepValido = useMemo(() => {
     switch (currentStep) {
       case 1:
         return proObjetivo != null
       case 2:
-        return proSubst.length > 0
-      case 3:
         return proRisco != null
-      case 4:
+      case 3:
         return true
       default:
         return false
     }
-  }, [currentStep, proObjetivo, proRisco, proSubst.length])
+  }, [currentStep, proObjetivo, proRisco])
 
   const changeStep = useCallback(
     (newStep: number) => {
-      const ns = newStep as 1 | 2 | 3 | 4
+      const ns = newStep as 1 | 2 | 3
       if (reducedMotion) {
         setCurrentStep(ns)
         setAnimationStep(ns)
@@ -120,7 +93,7 @@ export function ProspeccaoWizard({
   )
 
   const handleNextStep = () => {
-    if (currentStep < 4) changeStep(currentStep + 1)
+    if (currentStep < 3) changeStep(currentStep + 1)
   }
 
   const handlePrevStep = () => {
@@ -150,26 +123,6 @@ export function ProspeccaoWizard({
     marginBottom: 24,
   }
 
-  const substanciasSemTodas = prospeccaoSubstOpcoes.filter((s) => s !== TODAS_SUBST)
-
-  const toggleTodasSubst = () => {
-    if (proSubst.includes(TODAS_SUBST)) setProSubst([])
-    else setProSubst([TODAS_SUBST])
-  }
-
-  const togglePillSubstancia = (substancia: string) => {
-    if (proSubst.includes(TODAS_SUBST)) {
-      const todas = prospeccaoSubstOpcoes.filter((s) => s !== TODAS_SUBST && s !== substancia)
-      setProSubst(todas)
-      return
-    }
-    if (proSubst.includes(substancia)) {
-      setProSubst(proSubst.filter((s) => s !== substancia))
-    } else {
-      setProSubst([...proSubst, substancia])
-    }
-  }
-
   const h2Style: CSSProperties = {
     fontSize: 22,
     fontWeight: 500,
@@ -193,7 +146,7 @@ export function ProspeccaoWizard({
     >
       <div
         style={{
-          flex: '0 0 50%',
+          flex: '1 1 50%',
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'flex-start',
@@ -201,11 +154,22 @@ export function ProspeccaoWizard({
           paddingTop: '18vh',
           boxSizing: 'border-box',
           minHeight: 0,
+          minWidth: 0,
           overflow: 'hidden',
           ...exitingLeftStyle,
         }}
       >
-        <div style={{ maxWidth: 480, width: '100%' }}>
+        <div
+          style={{
+            maxWidth: 480,
+            width: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0,
+            flex: 1,
+            overflow: 'hidden',
+          }}
+        >
           <div style={{ marginBottom: 32 }}>
             <div
               style={{
@@ -217,7 +181,7 @@ export function ProspeccaoWizard({
                 marginBottom: 12,
               }}
             >
-              Etapa {currentStep} de 4
+              Etapa {currentStep} de 3
             </div>
             <div
               style={{
@@ -227,7 +191,7 @@ export function ProspeccaoWizard({
                 maxWidth: 280,
               }}
             >
-              {([1, 2, 3, 4] as const).map((step) => (
+              {([1, 2, 3] as const).map((step) => (
                 <div
                   key={step}
                   style={{
@@ -245,7 +209,16 @@ export function ProspeccaoWizard({
           <h2 style={h2Style}>{STEP_TITLES[currentStep]}</h2>
           <p style={subtextStyle}>{STEP_SUBTEXTS[currentStep]}</p>
 
-          <div style={stepContentStyle}>
+          <div
+            style={{
+              ...stepContentStyle,
+              display: 'flex',
+              flexDirection: 'column',
+              flex: '0 0 auto',
+              minHeight: 0,
+              overflow: 'visible',
+            }}
+          >
             {currentStep === 1 ? (
               <div
                 style={{
@@ -253,91 +226,44 @@ export function ProspeccaoWizard({
                   flexDirection: 'column',
                   gap: 12,
                   width: '100%',
+                  flexShrink: 0,
                 }}
               >
                 <ObjetivoCard
                   selected={proObjetivo === 'investir'}
                   onClick={() => setProObjetivo('investir')}
                   icon={<TrendingUp size={20} />}
+                  iconSelectedColor="#E8A830"
                   label="Investir em processo existente"
+                  desc="Parceria ou aquisição em ativos já titulados"
                 />
                 <ObjetivoCard
                   selected={proObjetivo === 'novo_requerimento'}
                   onClick={() => setProObjetivo('novo_requerimento')}
                   icon={<MapPin size={20} />}
+                  iconSelectedColor="#22C55E"
                   label="Identificar áreas para novo requerimento"
+                  desc="Áreas com potencial para novo requerimento ou título"
                 />
                 <ObjetivoCard
                   selected={proObjetivo === 'avaliar_portfolio'}
                   onClick={() => setProObjetivo('avaliar_portfolio')}
                   icon={<BarChart3 size={20} />}
+                  iconSelectedColor="#3B82F6"
                   label="Avaliar portfólio atual"
+                  desc="Desempenho e risco da carteira que você acompanha"
                 />
               </div>
             ) : null}
 
             {currentStep === 2 ? (
-              <div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  <button
-                    type="button"
-                    onClick={toggleTodasSubst}
-                    style={{
-                      padding: '8px 16px',
-                      borderRadius: 20,
-                      fontSize: 14,
-                      fontWeight: 500,
-                      cursor: 'pointer',
-                      transition: 'all 0.15s ease',
-                      borderWidth: 1,
-                      borderStyle: 'solid',
-                      borderColor: proSubst.includes(TODAS_SUBST) ? '#EF9F27' : '#2C2C2A',
-                      backgroundColor: proSubst.includes(TODAS_SUBST)
-                        ? 'rgba(239, 159, 39, 0.12)'
-                        : '#111110',
-                      color: proSubst.includes(TODAS_SUBST) ? '#EF9F27' : '#D3D1C7',
-                    }}
-                  >
-                    Todas
-                  </button>
-                  {substanciasSemTodas.map((substancia) => {
-                    const isSelected =
-                      proSubst.includes(substancia) || proSubst.includes(TODAS_SUBST)
-                    const corSub = corSubstanciaOuUndefined(substancia) ?? '#EF9F27'
-                    return (
-                      <button
-                        key={substancia}
-                        type="button"
-                        onClick={() => togglePillSubstancia(substancia)}
-                        style={{
-                          padding: '8px 16px',
-                          borderRadius: 20,
-                          fontSize: 14,
-                          fontWeight: 500,
-                          cursor: 'pointer',
-                          transition: 'all 0.15s ease',
-                          borderWidth: 1,
-                          borderStyle: 'solid',
-                          borderColor: isSelected ? corSub : '#2C2C2A',
-                          backgroundColor: isSelected ? `${corSub}1A` : '#111110',
-                          color: isSelected ? corSub : '#D3D1C7',
-                        }}
-                      >
-                        {substanciaPillLabel(substancia)}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            ) : null}
-
-            {currentStep === 3 ? (
               <div
                 style={{
                   display: 'flex',
                   flexDirection: 'column',
                   gap: 12,
                   width: '100%',
+                  flexShrink: 0,
                 }}
               >
                 <RiscoCard
@@ -367,9 +293,20 @@ export function ProspeccaoWizard({
               </div>
             ) : null}
 
-            {currentStep === 4 ? (
-              <div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {currentStep === 3 ? (
+              <div style={{ flexShrink: 0, width: '100%' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 8,
+                    maxHeight: 'min(45vh, 400px)',
+                    overflowY: 'auto',
+                    alignContent: 'flex-start',
+                    paddingRight: 4,
+                    boxSizing: 'border-box',
+                  }}
+                >
                   <button
                     type="button"
                     onClick={() => setProUfs([])}
@@ -389,7 +326,7 @@ export function ProspeccaoWizard({
                   >
                     Todo o Brasil
                   </button>
-                  {[...UFS_INTEL_DASHBOARD].map((uf) => {
+                  {[...UFS_BRASIL].map((uf) => {
                     const isSelected = proUfs.includes(uf)
                     return (
                       <button
@@ -430,7 +367,8 @@ export function ProspeccaoWizard({
               display: 'flex',
               alignItems: 'center',
               gap: 16,
-              marginTop: 32,
+              marginTop: 24,
+              flexShrink: 0,
             }}
           >
             {currentStep > 1 ? (
@@ -446,7 +384,7 @@ export function ProspeccaoWizard({
             <button
               type="button"
               disabled={!stepValido}
-              onClick={currentStep < 4 ? handleNextStep : onAnalisar}
+              onClick={currentStep < 3 ? handleNextStep : onAnalisar}
               style={{
                 backgroundColor: '#EF9F27',
                 color: '#0D0D0C',
@@ -469,7 +407,7 @@ export function ProspeccaoWizard({
                 e.currentTarget.style.boxShadow = 'none'
               }}
             >
-              {currentStep < 4 ? 'Próximo' : 'Analisar oportunidades'}
+              {currentStep < 3 ? 'Próximo' : 'Analisar oportunidades'}
             </button>
           </div>
         </div>

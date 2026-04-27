@@ -27,11 +27,6 @@ import {
   syncCamadasGeoVisibility,
 } from '../../lib/mapCamadasGeo'
 import {
-  addTerritorioSimuladoLayers,
-  syncTerritorioSimuladoVisibility,
-  territorioSimuladoLayersPresent,
-} from '../../lib/mapTerritorioSimulado'
-import {
   addTerritorialLinesLayers,
   applyFeatureHighlights,
   clearFeatureHighlights,
@@ -70,8 +65,13 @@ import {
 } from '../../store/useMapStore'
 import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion'
 import { useMapLayer, type BBox } from '../../hooks/useMapLayer'
+import { zoomThresholds } from '../../lib/zoomThresholds'
 import { useProcessosViewport } from '../../hooks/useProcessosViewport'
-import { mapViewportFeaturesToProcessos } from '../../lib/mapProcessoFromDbRow'
+import {
+  mapDbRowToMapProcesso,
+  mapViewportFeaturesToProcessos,
+} from '../../lib/mapProcessoFromDbRow'
+import { normalizarNumeroANM } from '../../lib/numeroAnm'
 import {
   MOTION_MAP_INTRO_DURATION_MS,
   MOTION_MAP_INTRO_LEGEND_DELAY_MS,
@@ -81,6 +81,7 @@ import {
 } from '../../lib/motionDurations'
 import type { ReportData } from '../../lib/reportTypes'
 import {
+  buscarProcessoPorNumero,
   fetchProcessoCompleto,
   type ProcessoCompleto,
 } from '../../lib/processoApi'
@@ -104,6 +105,10 @@ import { relatorioDataFromReportData } from '../../lib/relatorioDataFromReportDa
 import { buildReportData } from '../report/reportDataBuilder'
 import { ProcessoPopupContent } from './ProcessoPopup'
 import { RelatorioCompleto } from './RelatorioCompleto'
+import { appHidricaFillLayer, appHidricaLineLayer } from '../../lib/mapbox/layers/appHidrica'
+import { hidrografiaMassasFillLayer, hidrografiaMassasLineLayer } from '../../lib/mapbox/layers/hidrografiaMassas'
+import { hidrografiaTrechosLayer } from '../../lib/mapbox/layers/hidrografiaTrechos'
+import { sitiosArqueologicosLayer } from '../../lib/mapbox/layers/sitiosArqueologicos'
 
 /**
  * Limit dinâmico para `useProcessosViewport` baseado no zoom.
@@ -268,6 +273,86 @@ function buildEnrichmentPatch(
 
     const inicioLavra = pickDate('inicio_lavra_data')
     if (inicioLavra !== undefined) patch.inicio_lavra_data = inicioLavra
+
+    const toNullableString = (v: unknown): string | null => {
+      if (v == null) return null
+      const s = String(v).trim()
+      return s === '' ? null : s
+    }
+    const toNullableNumber = (v: unknown): number | null => {
+      if (v == null) return null
+      const n = Number(v)
+      return Number.isFinite(n) ? n : null
+    }
+    const toNullableBool = (v: unknown): boolean | null => {
+      if (v == null) return null
+      if (typeof v === 'boolean') return v
+      return null
+    }
+    const toNullableDate = (v: unknown): string | null => {
+      if (v == null) return null
+      const s = String(v).trim()
+      if (s === '') return null
+      const m = /^(\d{4}-\d{2}-\d{2})/.exec(s)
+      return m ? m[1]! : s
+    }
+
+    if ('bioma_territorial' in proc) {
+      patch.bioma_territorial = toNullableString(proc.bioma_territorial)
+    }
+    if ('dist_ti' in proc) patch.dist_ti = toNullableNumber(proc.dist_ti)
+    if ('dist_uc' in proc) patch.dist_uc = toNullableNumber(proc.dist_uc)
+    if ('dist_ferrovia' in proc)
+      patch.dist_ferrovia = toNullableNumber(proc.dist_ferrovia)
+    if ('dist_aquifero' in proc)
+      patch.dist_aquifero = toNullableNumber(proc.dist_aquifero)
+    if ('score_territorial' in proc)
+      patch.score_territorial = toNullableNumber(proc.score_territorial)
+    if ('score_territorial_calculado_em' in proc) {
+      patch.score_territorial_calculado_em = toNullableString(
+        proc.score_territorial_calculado_em,
+      )
+    }
+    if ('pendencias_abertas' in proc)
+      patch.pendencias_abertas = toNullableNumber(proc.pendencias_abertas)
+    if ('tem_risco_caducidade' in proc) {
+      patch.tem_risco_caducidade = toNullableBool(proc.tem_risco_caducidade)
+    }
+    if ('ultima_exigencia_data' in proc) {
+      patch.ultima_exigencia_data = toNullableDate(proc.ultima_exigencia_data)
+    }
+    if ('ultima_exigencia_categoria' in proc) {
+      patch.ultima_exigencia_categoria = toNullableString(
+        proc.ultima_exigencia_categoria,
+      )
+    }
+    if ('ultima_exigencia_prazo_dias' in proc) {
+      patch.ultima_exigencia_prazo_dias = toNullableNumber(
+        proc.ultima_exigencia_prazo_dias,
+      )
+    }
+    if ('pendencias_calculado_em' in proc) {
+      patch.pendencias_calculado_em = toNullableString(
+        proc.pendencias_calculado_em,
+      )
+    }
+    if ('needs_rescore' in proc)
+      patch.needs_rescore = toNullableBool(proc.needs_rescore)
+    if ('rescore_blocked_territorial' in proc) {
+      patch.rescore_blocked_territorial = toNullableBool(
+        proc.rescore_blocked_territorial,
+      )
+    }
+    if ('amb_assentamento_sobrepoe' in proc) {
+      patch.amb_assentamento_sobrepoe = toNullableBool(
+        proc.amb_assentamento_sobrepoe,
+      )
+    }
+    if ('amb_assentamento_2km' in proc) {
+      patch.amb_assentamento_2km = toNullableBool(
+        proc.amb_assentamento_2km,
+      )
+    }
   }
 
   const sp = proc?.scores_persistido as
@@ -305,11 +390,44 @@ function buildEnrichmentPatch(
     }
   }
 
+  // F5: JSONB de scores vem no nível `api.scores` (merge Supabase), não em `processo` cru
+  const scApi = (api as { scores?: Record<string, unknown> | null }).scores
+  if (scApi && typeof scApi === 'object') {
+    const dr = scApi.dimensoes_risco
+    if (dr && typeof dr === 'object') {
+      patch.dimensoes_risco_persistido =
+        dr as Processo['dimensoes_risco_persistido']
+    }
+    const dOpApi = scApi.dimensoes_oportunidade
+    if (dOpApi && typeof dOpApi === 'object') {
+      patch.dimensoes_oportunidade_persistido = dOpApi as Record<
+        string,
+        unknown
+      >
+    }
+  }
+
   const br = proc?.cfem_por_municipio_breakdown
   patch.cfem_por_municipio_breakdown =
     Array.isArray(br) && br.length > 0
       ? (br as CfemBreakdownMunicipio[])
       : null
+
+  const drFinal = patch.dimensoes_risco_persistido
+  if (drFinal && riskScoreHonesto != null) {
+    const g = drFinal as {
+      geologico?: { valor?: number }
+      ambiental?: { valor?: number }
+      social?: { valor?: number }
+      regulatorio?: { valor?: number }
+    }
+    patch.risk_breakdown = {
+      geologico: Number(g.geologico?.valor ?? 0),
+      ambiental: Number(g.ambiental?.valor ?? 0),
+      social: Number(g.social?.valor ?? 0),
+      regulatorio: Number(g.regulatorio?.valor ?? 0),
+    }
+  }
 
   return patch
 }
@@ -586,6 +704,70 @@ function addProcessosLayers(
       'line-opacity': 1,
     },
   })
+}
+
+/**
+ * Com processo selecionado no mapa (clique no polígono), reduz opacidade dos demais.
+ * Vindo da busca/Intel, `aplicarFocoEntreProcessos` fica falso: todos os processos
+ * com a mesma opacidade base (sólida no selecionado, sem efeito de “foco”).
+ */
+const PROCESSO_FOCUS_OP = {
+  fillSel: 0.45,
+  fillDim: 0.12,
+  haloSel: 0.12,
+  haloDim: 0.04,
+  outlineSel: 1,
+  outlineDim: 0.26,
+} as const
+
+function applyProcessoSelectionFocus(
+  map: mapboxgl.Map,
+  processoIdSelecionado: string | null,
+  aplicarFocoEntreProcessos: boolean,
+) {
+  if (!map.getLayer('processos-fill')) return
+
+  if (processoIdSelecionado == null || !aplicarFocoEntreProcessos) {
+    safeSetPaint(
+      map,
+      'processos-fill',
+      'fill-opacity',
+      PROCESSO_FOCUS_OP.fillSel,
+    )
+    safeSetPaint(
+      map,
+      'processos-halo',
+      'line-opacity',
+      PROCESSO_FOCUS_OP.haloSel,
+    )
+    safeSetPaint(
+      map,
+      'processos-outline',
+      'line-opacity',
+      PROCESSO_FOCUS_OP.outlineSel,
+    )
+    return
+  }
+
+  const id = processoIdSelecionado
+  safeSetPaint(map, 'processos-fill', 'fill-opacity', [
+    'case',
+    ['==', ['get', 'id'], id],
+    PROCESSO_FOCUS_OP.fillSel,
+    PROCESSO_FOCUS_OP.fillDim,
+  ])
+  safeSetPaint(map, 'processos-halo', 'line-opacity', [
+    'case',
+    ['==', ['get', 'id'], id],
+    PROCESSO_FOCUS_OP.haloSel,
+    PROCESSO_FOCUS_OP.haloDim,
+  ])
+  safeSetPaint(map, 'processos-outline', 'line-opacity', [
+    'case',
+    ['==', ['get', 'id'], id],
+    PROCESSO_FOCUS_OP.outlineSel,
+    PROCESSO_FOCUS_OP.outlineDim,
+  ])
 }
 
 const PROCESSOS_CLICK_LAYERS = [
@@ -1034,7 +1216,7 @@ function attachProcessosLayerHandlers(
           pendingFecharProcessoTimeoutRef.current = null
         }
 
-        useMapStore.getState().selecionarProcesso(proc)
+        useMapStore.getState().selecionarProcesso(proc, 'map')
         openProcessoPopupOnMap(
           map,
           proc,
@@ -1131,7 +1313,6 @@ export function MapView() {
 
   const camadasGeo = useMapStore((s) => s.camadasGeo)
   const processos = useMapStore((s) => s.processos)
-  const territorioSimuladoVisivel = useMapStore((s) => s.territorioSimuladoVisivel)
   const filtrosAlteradosCount = useMemo(
     () => countFiltrosAlterados(filtros),
     [filtros],
@@ -1140,6 +1321,7 @@ export function MapView() {
   const { montado: painelFiltrosMontado, animar: painelFiltrosAnimar } =
     usePainelFiltrosAnimation(painelFiltrosAberto)
   const processoSelecionado = useMapStore((s) => s.processoSelecionado)
+  const selecaoOrigemProcesso = useMapStore((s) => s.selecaoOrigemProcesso)
   const relatorioDrawerAberto = useMapStore((s) => s.relatorioDrawerAberto)
   const setRelatorioDrawerAberto = useMapStore((s) => s.setRelatorioDrawerAberto)
   const pendingNavigation = useMapStore((s) => s.pendingNavigation)
@@ -1160,6 +1342,9 @@ export function MapView() {
     bottom: number
     left: number
   } | null>(null)
+
+  /** Cancela fetch assync de processo se uma navegacao mais recente ocorrer (pendente ja foi limpo no store). */
+  const processoNavAsyncSeqRef = useRef(0)
 
   const intelSidebarAutoCloseSeqActiveRef = useRef(false)
   const intelSidebarAutoCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -1370,7 +1555,9 @@ export function MapView() {
         ])
         const patch = buildEnrichmentPatch(p, rd, api)
         const pEnriquecido = { ...p, ...patch } as Processo
-        setRelatorioDadosApi(relatorioDataFromReportData(rd, pEnriquecido))
+        setRelatorioDadosApi(
+          relatorioDataFromReportData(rd, pEnriquecido, api.mercado ?? null),
+        )
         useMapStore.getState().mergeProcessoSelecionado(patch)
       } catch (e) {
         setRelatorioApiErro(
@@ -1524,68 +1711,146 @@ export function MapView() {
 
       try {
         if (nav.type === 'processo') {
-          const proc = useMapStore
-            .getState()
-            .processos.find((x) => x.id === nav.payload)
-          if (!proc) return
+          const st0 = useMapStore.getState()
+          const numTrim = nav.numeroAnm?.trim()
+          const numCanon = numTrim ? normalizarNumeroANM(numTrim) || numTrim : null
+          let proc: Processo | undefined =
+            st0.processos.find((x) => x.id === nav.payload) ||
+            (numCanon
+              ? st0.processos.find(
+                  (x) => x.numero.replace(/\s/g, '') === numCanon.replace(/\s/g, ''),
+                )
+              : undefined)
 
-          useMapStore.getState().selecionarProcesso(proc)
-          openIntelSidebarForPendingNavigation()
+          const runProcessoNavigation = (p: Processo) => {
+            useMapStore.getState().selecionarProcesso(p, 'busca')
+            openIntelSidebarForPendingNavigation()
 
-          afterFilterSidebarLayout(() => {
-            ensureIntelSnap()
-            const b = boundsFromSingleProcesso(proc)
-            let opened = false
-            const openPop = () => {
-              if (opened) return
-              opened = true
-              openProcessoPopupOnMap(
-                map,
-                proc,
-                tearDown,
-                processoPopupRootRef,
-                processoPopupRef,
-                pendingFecharProcessoTimeoutRef,
-                () => verRelatorioRef.current(),
-                () => abrirRelatorioAbaRiscoRef.current(),
-              )
-            }
-            let timerArmed = false
-            const armTimerOnce = () => {
-              if (timerArmed) return
-              timerArmed = true
-              startIntelAutoCloseTimerAfterMoveEnd()
-            }
-            if (b && !b.isEmpty()) {
-              map.fitBounds(b, {
-                padding: intelPad(100),
-                duration: 1000,
-                maxZoom: 15,
+            afterFilterSidebarLayout(() => {
+              ensureIntelSnap()
+              const b = boundsFromSingleProcesso(p)
+              let opened = false
+              const openPop = () => {
+                if (opened) return
+                opened = true
+                openProcessoPopupOnMap(
+                  map,
+                  p,
+                  tearDown,
+                  processoPopupRootRef,
+                  processoPopupRef,
+                  pendingFecharProcessoTimeoutRef,
+                  () => verRelatorioRef.current(),
+                  () => abrirRelatorioAbaRiscoRef.current(),
+                )
+              }
+              let timerArmed = false
+              const armTimerOnce = () => {
+                if (timerArmed) return
+                timerArmed = true
+                startIntelAutoCloseTimerAfterMoveEnd()
+              }
+              if (b && !b.isEmpty()) {
+                map.fitBounds(b, {
+                  padding: intelPad(100),
+                  duration: 1000,
+                  maxZoom: 13,
+                })
+              } else if (
+                Number.isFinite(p.lng) &&
+                Number.isFinite(p.lat) &&
+                !Number.isNaN(p.lng) &&
+                !Number.isNaN(p.lat)
+              ) {
+                const padBase = ensureIntelSnap()
+                map.flyTo({
+                  center: [p.lng, p.lat],
+                  zoom: 13,
+                  duration: 1000,
+                  essential: true,
+                  padding: {
+                    top: padBase.top,
+                    right: padBase.right,
+                    bottom: padBase.bottom,
+                    left: padBase.left + getIntelLeftReservePx(),
+                  },
+                })
+              } else if (p.uf) {
+                const manual = ufBoundsLngLat(p.uf)
+                const padBase = ensureIntelSnap()
+                if (manual) {
+                  map.fitBounds(manual, {
+                    padding: intelPad(80),
+                    duration: 1000,
+                    maxZoom: 10,
+                  })
+                } else {
+                  const [sw, ne] = BRAZIL_BOUNDS_LNG_LAT
+                  const brCenter: [number, number] = [
+                    (sw[0] + ne[0]) / 2,
+                    (sw[1] + ne[1]) / 2,
+                  ]
+                  map.flyTo({
+                    center: brCenter,
+                    zoom: 4,
+                    duration: 1000,
+                    padding: {
+                      top: padBase.top,
+                      right: padBase.right,
+                      bottom: padBase.bottom,
+                      left: padBase.left + getIntelLeftReservePx(),
+                    },
+                  })
+                }
+              }
+              map.once('moveend', () => {
+                openPop()
+                armTimerOnce()
               })
-            } else {
-              const padBase = ensureIntelSnap()
-              map.flyTo({
-                center: [proc.lng, proc.lat],
-                zoom: 12,
-                duration: 1000,
-                essential: true,
-                padding: {
-                  top: padBase.top,
-                  right: padBase.right,
-                  bottom: padBase.bottom,
-                  left: padBase.left + getIntelLeftReservePx(),
-                },
-              })
-            }
-            map.once('moveend', () => {
-              openPop()
-              armTimerOnce()
+              window.setTimeout(() => {
+                openPop()
+                armTimerOnce()
+              }, 1100)
             })
-            window.setTimeout(() => {
-              openPop()
-              armTimerOnce()
-            }, 1100)
-          })
+          }
+
+          if (proc) {
+            runProcessoNavigation(proc)
+            return
+          }
+
+          if (numCanon) {
+            const asyncSeq = ++processoNavAsyncSeqRef.current
+            void (async () => {
+              const raw = await buscarProcessoPorNumero(numCanon)
+              if (asyncSeq !== processoNavAsyncSeqRef.current) {
+                return
+              }
+              if (!raw) {
+                return
+              }
+              const novo = mapDbRowToMapProcesso(raw, { permitirSemGeom: true })
+              if (!novo) {
+                return
+              }
+              const existente = useMapStore
+                .getState()
+                .processos.find((q) => q.numero === novo.numero)
+              if (existente) {
+                useMapStore.setState((s) => ({
+                  processos: s.processos.map((q) =>
+                    q.numero === novo.numero ? novo : q,
+                  ),
+                }))
+              } else {
+                useMapStore.getState().adicionarProcesso(novo)
+              }
+              runProcessoNavigation(novo)
+            })()
+            return
+          }
+
+          useMapStore.getState().setPendingNavigation(null)
           return
         }
 
@@ -1810,13 +2075,6 @@ export function MapView() {
       }
       addCamadasGeoLayers(map, 'processos-fill', CAMADAS_GEO_JSON)
       syncCamadasGeoVisibility(map, useMapStore.getState().camadasGeo)
-      if (!territorioSimuladoLayersPresent(map)) {
-        addTerritorioSimuladoLayers(map, 'processos-fill')
-      }
-      syncTerritorioSimuladoVisibility(
-        map,
-        useMapStore.getState().territorioSimuladoVisivel,
-      )
       const td = tearDownProcessoPopupRef.current
       if (td) {
         attachProcessosLayerHandlers(
@@ -1833,8 +2091,27 @@ export function MapView() {
       }
       const src = map.getSource('processos') as mapboxgl.GeoJSONSource | undefined
       src?.setData(filtrados)
+      {
+        const st = useMapStore.getState()
+        applyProcessoSelectionFocus(
+          map,
+          st.processoSelecionado?.id ?? null,
+          st.selecaoOrigemProcesso === 'map' && st.processoSelecionado != null,
+        )
+      }
     })
   }, [])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!mapLoaded || !map?.isStyleLoaded()) return
+    if (!map.getLayer('processos-fill')) return
+    applyProcessoSelectionFocus(
+      map,
+      processoSelecionado?.id ?? null,
+      selecaoOrigemProcesso === 'map' && processoSelecionado != null,
+    )
+  }, [mapLoaded, processoSelecionado?.id, selecaoOrigemProcesso])
 
   useEffect(() => {
     const map = mapRef.current
@@ -1843,14 +2120,28 @@ export function MapView() {
     const src = map.getSource('processos') as mapboxgl.GeoJSONSource | undefined
     if (!src) return
 
-    const filtrados = useMapStore.getState().getProcessosFiltrados()
-    src.setData(buildGeoJSON(filtrados, modoVisualizacao))
+    const st = useMapStore.getState()
+    const filtrados = st.getProcessosFiltrados()
+    const sel = st.processoSelecionado
 
-    const sel = useMapStore.getState().processoSelecionado
+    /**
+     * Seleção vinda da busca: o processo pode deixar de passar em
+     * `getProcessosFiltrados` (ex.: legenda de regime) após flyTo / refresh do
+     * lote, e o efeito antigo limpava `selecionarProcesso(null)` — isso
+     * fechava o drawer de relatório no fim da animação. Manter a seleção e
+     * incluir o processo no GeoJSON para o polígono continuar coerente.
+     */
     if (sel && !filtrados.some((p) => p.id === sel.id)) {
+      if (st.selecaoOrigemProcesso === 'busca') {
+        tearDownProcessoPopupRef.current?.()
+        src.setData(buildGeoJSON([...filtrados, sel], modoVisualizacao))
+        return
+      }
       tearDownProcessoPopupRef.current?.()
       useMapStore.getState().selecionarProcesso(null)
     }
+
+    src.setData(buildGeoJSON(filtrados, modoVisualizacao))
   }, [mapLoaded, filtros, modoVisualizacao, intelTitularFilter, processos])
 
   /**
@@ -2066,13 +2357,16 @@ export function MapView() {
 
     let prevProcessoId: string | null =
       useMapStore.getState().processoSelecionado?.id ?? null
+    let prevSelecaoOrigem = useMapStore.getState().selecaoOrigemProcesso
 
     const unsub = useMapStore.subscribe((state) => {
       const currentProc = state.processoSelecionado
       const newId = currentProc?.id ?? null
+      const newOrigem = state.selecaoOrigemProcesso
 
-      if (newId === prevProcessoId) return
+      if (newId === prevProcessoId && newOrigem === prevSelecaoOrigem) return
       prevProcessoId = newId
+      prevSelecaoOrigem = newOrigem
 
       if (currentProc) {
         showLinesFor(currentProc)
@@ -2141,7 +2435,7 @@ export function MapView() {
     enabled: !!camadasGeo.rodovias && mapLoaded,
     bbox: viewportBbox,
     zoom: viewportZoom,
-    limit: 500,
+    limit: 5000,
   })
 
   const hidroviasData = useMapLayer({
@@ -2168,6 +2462,14 @@ export function MapView() {
     bbox: viewportBbox,
     zoom: viewportZoom,
     limit: 500,
+  })
+
+  const assentamentoData = useMapLayer({
+    tipo: 'assentamento',
+    enabled: !!camadasGeo.assentamentos && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 2000,
   })
 
   // Camada UC Proteção Integral (bbox-aware, mesmo toggle unidades_conservacao)
@@ -2212,7 +2514,60 @@ export function MapView() {
     enabled: !!camadasGeo.portos && mapLoaded,
     bbox: viewportBbox,
     zoom: viewportZoom,
-    limit: 500,
+    limit: 5000,
+  })
+
+  const heavyZoomKey = Math.floor(viewportZoom ?? 4)
+  const heavyLayerThresholds = useMemo(
+    () => zoomThresholds(heavyZoomKey),
+    [heavyZoomKey],
+  )
+  const trechoLayerQuery = useMemo(
+    () => ({ min_strahler: String(heavyLayerThresholds.minStrahler) }),
+    [heavyLayerThresholds],
+  )
+  const appLayerQuery = useMemo(
+    () => ({ min_faixa: String(heavyLayerThresholds.minFaixa) }),
+    [heavyLayerThresholds],
+  )
+  const massasLayerQuery = useMemo(
+    () => ({ min_area_ha: String(heavyLayerThresholds.minAreaHa) }),
+    [heavyLayerThresholds],
+  )
+
+  const sitioData = useMapLayer({
+    tipo: 'sitio',
+    enabled: !!camadasGeo.sitios_arqueologicos && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 5000,
+  })
+
+  const massasData = useMapLayer({
+    tipo: 'hidro_massa',
+    enabled: !!camadasGeo.massas_agua && mapLoaded,
+    bbox: viewportBbox,
+    zoom: heavyZoomKey,
+    limit: 5000,
+    extraQuery: massasLayerQuery,
+  })
+
+  const trechosData = useMapLayer({
+    tipo: 'hidro_trecho',
+    enabled: !!camadasGeo.rede_hidrografica && mapLoaded,
+    bbox: viewportBbox,
+    zoom: heavyZoomKey,
+    limit: 5000,
+    extraQuery: trechoLayerQuery,
+  })
+
+  const appHidricaData = useMapLayer({
+    tipo: 'app',
+    enabled: !!camadasGeo.app_hidrica && mapLoaded,
+    bbox: viewportBbox,
+    zoom: heavyZoomKey,
+    limit: 5000,
+    extraQuery: appLayerQuery,
   })
 
   // Processos por viewport (2c) — fetch bbox-aware, merge no store
@@ -2221,7 +2576,7 @@ export function MapView() {
     bbox: viewportBbox,
     zoom: viewportZoom,
     limit: getViewportProcessosLimit(viewportZoom ?? 5),
-    debounceMs: 800,
+    debounceMs: 200,
     exibirProcessosAtivos: filtros.exibirProcessosAtivos,
     exibirProcessosInativos: filtros.exibirProcessosInativos,
   })
@@ -2299,6 +2654,99 @@ export function MapView() {
     if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
   }, [mapLoaded, biomasData, camadasGeo.biomas])
 
+  // S18: APP hídrica, massas d'água, rede (BHO). z baixo → alto: app fill, massa fill, massa line, trecho, app line
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const fcApp = appHidricaData ?? {
+      type: 'FeatureCollection' as const,
+      features: [],
+    }
+    const fcMassa = massasData ?? {
+      type: 'FeatureCollection' as const,
+      features: [],
+    }
+    const fcTrecho = trechosData ?? {
+      type: 'FeatureCollection' as const,
+      features: [],
+    }
+
+    const Lnone = { visibility: 'none' as const }
+
+    if (!map.getSource('api-app-src')) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      map.addSource('api-app-src', { type: 'geojson', promoteId: 'id', data: fcApp as any })
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(map.getSource('api-app-src') as mapboxgl.GeoJSONSource).setData(fcApp as any)
+    }
+    if (!map.getSource('api-hidro-massa-src')) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      map.addSource('api-hidro-massa-src', { type: 'geojson', promoteId: 'id', data: fcMassa as any })
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(map.getSource('api-hidro-massa-src') as mapboxgl.GeoJSONSource).setData(
+        fcMassa as any,
+      )
+    }
+    if (!map.getSource('api-hidro-trecho-src')) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      map.addSource('api-hidro-trecho-src', { type: 'geojson', promoteId: 'id', data: fcTrecho as any })
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(map.getSource('api-hidro-trecho-src') as mapboxgl.GeoJSONSource).setData(
+        fcTrecho as any,
+      )
+    }
+
+    if (!map.getLayer('api-app-fill')) {
+      // Mesmo beforeId: último add fica imediatamente abaixo de processos (topo do grupo).
+      const before = 'processos-fill' as const
+      map.addLayer(
+        { ...appHidricaFillLayer, layout: Lnone } as mapboxgl.AddLayerObject,
+        before,
+      )
+      map.addLayer(
+        { ...hidrografiaMassasFillLayer, layout: Lnone } as mapboxgl.AddLayerObject,
+        before,
+      )
+      map.addLayer(
+        { ...hidrografiaMassasLineLayer, layout: Lnone } as mapboxgl.AddLayerObject,
+        before,
+      )
+      map.addLayer(
+        { ...hidrografiaTrechosLayer, layout: Lnone } as mapboxgl.AddLayerObject,
+        before,
+      )
+      map.addLayer(
+        { ...appHidricaLineLayer, layout: Lnone } as mapboxgl.AddLayerObject,
+        before,
+      )
+    }
+
+    const vApp = camadasGeo.app_hidrica ? 'visible' : 'none'
+    const vM = camadasGeo.massas_agua ? 'visible' : 'none'
+    const vT = camadasGeo.rede_hidrografica ? 'visible' : 'none'
+    for (const lid of ['api-app-fill', 'api-app-line']) {
+      if (map.getLayer(lid)) map.setLayoutProperty(lid, 'visibility', vApp)
+    }
+    for (const lid of ['api-hidro-massa-fill', 'api-hidro-massa-line']) {
+      if (map.getLayer(lid)) map.setLayoutProperty(lid, 'visibility', vM)
+    }
+    if (map.getLayer('api-hidro-trecho-line')) {
+      map.setLayoutProperty('api-hidro-trecho-line', 'visibility', vT)
+    }
+  }, [
+    mapLoaded,
+    appHidricaData,
+    massasData,
+    trechosData,
+    camadasGeo.app_hidrica,
+    camadasGeo.massas_agua,
+    camadasGeo.rede_hidrografica,
+  ])
+
   // Sync Rodovias no Mapbox
   useEffect(() => {
     const map = mapRef.current
@@ -2333,12 +2781,37 @@ export function MapView() {
               0.85,
             ],
             'line-width': [
-              'case',
-              ['==', ['feature-state', 'highlighted'], true],
-              4.0,
-              ['==', ['feature-state', 'highlighted'], false],
-              ['interpolate', ['linear'], ['zoom'], 4, 0.5, 12, 2.5],
-              ['interpolate', ['linear'], ['zoom'], 4, 0.5, 12, 2.5],
+              'interpolate',
+              ['linear'],
+              ['zoom'],
+              4,
+              [
+                'case',
+                ['==', ['feature-state', 'highlighted'], true],
+                4,
+                0.5,
+              ],
+              8,
+              [
+                'case',
+                ['==', ['feature-state', 'highlighted'], true],
+                4,
+                1.5,
+              ],
+              12,
+              [
+                'case',
+                ['==', ['feature-state', 'highlighted'], true],
+                4,
+                3,
+              ],
+              16,
+              [
+                'case',
+                ['==', ['feature-state', 'highlighted'], true],
+                4,
+                6,
+              ],
             ],
           },
         },
@@ -2566,6 +3039,62 @@ export function MapView() {
       if (map.getLayer(sid)) map.setLayoutProperty(sid, 'visibility', 'none')
     }
   }, [mapLoaded, quilombolaData, camadasGeo.quilombolas])
+
+  // Assentamentos INCRA (API)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const SRC_ID = 'api-assentamento-src'
+    const FILL_ID = 'api-assentamento-fill'
+    const LINE_ID = 'api-assentamento-line'
+
+    const fc =
+      assentamentoData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        promoteId: 'id',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+      map.addLayer(
+        {
+          id: FILL_ID,
+          type: 'fill',
+          source: SRC_ID,
+          paint: {
+            'fill-color': '#7B8B3D',
+            'fill-opacity': 0.4,
+            'fill-outline-color': '#5A6829',
+          },
+        },
+        'processos-fill',
+      )
+      map.addLayer(
+        {
+          id: LINE_ID,
+          type: 'line',
+          source: SRC_ID,
+          paint: {
+            'line-color': '#5A6829',
+            'line-width': 1,
+            'line-opacity': 0.85,
+          },
+        },
+        'processos-fill',
+      )
+    } else {
+      const src = map.getSource(SRC_ID) as mapboxgl.GeoJSONSource | undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      src?.setData(fc as any)
+    }
+
+    const vis = camadasGeo.assentamentos ? 'visible' : 'none'
+    if (map.getLayer(FILL_ID)) map.setLayoutProperty(FILL_ID, 'visibility', vis)
+    if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
+  }, [mapLoaded, assentamentoData, camadasGeo.assentamentos])
 
   // Sync UC Proteção Integral no Mapbox (API)
   useEffect(() => {
@@ -2820,12 +3349,37 @@ export function MapView() {
               0.95,
             ],
             'line-width': [
-              'case',
-              ['==', ['feature-state', 'highlighted'], true],
-              4.0,
-              ['==', ['feature-state', 'highlighted'], false],
-              ['interpolate', ['linear'], ['zoom'], 4, 0.6, 12, 2],
-              ['interpolate', ['linear'], ['zoom'], 4, 0.6, 12, 2],
+              'interpolate',
+              ['linear'],
+              ['zoom'],
+              4,
+              [
+                'case',
+                ['==', ['feature-state', 'highlighted'], true],
+                4,
+                0.6,
+              ],
+              8,
+              [
+                'case',
+                ['==', ['feature-state', 'highlighted'], true],
+                4,
+                1.0,
+              ],
+              12,
+              [
+                'case',
+                ['==', ['feature-state', 'highlighted'], true],
+                4,
+                2,
+              ],
+              16,
+              [
+                'case',
+                ['==', ['feature-state', 'highlighted'], true],
+                4,
+                3,
+              ],
             ],
           },
         },
@@ -2866,12 +3420,37 @@ export function MapView() {
         paint: {
           'circle-color': '#7EADD4',
           'circle-radius': [
-            'case',
-            ['==', ['feature-state', 'highlighted'], true],
-            10.0,
-            ['==', ['feature-state', 'highlighted'], false],
-            ['interpolate', ['linear'], ['zoom'], 4, 3, 12, 8],
-            ['interpolate', ['linear'], ['zoom'], 4, 3, 12, 8],
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            4,
+            [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              10,
+              2,
+            ],
+            8,
+            [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              10,
+              4,
+            ],
+            12,
+            [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              10,
+              7,
+            ],
+            16,
+            [
+              'case',
+              ['==', ['feature-state', 'highlighted'], true],
+              10,
+              10,
+            ],
           ],
           'circle-stroke-color': '#FFFFFF',
           'circle-stroke-width': 1.5,
@@ -2895,6 +3474,40 @@ export function MapView() {
     if (map.getLayer(CIRCLE_ID))
       map.setLayoutProperty(CIRCLE_ID, 'visibility', vis)
   }, [mapLoaded, portoData, camadasGeo.portos])
+
+  // Sítios arqueológicos (IPHAN) — círculos abaixo de portos quando ambos existem
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const CIRCLE_ID = 'api-sitio-circle'
+    const SRC_ID = 'api-sitio-src'
+    const fc = sitioData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        promoteId: 'id',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(map.getSource(SRC_ID) as mapboxgl.GeoJSONSource).setData(fc as any)
+    }
+
+    if (!map.getLayer(CIRCLE_ID)) {
+      const before = map.getLayer('api-porto-circle')
+        ? 'api-porto-circle'
+        : 'processos-fill'
+      map.addLayer(
+        { ...sitiosArqueologicosLayer, layout: { visibility: 'none' } } as mapboxgl.AddLayerObject,
+        before,
+      )
+    }
+    const vis = camadasGeo.sitios_arqueologicos ? 'visible' : 'none'
+    if (map.getLayer(CIRCLE_ID)) map.setLayoutProperty(CIRCLE_ID, 'visibility', vis)
+  }, [mapLoaded, sitioData, camadasGeo.sitios_arqueologicos])
 
   // Força camadas estáticas dos tipos migrados para API a ficarem SEMPRE ocultas.
   // Roda a cada mudança em camadasGeo para sobrepor syncCamadasGeoVisibility.
@@ -2929,15 +3542,6 @@ export function MapView() {
       }
     }
   }, [mapLoaded, camadasGeo])
-
-  useEffect(() => {
-    const map = mapRef.current
-    if (!map || !mapLoaded || !map.isStyleLoaded()) return
-    if (!territorioSimuladoLayersPresent(map)) {
-      addTerritorioSimuladoLayers(map, 'processos-fill')
-    }
-    syncTerritorioSimuladoVisibility(map, territorioSimuladoVisivel)
-  }, [mapLoaded, territorioSimuladoVisivel])
 
   useEffect(() => {
     const fn = () => setCamadaGeoTip(null)
@@ -3115,11 +3719,14 @@ export function MapView() {
         addCamadasGeoLayers(map, 'processos-fill', CAMADAS_GEO_JSON)
         syncCamadasGeoVisibility(map, useMapStore.getState().camadasGeo)
 
-        addTerritorioSimuladoLayers(map, 'processos-fill')
-        syncTerritorioSimuladoVisibility(
-          map,
-          useMapStore.getState().territorioSimuladoVisivel,
-        )
+        {
+          const st = useMapStore.getState()
+          applyProcessoSelectionFocus(
+            map,
+            st.processoSelecionado?.id ?? null,
+            st.selecaoOrigemProcesso === 'map' && st.processoSelecionado != null,
+          )
+        }
 
         applySatelliteStylePostLoad(map, MAPBOX_STYLE_SATELLITE)
 
@@ -3470,7 +4077,10 @@ export function MapView() {
                   <ul className="flex flex-col gap-2">
                     {camadasGeoLegendItems.map((id) => (
                       <li key={id} className="flex items-center gap-2.5">
-                        {id === 'ferrovias' ? (
+                        {id === 'ferrovias' ||
+                        id === 'rodovias' ||
+                        id === 'hidrovias' ||
+                        id === 'rede_hidrografica' ? (
                           <span
                             className="h-0.5 w-6 shrink-0 rounded-sm"
                             style={{

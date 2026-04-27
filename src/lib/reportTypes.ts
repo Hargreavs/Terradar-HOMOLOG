@@ -87,7 +87,7 @@ export interface MasterSubstancia {
   aplicacoes_usgs: string | null
   cresc_demanda_cleantech_2030_pct: number | null
   demanda_projetada_2030: string | null
-  cambio_referencia: number
+  cambio_referencia: number | null
   updated_at: string
   /**
    * `GLOBAL` vs `BR_ONLY` (minerais de consumo majoritariamente domésticos).
@@ -194,6 +194,16 @@ export interface ReportData {
   top_uf_produtora?: string | null
   top_uf_pct?: number | null
   ano_referencia_amb?: number | null
+  /** `master_substancias.fonte_preco` (PROIBIDO, SEM_FONTE*, etc.). */
+  fonte_preco: string | null
+  /**
+   * Percentuais BR crus da master (`null` = ausente; distinto de 0).
+   * Usado pelo drawer F3 para disclaimers; `reservas_mundiais_pct` mantém compat numérica.
+   */
+  reservas_br_pct_raw: number | null
+  producao_br_pct_raw: number | null
+  /** `master_substancias.preco_brl` por tonelada — fallback de UI se câmbio ao vivo falhar. */
+  preco_brl_por_t: number | null
   /** `master_substancias.fonte_res_prod` (marker `SEM_FONTE_OFICIAL:` = sem estatística comparável). */
   fonte_res_prod: string | null
   /** PNM e políticas setoriais (master_substâncias). */

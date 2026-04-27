@@ -1,6 +1,5 @@
 import type { CSSProperties } from 'react'
 import { RadarSweepAnimation } from './animations/RadarSweepAnimation'
-import { SubstanciasRadarAnimation } from './animations/SubstanciasRadarAnimation'
 import { RiskCalibrationAnimation } from './animations/RiskCalibrationAnimation'
 import { RegionFocusAnimation } from './animations/RegionFocusAnimation'
 
@@ -10,7 +9,7 @@ export function ProspeccaoAnimations({
   reducedMotion,
   exiting = false,
 }: {
-  currentStep: 1 | 2 | 3 | 4
+  currentStep: 1 | 2 | 3
   visible: boolean
   reducedMotion: boolean
   exiting?: boolean
@@ -46,9 +45,8 @@ export function ProspeccaoAnimations({
         }}
       >
         {currentStep === 1 ? <RadarSweepAnimation /> : null}
-        {currentStep === 2 ? <SubstanciasRadarAnimation /> : null}
-        {currentStep === 3 ? <RiskCalibrationAnimation /> : null}
-        {currentStep === 4 ? <RegionFocusAnimation /> : null}
+        {currentStep === 2 ? <RiskCalibrationAnimation /> : null}
+        {currentStep === 3 ? <RegionFocusAnimation /> : null}
       </div>
     </div>
   )

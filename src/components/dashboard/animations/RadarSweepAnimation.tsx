@@ -242,13 +242,18 @@ export function RadarSweepAnimation() {
           const px = CX + pt.x
           const py = CY + pt.y
           const sz = 16
+          const wOuter = Math.max(0, sz * s * 2)
+          const hOuter = Math.max(0, sz * s * 2)
+          const wMid = Math.max(0, sz * s)
+          const wSmall = Math.max(0, sz * s - 4)
+          const hSmall = Math.max(0, sz * s * 0.3)
           return (
             <g key={i} opacity={e}>
               <rect
                 x={px - sz * s}
                 y={py - sz * s}
-                width={sz * s * 2}
-                height={sz * s * 2}
+                width={wOuter}
+                height={hOuter}
                 rx={6}
                 fill={pt.color}
                 opacity={0.12}
@@ -257,8 +262,8 @@ export function RadarSweepAnimation() {
               <rect
                 x={px - (sz * s) / 2}
                 y={py - (sz * s) / 2}
-                width={sz * s}
-                height={sz * s}
+                width={wMid}
+                height={wMid}
                 rx={3}
                 fill={pt.color}
                 opacity={0.9}
@@ -266,8 +271,8 @@ export function RadarSweepAnimation() {
               <rect
                 x={px - (sz * s) / 2 + 2}
                 y={py - (sz * s) / 2 + 2}
-                width={sz * s - 4}
-                height={Math.max(0, sz * s * 0.3)}
+                width={wSmall}
+                height={hSmall}
                 rx={1.5}
                 fill="white"
                 opacity={0.12}

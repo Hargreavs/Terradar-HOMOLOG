@@ -9,21 +9,25 @@ import {
 } from 'react'
 import { useAppStore } from '../../store/useAppStore'
 import { useMapStore } from '../../store/useMapStore'
-import type { Processo } from '../../types'
 import { RadarBackgroundAnimation } from './RadarBackgroundAnimation'
 import { RadarAlertasSubtab } from './RadarAlertasSubtab'
 import { ProspeccaoWizard } from './ProspeccaoWizard'
 import { ProspeccaoResultados } from './ProspeccaoResultados'
+import { RefinarSubstanciaSheet } from './RefinarSubstanciaSheet'
 import { TerraeLogoLoading } from './animations/TerraeLogoLoading'
 import { useStaggeredEntrance } from '../../hooks/useStaggeredEntrance'
-import {
-  computeOpportunityForProcesso,
-  type ObjetivoProspeccao,
-  type OpportunityResult,
-  type PerfilRisco,
-} from '../../lib/opportunityScore'
+import { type ObjetivoProspeccao, type OpportunityResult, type PerfilRisco } from '../../lib/opportunityScore'
 import { MOTION_GROUP_FADE_MS } from '../../lib/motionDurations'
 import { TODAS_SUBST } from '../../lib/substancias'
+import type { FamiliasResponse, SubstanciasResponse } from '../../lib/radar/api'
+import {
+  RADAR_OPORTUNIDADES_PAGE_SIZE,
+  contarOportunidades,
+  expandirSubstanciasParaVariantes,
+  listarFamiliasDisponiveis,
+  listarOportunidades,
+  listarSubstanciasDisponiveis,
+} from '../../lib/radar/api'
 
 /** Snapshot dos filtros da última análise concluída (para pular loading se iguais). */
 interface FiltrosSnapshot {
@@ -162,25 +166,10 @@ export function RadarDashboard({
   const pendingRadarAlertaId = useAppStore((s) => s.pendingRadarAlertaId)
   const radarAbrirHomeIntent = useAppStore((s) => s.radarAbrirHomeIntent)
   const setRadarAbrirHomeIntent = useAppStore((s) => s.setRadarAbrirHomeIntent)
-  const processos = useMapStore((s) => s.processos)
   const setPendingNavigation = useMapStore((s) => s.setPendingNavigation)
 
-  const processoById = useMemo(() => {
-    const m = new Map<string, Processo>()
-    for (const p of processos) m.set(p.id, p)
-    return m
-  }, [processos])
-
-  const substanciasCatalogo = useMemo(() => {
-    const s = new Set<string>()
-    for (const p of processos) s.add(p.substancia)
-    return [...s].sort((a, b) => a.localeCompare(b, 'pt-BR'))
-  }, [processos])
-
-  const prospeccaoSubstOpcoes = useMemo(
-    () => [TODAS_SUBST, ...substanciasCatalogo],
-    [substanciasCatalogo],
-  )
+  const [catalogoSubstancias, setCatalogoSubstancias] = useState<SubstanciasResponse | null>(null)
+  const [, setCatalogoFamilias] = useState<FamiliasResponse | null>(null)
 
   const [viewState, setViewState] = useState<RadarViewState>('home')
 
@@ -205,11 +194,13 @@ export function RadarDashboard({
   }, [viewState, reducedMotion])
 
   const navigateProcessoMapa = useCallback(
-    (id: string) => {
+    (processoId: string, numeroAnm?: string | null) => {
+      const num = typeof numeroAnm === 'string' ? numeroAnm.trim() : ''
       setPendingNavigation({
         type: 'processo',
-        payload: id,
+        payload: processoId,
         timestamp: Date.now(),
+        ...(num ? { numeroAnm: num } : {}),
       })
       setTelaAtiva('mapa')
     },
@@ -224,20 +215,22 @@ export function RadarDashboard({
   const [proSubst, setProSubst] = useState<string[]>([])
   const [proRisco, setProRisco] = useState<PerfilRisco | null>(null)
   const [proUfs, setProUfs] = useState<string[]>([])
-  const [proDdSub, setProDdSub] = useState(false)
   const [loadProgress, setLoadProgress] = useState(0)
   const [loadMsgIdx, setLoadMsgIdx] = useState(0)
   const [loadOverlayOut, setLoadOverlayOut] = useState(false)
   const [resultados, setResultados] = useState<OpportunityResult[]>([])
-  const [resultadosDescartados, setResultadosDescartados] = useState<OpportunityResult[]>([])
-  const [excluidosCount, setExcluidosCount] = useState(0)
+  const [totalOportunidades, setTotalOportunidades] = useState<number | null>(null)
+  const [paginaAtual, setPaginaAtual] = useState(1)
+  const [carregandoPagina, setCarregandoPagina] = useState(false)
   const [selectedResultId, setSelectedResultId] = useState<string | null>(null)
-  const [wizardEntryStep, setWizardEntryStep] = useState<1 | 2 | 3 | 4>(1)
+  const resultadosListRef = useRef<HTMLDivElement | null>(null)
+  const [wizardEntryStep, setWizardEntryStep] = useState<1 | 2 | 3>(1)
   const [toastMsg, setToastMsg] = useState<string | null>(null)
   const [loadingOverlayVisible, setLoadingOverlayVisible] = useState(false)
   const [ultimosFiltrosAnalise, setUltimosFiltrosAnalise] = useState<FiltrosSnapshot | null>(
     null,
   )
+  const [refinarSubstAberto, setRefinarSubstAberto] = useState(false)
   const [skipStaggerResultados, setSkipStaggerResultados] = useState(false)
   const prevTelaRef = useRef(telaAtiva)
 
@@ -252,27 +245,147 @@ export function RadarDashboard({
   const substanciasFiltroProspeccao = useMemo(() => {
     if (proSubst.includes(TODAS_SUBST)) return null
     const xs = proSubst.filter((x) => x !== TODAS_SUBST)
-    return xs.length > 0 ? xs : null
-  }, [proSubst])
+    if (xs.length === 0) return null
+    return expandirSubstanciasParaVariantes(xs, catalogoSubstancias)
+  }, [proSubst, catalogoSubstancias])
 
-  const runAnalise = useCallback(() => {
-    if (!proObjetivo || !proRisco) return
-    let rows = [...processos]
-    if (substanciasFiltroProspeccao != null) {
-      const allow = new Set(substanciasFiltroProspeccao)
-      rows = rows.filter((p) => allow.has(p.substancia))
+  const showToast = useCallback((msg: string) => {
+    setToastMsg(msg)
+    window.setTimeout(() => setToastMsg(null), 2800)
+  }, [])
+
+  const buildFiltrosListagem = useCallback(
+    (novasSubst: string[]) => {
+      if (!proRisco) {
+        return null
+      }
+      if (novasSubst.includes(TODAS_SUBST)) {
+        return {
+          perfil: proRisco,
+          substancias: null,
+          ufs: proUfs.length > 0 ? proUfs : null,
+        }
+      }
+      const xs = novasSubst.filter((s) => s !== TODAS_SUBST)
+      return {
+        perfil: proRisco,
+        substancias:
+          xs.length > 0 ? expandirSubstanciasParaVariantes(xs, catalogoSubstancias) : null,
+        ufs: proUfs.length > 0 ? proUfs : null,
+      }
+    },
+    [proRisco, proUfs, catalogoSubstancias],
+  )
+
+  const handleAplicarFiltroSubstancia = useCallback(
+    async (novasSubstancias: string[]) => {
+      const substAnterior = proSubst
+      setProSubst(novasSubstancias)
+      setRefinarSubstAberto(false)
+      if (!proRisco || !proObjetivo) return
+      const filtros = buildFiltrosListagem(novasSubstancias)
+      if (!filtros) return
+      setCarregandoPagina(true)
+      setSelectedResultId(null)
+      const [listadoResult, contadoResult] = await Promise.allSettled([
+        listarOportunidades(filtros, RADAR_OPORTUNIDADES_PAGE_SIZE, 0),
+        contarOportunidades(filtros),
+      ])
+      if (listadoResult.status === 'rejected') {
+        console.error(listadoResult.reason)
+        setProSubst(substAnterior)
+        showToast('Não foi possível aplicar o filtro. Tente novamente.')
+        setResultados([])
+        setTotalOportunidades(null)
+        setPaginaAtual(1)
+        setCarregandoPagina(false)
+        return
+      }
+      setResultados(listadoResult.value.resultados)
+      setPaginaAtual(1)
+      if (contadoResult.status === 'fulfilled') {
+        setTotalOportunidades(contadoResult.value)
+      } else {
+        setTotalOportunidades(null)
+        console.warn('Falha ao contar oportunidades:', contadoResult.reason)
+      }
+      setUltimosFiltrosAnalise(buildFiltrosSnapshot(proObjetivo, novasSubstancias, proRisco, proUfs))
+      setCarregandoPagina(false)
+    },
+    [proRisco, proObjetivo, proUfs, proSubst, showToast, buildFiltrosListagem],
+  )
+
+  const runAnalise = useCallback(async (): Promise<boolean> => {
+    if (!proObjetivo || !proRisco) return false
+    const filtros = {
+      perfil: proRisco,
+      substancias: substanciasFiltroProspeccao,
+      ufs: proUfs.length > 0 ? proUfs : null,
     }
-    if (proUfs.length > 0) {
-      rows = rows.filter((p) => proUfs.includes(p.uf))
+    const [listadoResult, contadoResult] = await Promise.allSettled([
+      listarOportunidades(filtros, RADAR_OPORTUNIDADES_PAGE_SIZE, 0),
+      contarOportunidades(filtros),
+    ])
+    if (listadoResult.status === 'rejected') {
+      console.error(listadoResult.reason)
+      showToast('Não foi possível carregar oportunidades. Tente novamente.')
+      setResultados([])
+      setTotalOportunidades(null)
+      setPaginaAtual(1)
+      return false
     }
-    const scored = rows
-      .map((p) => computeOpportunityForProcesso(p, proRisco, proObjetivo))
-      .sort((a, b) => b.scoreTotal - a.scoreTotal)
-    const excl = scored.filter((r) => r.scoreTotal <= 24)
-    setExcluidosCount(excl.length)
-    setResultadosDescartados(excl)
-    setResultados(scored.filter((r) => r.scoreTotal > 24))
-  }, [processos, proObjetivo, proRisco, substanciasFiltroProspeccao, proUfs])
+    const pagina = listadoResult.value
+    setResultados(pagina.resultados)
+    setPaginaAtual(1)
+    if (contadoResult.status === 'fulfilled') {
+      setTotalOportunidades(contadoResult.value)
+    } else {
+      setTotalOportunidades(null)
+      console.warn('Falha ao contar oportunidades:', contadoResult.reason)
+    }
+    return true
+  }, [proObjetivo, proRisco, substanciasFiltroProspeccao, proUfs, showToast])
+
+  const irParaPagina = useCallback(
+    async (pagina: number) => {
+      if (!proRisco || !proObjetivo) return
+      const offset = (pagina - 1) * RADAR_OPORTUNIDADES_PAGE_SIZE
+      setCarregandoPagina(true)
+      try {
+        const filtros = {
+          perfil: proRisco,
+          substancias: substanciasFiltroProspeccao,
+          ufs: proUfs.length > 0 ? proUfs : null,
+        }
+        const resultado = await listarOportunidades(
+          filtros,
+          RADAR_OPORTUNIDADES_PAGE_SIZE,
+          offset,
+        )
+        setResultados(resultado.resultados)
+        setPaginaAtual(pagina)
+        resultadosListRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      } catch (err) {
+        console.error(err)
+        showToast('Erro ao carregar página. Tente novamente.')
+      } finally {
+        setCarregandoPagina(false)
+      }
+    },
+    [proRisco, proObjetivo, substanciasFiltroProspeccao, proUfs, showToast],
+  )
+
+  useEffect(() => {
+    const perfil = proRisco ?? 'moderado'
+    void Promise.all([listarFamiliasDisponiveis(perfil), listarSubstanciasDisponiveis(perfil)])
+      .then(([catFams, catSubs]) => {
+        setCatalogoFamilias(catFams)
+        setCatalogoSubstancias(catSubs)
+      })
+      .catch((err) => {
+        console.error('Falha ao carregar catalogos de substancias:', err)
+      })
+  }, [proRisco])
 
   useEffect(() => {
     if (!loadingOverlayVisible) return
@@ -295,15 +408,17 @@ export function RadarDashboard({
         clearInterval(msgId)
         setLoadOverlayOut(true)
         window.setTimeout(() => {
-          runAnalise()
-          if (proObjetivo && proRisco) {
-            setUltimosFiltrosAnalise(
-              buildFiltrosSnapshot(proObjetivo, proSubst, proRisco, proUfs),
-            )
-          }
-          setLoadingOverlayVisible(false)
-          setLoadOverlayOut(false)
-          setViewState('resultados')
+          void (async () => {
+            const ok = await runAnalise()
+            if (ok && proObjetivo && proRisco) {
+              setUltimosFiltrosAnalise(
+                buildFiltrosSnapshot(proObjetivo, proSubst, proRisco, proUfs),
+              )
+            }
+            setLoadingOverlayVisible(false)
+            setLoadOverlayOut(false)
+            setViewState('resultados')
+          })()
         }, reducedMotion ? 0 : 300)
       }
     }, 50)
@@ -379,8 +494,9 @@ export function RadarDashboard({
     setProRisco(null)
     setProUfs([])
     setResultados([])
-    setResultadosDescartados([])
-    setExcluidosCount(0)
+    setTotalOportunidades(null)
+    setPaginaAtual(1)
+    setCarregandoPagina(false)
     setSelectedResultId(null)
     setLoadingOverlayVisible(false)
     setUltimosFiltrosAnalise(null)
@@ -427,7 +543,17 @@ export function RadarDashboard({
   }, [proObjetivo, proRisco, proSubst, proUfs, ultimosFiltrosAnalise, resultados.length])
 
   const handleRefinarBusca = useCallback(() => {
-    setWizardEntryStep(4)
+    setWizardEntryStep(3)
+    if (reducedMotion) {
+      setViewState('wizard')
+      return
+    }
+    setViewState('transitioning-resultados-to-wizard')
+    window.setTimeout(() => setViewState('wizard'), 300)
+  }, [reducedMotion])
+
+  const handleRefinarBuscaDesdeVazio = useCallback(() => {
+    setWizardEntryStep(1)
     if (reducedMotion) {
       setViewState('wizard')
       return
@@ -465,20 +591,6 @@ export function RadarDashboard({
     }
     setWizardEntryVisible(false)
   }, [viewState, reducedMotion])
-
-  const showToast = (msg: string) => {
-    setToastMsg(msg)
-    window.setTimeout(() => setToastMsg(null), 2800)
-  }
-
-  const proPrefixSub =
-    proSubst.length === 0
-      ? 'Substâncias'
-      : proSubst.includes(TODAS_SUBST)
-        ? 'Todas'
-        : proSubst.length === 1
-          ? proSubst[0]!
-          : `${proSubst.length} itens`
 
   const showHomeBlocks =
     viewState === 'home' || viewState === 'transitioning-to-wizard'
@@ -548,7 +660,7 @@ export function RadarDashboard({
 
   return (
     <div
-      className="terrae-intel-dashboard-scroll box-border flex h-full min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden"
+      className="terrae-intel-dashboard-scroll scrollbar-thin-auto box-border flex h-full min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden"
       style={{
         backgroundColor: '#0D0D0C',
         padding: '24px 0 24px 24px',
@@ -746,18 +858,12 @@ export function RadarDashboard({
             <ProspeccaoWizard
               key={`wizard-${wizardEntryStep}`}
               reducedMotion={reducedMotion}
-              prospeccaoSubstOpcoes={prospeccaoSubstOpcoes}
-              proPrefixSub={proPrefixSub}
               proObjetivo={proObjetivo}
               setProObjetivo={setProObjetivo}
-              proSubst={proSubst}
-              setProSubst={setProSubst}
               proRisco={proRisco}
               setProRisco={setProRisco}
               proUfs={proUfs}
               setProUfs={setProUfs}
-              proDdSub={proDdSub}
-              setProDdSub={setProDdSub}
               onCancel={handleCancelWizard}
               onAnalisar={handleAnalisar}
               exiting={false}
@@ -841,6 +947,7 @@ export function RadarDashboard({
               }}
             >
               <div
+                className="scrollbar-thin-auto"
                 style={{
                   flex: 1,
                   minHeight: 0,
@@ -852,9 +959,12 @@ export function RadarDashboard({
               >
                 <ProspeccaoResultados
                   resultados={resultados}
-                  excluidosCount={excluidosCount}
-                  resultadosDescartados={resultadosDescartados}
-                  processoById={processoById}
+                  totalOportunidades={totalOportunidades}
+                  paginaAtual={paginaAtual}
+                  carregandoPagina={carregandoPagina}
+                  onIrParaPagina={irParaPagina}
+                  pageSize={RADAR_OPORTUNIDADES_PAGE_SIZE}
+                  resultadosListRef={resultadosListRef}
                   proRisco={proRisco}
                   proSubst={proSubst}
                   proUfs={proUfs}
@@ -865,8 +975,22 @@ export function RadarDashboard({
                   reducedMotion={reducedMotion}
                   navigateProcessoMapa={navigateProcessoMapa}
                   handleRefinarBusca={handleRefinarBusca}
+                  handleRefinarBuscaDesdeVazio={handleRefinarBuscaDesdeVazio}
                   handleVoltarAoRadar={handleVoltarAoRadar}
                   showToast={showToast}
+                  onAbrirRefinarSubst={() => setRefinarSubstAberto(true)}
+                  onRemoverFiltroSubst={(substancia) => {
+                    const novas = proSubst.filter((s) => s !== substancia)
+                    void handleAplicarFiltroSubstancia(novas)
+                  }}
+                />
+                <RefinarSubstanciaSheet
+                  catalog={catalogoSubstancias}
+                  proSubst={proSubst}
+                  open={refinarSubstAberto}
+                  onApply={handleAplicarFiltroSubstancia}
+                  onClose={() => setRefinarSubstAberto(false)}
+                  reducedMotion={reducedMotion}
                 />
               </div>
 

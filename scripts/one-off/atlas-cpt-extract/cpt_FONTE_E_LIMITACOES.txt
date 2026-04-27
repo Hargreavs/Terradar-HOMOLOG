@@ -1,0 +1,9 @@
+Arquivo unico longo (tidy): cpt_mestre_long.csv — colunas escopo, fonte, ano, regiao, uf, municipio, localidade, tabela_ou_serie, indicador, subcategoria, valor, unidade, notas.
+Integra: (1) serie Brasil 1985-2023 extraida dos graficos do PDF; (2) Tabelas 4,5,7 por UF (2023) e T11 manifestacoes transcritas das imagens; (3) linha META sobre 2024.
+
+Fonte: Atlas dos Conflitos no Campo Brasil (Cedoc/CPT), edicao 2025 v4, periodo 1985-2023.
+Extraido automaticamente do PDF com pdf-parse; series numericas alinhadas aos Graficos 1, 11, 19, 24 e 26.
+A soma anual da coluna ocorrencias_conflitos_campo (Grafico 1) da 48901; o Atlas cita 50950 ocorrencias totais no Quadro 1 — diferenca de recorte/metodologia entre o grafico e a sintese; use 50950 para totais oficiais agregados.
+Colunas (terra+agua+trabalho escravo) nao batem matematicamente com o total geral de ocorrencias em todos os anos, por definicao de eixos e de dupla contagem na metodologia CPT.
+Nao consta neste conjunto: serie anual de familias despejadas; pessoas afetadas fora do total 191.732 (trabalhadores em casos de trabalho escravo); decomposicao de violencia (assassinatos, ameacas, prisoes) por ANO (so composicao agregada em cpt_violencia_composicao_agregada.csv).
+Nota: 35.292 familias despejadas (2003) e outros destaques aparecem no texto do Atlas, nao em tabela de serie anual.

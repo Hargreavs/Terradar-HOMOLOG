@@ -236,7 +236,7 @@ function variaveisGeologicas(p: Processo, _gScore: number): RiskDimensaoVariavel
 
   const substLabel = p.substancia.trim() || 'Substância'
   const subTextoHigh = `${substLabel}, geologia complexa e pouco explorada`
-  const subTextoLow = `${substLabel.split(/\s+/)[0]}, geologia bem mapeada no Brasil`
+  const subTextoLow = `${substLabel}, geologia bem mapeada no Brasil`
 
   const faseTextoHigh =
     p.fase === 'requerimento'
@@ -449,7 +449,6 @@ export function ambientalDetalheMockFromProcesso(p: {
   const tiPct = 5 + Math.floor(hashUnit(id, 208) * 26)
   const ucPiPct = 5 + Math.floor(hashUnit(id, 209) * 21)
   const ucUsPct = 3 + Math.floor(hashUnit(id, 210) * 13)
-  const appPct = 3 + Math.floor(hashUnit(id, 211) * 14)
   const quarKm = 2 + Math.floor(hashUnit(id, 212) * 14)
 
   const variaveis: RiskDimensaoVariavel[] = []
@@ -483,23 +482,6 @@ export function ambientalDetalheMockFromProcesso(p: {
       valor: 35,
       texto: `${ucPiTexto(nome)} (${ucPiPct}% da área)`,
       fonte: 'ICMBio/MMA (CNUC)',
-    })
-  }
-
-  const appFeat = pickFeatureWithMaxOverlap(
-    CAMADAS_GEO_JSON.app_car.features as CamadaGeoFeat[],
-    proc,
-    () => true,
-    (f) =>
-      `${f.properties?.municipio ?? ''}|${f.properties?.tipo ?? ''}|${f.properties?.uf ?? ''}`,
-  )
-  if (appFeat) {
-    const tipo = String(appFeat.properties?.tipo ?? 'APP')
-    variaveis.push({
-      nome: 'Sobreposição com APP',
-      valor: 25,
-      texto: `${tipo} (${appPct}% da área; ${String(appFeat.properties?.municipio ?? 'N/D')}/${String(appFeat.properties?.uf ?? 'N/D')})`,
-      fonte: 'CAR/SICAR',
     })
   }
 
@@ -575,7 +557,7 @@ export function ambientalDetalheMockFromProcesso(p: {
           nome: 'Resumo',
           valor: 0,
           texto: 'Nenhuma restrição ambiental identificada nas camadas ativas do mock',
-          fonte: 'Terrae',
+          fonte: 'TERRADAR',
         },
       ],
     }
@@ -822,11 +804,22 @@ function variaveisRegulatorias(p: Processo, _alvo: number): RiskDimensaoVariavel
 function mapSubfatorPersistidoToVariavel(
   s: Record<string, unknown>,
 ): RiskDimensaoVariavel {
+  const valorBruto =
+    s.valor_bruto != null && Number.isFinite(Number(s.valor_bruto))
+      ? Number(s.valor_bruto)
+      : undefined
+  const pesoPct =
+    s.peso_pct != null && Number.isFinite(Number(s.peso_pct))
+      ? Number(s.peso_pct)
+      : undefined
   return {
     nome: String(s.nome ?? ''),
     valor: Number(s.valor ?? 0),
     texto: String(s.texto ?? ''),
     fonte: String(s.fonte ?? 'scores'),
+    valor_bruto: valorBruto,
+    peso_pct: pesoPct,
+    label: s.label != null ? String(s.label) : undefined,
   }
 }
 
