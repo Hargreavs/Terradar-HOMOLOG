@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react'
+import { clampBarPct } from './radar/bars'
 import {
   MOTION_BAR_STAGGER_MS,
   MOTION_BAR_WIDTH_MS,
@@ -24,16 +25,17 @@ export function barFillStyle(
   reduced: boolean,
   backgroundColor: string,
 ): CSSProperties {
+  const w = clampBarPct(pct)
   if (reduced) {
     return {
-      width: `${pct}%`,
+      width: `${w}%`,
       height: '100%',
       backgroundColor,
       borderRadius: 3,
     }
   }
   return {
-    width: widthActive ? `${pct}%` : '0%',
+    width: widthActive ? `${w}%` : '0%',
     height: '100%',
     backgroundColor,
     borderRadius: 3,

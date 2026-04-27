@@ -22,10 +22,7 @@ import {
 import { useAppStore } from '../../store/useAppStore'
 import { useMapStore } from '../../store/useMapStore'
 import type { Processo } from '../../types'
-import {
-  RADAR_ALERTAS_MOCK,
-  type RadarAlerta,
-} from '../../data/radar-alertas.mock'
+import type { RadarAlerta } from '../../data/radar-alertas.mock'
 import { MultiSelectDropdown } from '../ui/MultiSelectDropdown'
 import { BadgeSubstancia } from '../ui/BadgeSubstancia'
 import {
@@ -37,6 +34,7 @@ import {
 import { motionMs } from '../../lib/motionDurations'
 import { corSubstanciaOuUndefined } from '../../lib/corSubstancia'
 import { TODAS_SUBST } from '../../lib/substancias'
+import { useRadarEventos } from '../../lib/radar/useRadarEventos'
 
 const RELEV_ORDER: Relevancia[] = [
   'critico',
@@ -420,6 +418,17 @@ export function RadarAlertasSubtab({
   const processos = useMapStore((s) => s.processos)
   const setPendingNavigation = useMapStore((s) => s.setPendingNavigation)
 
+  const {
+    eventos: alertasLista,
+    carregando,
+    erro,
+  } = useRadarEventos({
+    data_de: '2026-04-27',
+    data_ate: '2026-04-27',
+    limite: 50,
+  })
+  const alertas = alertasLista
+
   const processoById = useMemo(() => {
     const m = new Map<string, Processo>()
     for (const p of processos) m.set(p.id, p)
@@ -493,7 +502,7 @@ export function RadarAlertasSubtab({
         : `${substSel.length} substâncias`
 
   const alertasFiltrados = useMemo(() => {
-    return RADAR_ALERTAS_MOCK.filter((a) => {
+    return alertas.filter((a) => {
       if (!alertaPassaPeriodo(a, periodo, customDe, customAte)) return false
       const subFiltro = substSel.filter((x) => x !== TODAS_SUBST)
       if (subFiltro.length > 0) {
@@ -507,7 +516,7 @@ export function RadarAlertasSubtab({
       }
       return true
     })
-  }, [periodo, customDe, customAte, substSel, busca])
+  }, [alertas, periodo, customDe, customAte, substSel, busca])
 
   const alertasOrdenados = useMemo(() => {
     return [...alertasFiltrados].sort(
@@ -565,8 +574,8 @@ export function RadarAlertasSubtab({
   const hojeYmd = ymdToday()
 
   const alertasHojeResumo = useMemo(
-    () => RADAR_ALERTAS_MOCK.filter((a) => a.data.slice(0, 10) === hojeYmd),
-    [hojeYmd],
+    () => alertas.filter((a) => a.data.slice(0, 10) === hojeYmd),
+    [alertas, hojeYmd],
   )
 
   const resumoDiaStats = useMemo(() => {
@@ -925,7 +934,7 @@ export function RadarAlertasSubtab({
                 gap: 6,
               }}
             >
-              Análise Terrae
+              Análise TERRADAR
               <Sparkles size={16} color="#F1B85A" style={{ opacity: 0.8, flexShrink: 0 }} />
             </div>
             <div
@@ -1109,6 +1118,22 @@ export function RadarAlertasSubtab({
           Ver no Diário
           <ArrowUpRight size={16} aria-hidden />
         </button>
+      </div>
+    )
+  }
+
+  if (carregando) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col" style={{ color: '#D3D1C7', padding: 24 }}>
+        Carregando alertas...
+      </div>
+    )
+  }
+
+  if (erro) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col" style={{ color: '#D3D1C7', padding: 24 }}>
+        Erro: {erro}. Mostrando dados mock.
       </div>
     )
   }

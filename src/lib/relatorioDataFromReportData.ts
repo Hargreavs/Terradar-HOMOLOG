@@ -18,8 +18,9 @@ import type {
   Timestamps,
   VariavelOportunidadeMock,
 } from '../data/relatorio.mock'
-import type { ReportData } from './reportTypes'
+import type { MasterSubstancia, ReportData } from './reportTypes'
 import type { Processo } from '../types'
+import { buildAtratividadeItemsS31 } from './s31SubfatorDecomp'
 import {
   PESOS_OS_POR_PERFIL,
   corFaixaOS,
@@ -628,17 +629,36 @@ function cruzamentoOportunidadeDrawer(
   }
 }
 
+function parsePenalidadesMotor(
+  dimOportunidadePersistida?: Processo['dimensoes_oportunidade_persistido'],
+): string[] {
+  if (dimOportunidadePersistida == null || typeof dimOportunidadePersistida !== 'object') {
+    return []
+  }
+  const raw = dimOportunidadePersistida as Record<string, unknown>
+  const p = raw.penalidades
+  if (!Array.isArray(p)) return []
+  return p.filter((x): x is string => typeof x === 'string' && x.trim() !== '')
+}
+
 function oportunidadeFromReport(
   rd: ReportData,
-  dimOportunidadePersistida?: Processo['dimensoes_oportunidade_persistido'],
+  dimOportunidadePersistida: Processo['dimensoes_oportunidade_persistido'],
+  processo: Processo,
+  mercado: MasterSubstancia | null,
 ): RelatorioOportunidadeData {
-  const mkVar = (nome: string, texto: string): VariavelOportunidadeMock => ({
-    nome,
-    valor: 0,
-    peso: 0,
-    texto,
-    impacto_neutro: true as const,
-  })
+  const labelMap = {
+    atratividade: 'Atratividade',
+    viabilidade: 'Viabilidade',
+    seguranca: 'Segurança',
+  } as const
+
+  const dimValOf = (dimKey: keyof typeof labelMap) =>
+    dimKey === 'atratividade'
+      ? rd.os_merc.valor
+      : dimKey === 'viabilidade'
+        ? rd.os_viab.valor
+        : rd.os_seg.valor
 
   const mapSub = (s: Record<string, unknown>): VariavelOportunidadeMock => ({
     nome: String(s.nome ?? ''),
@@ -672,12 +692,38 @@ function oportunidadeFromReport(
         )
       }
     }
-    const labelMap = {
-      atratividade: 'Atratividade',
-      viabilidade: 'Viabilidade',
-      seguranca: 'Segurança',
-    } as const
-    return [mkVar(labelMap[dimKey], 'Dimensão calculada automaticamente.')]
+    if (dimKey === 'atratividade') {
+      const items = buildAtratividadeItemsS31(processo, mercado)
+      const rows: VariavelOportunidadeMock[] = items.map((it) => ({
+        nome: it.nome,
+        valor: Math.round(it.valor),
+        peso: Math.round(it.peso * 100),
+        texto:
+          it.fonte ??
+          'Subfator ilustrativo (S31 v1.1; motor preenche JSONB em v1.1+).',
+        valor_bruto: it.valor,
+        impacto_neutro: false,
+      }))
+      if (mercado?.mineral_critico_2025) {
+        rows.push({
+          nome: 'Bônus mineral crítico 2025',
+          valor: 10,
+          peso: 0,
+          texto: 'Condicionado ao consolidado do motor S31.',
+          impacto_neutro: true,
+        })
+      }
+      return rows
+    }
+    return [
+      {
+        nome: labelMap[dimKey],
+        valor: dimValOf(dimKey),
+        peso: 100,
+        texto: 'Dimensão calculada automaticamente (motor S31).',
+        impacto_neutro: false,
+      },
+    ]
   }
 
   // Helper: gera perfil consistente mesmo quando o OS vem `null` (processo
@@ -699,6 +745,7 @@ function oportunidadeFromReport(
       moderado: perfilDe(rd.os_moderado, 'moderado'),
       arrojado: perfilDe(rd.os_arrojado, 'arrojado'),
     },
+    penalidades: parsePenalidadesMotor(dimOportunidadePersistida),
     dimensoes: {
       atratividade: {
         valor: rd.os_merc.valor,
@@ -849,6 +896,7 @@ function observacoesTecnicasFromReport(
 export function relatorioDataFromReportData(
   rd: ReportData,
   processo: Processo,
+  mercado?: MasterSubstancia | null,
 ): RelatorioData {
   const ts = todayIso()
   const timestamps: Timestamps = {
@@ -956,6 +1004,8 @@ export function relatorioDataFromReportData(
     oportunidade: oportunidadeFromReport(
       rd,
       processo.dimensoes_oportunidade_persistido,
+      processo,
+      mercado ?? null,
     ),
   }
 }

@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from 'react'
 import { Check } from 'lucide-react'
+import { SELECTED_INSET_BG, SELECTED_INSET_RING } from '../../lib/radar/tokens'
 
 const baseLayout: CSSProperties = {
   textAlign: 'left',
@@ -21,15 +22,16 @@ const baseLayout: CSSProperties = {
   borderStyle: 'solid',
 }
 
+/** Superfície comum: passo 1 (objetivo) e passo 3 (risco) do wizard TERRADAR. */
 function cardSurface(selected: boolean, isHovered: boolean): Pick<
   CSSProperties,
   'borderColor' | 'backgroundColor' | 'boxShadow'
 > {
   if (selected) {
     return {
-      borderColor: '#EF9F27',
-      backgroundColor: 'rgba(239, 159, 39, 0.06)',
-      boxShadow: '0 0 12px rgba(239, 159, 39, 0.08)',
+      borderColor: 'rgba(245, 158, 11, 0.6)',
+      backgroundColor: SELECTED_INSET_BG,
+      boxShadow: `${SELECTED_INSET_RING}, 0 0 8px rgba(245, 158, 11, 0.08)`,
     }
   }
   if (isHovered) {
@@ -50,18 +52,22 @@ export function ObjetivoCard({
   selected,
   onClick,
   icon,
+  iconSelectedColor,
   label,
+  desc,
 }: {
   selected: boolean
   onClick: () => void
   icon: ReactNode
+  iconSelectedColor: string
   label: string
+  desc: string
 }) {
   const [hover, setHover] = useState(false)
   const isHovered = hover && !selected
   const surface = cardSurface(selected, isHovered)
 
-  const iconColor = selected ? '#EF9F27' : isHovered ? '#B4B2A9' : '#888780'
+  const iconColor = selected ? iconSelectedColor : isHovered ? '#B4B2A9' : '#888780'
   const iconEl =
     isValidElement(icon) && icon != null
       ? cloneElement(icon as ReactElement<{ size?: number; color?: string }>, {
@@ -71,10 +77,12 @@ export function ObjetivoCard({
       : icon
 
   const iconContainerBg = selected
-    ? 'rgba(239, 159, 39, 0.12)'
+    ? 'rgba(245, 158, 11, 0.12)'
     : isHovered
       ? '#2C2C2A'
       : '#1A1A18'
+
+  const descColor = selected ? '#B4B2A9' : isHovered ? '#B4B2A9' : '#888780'
 
   return (
     <button
@@ -109,7 +117,7 @@ export function ObjetivoCard({
         >
           {iconEl}
         </div>
-        <div>
+        <div style={{ minWidth: 0 }}>
           <div
             style={{
               fontSize: 15,
@@ -118,6 +126,15 @@ export function ObjetivoCard({
             }}
           >
             {label}
+          </div>
+          <div
+            style={{
+              fontSize: 13,
+              color: descColor,
+              marginTop: 2,
+            }}
+          >
+            {desc}
           </div>
         </div>
       </div>
@@ -131,7 +148,7 @@ export function ObjetivoCard({
             width: 20,
             height: 20,
             borderRadius: '50%',
-            backgroundColor: '#EF9F27',
+            backgroundColor: 'rgb(245, 158, 11)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -173,7 +190,7 @@ export function RiscoCard({
       : icon
 
   const iconContainerBg = selected
-    ? 'rgba(239, 159, 39, 0.12)'
+    ? 'rgba(245, 158, 11, 0.12)'
     : isHovered
       ? '#2C2C2A'
       : '#1A1A18'
@@ -213,7 +230,7 @@ export function RiscoCard({
         >
           {iconEl}
         </div>
-        <div>
+        <div style={{ minWidth: 0 }}>
           <div
             style={{
               fontSize: 15,
@@ -244,7 +261,7 @@ export function RiscoCard({
             width: 20,
             height: 20,
             borderRadius: '50%',
-            backgroundColor: '#EF9F27',
+            backgroundColor: 'rgb(245, 158, 11)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',

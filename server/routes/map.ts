@@ -14,6 +14,7 @@ import {
   fetchMapLayerUc,
   fetchMapLayerUcPi,
   fetchMapLayerUcUs,
+  fetchMapLayerAssentamentoIncra,
 } from '../lib/mapLayerGeojson'
 import { pool } from '../pool'
 import { supabase } from '../supabase'
@@ -30,6 +31,7 @@ const VALID_TIPOS = new Set([
   'uc_pi',
   'uc_us',
   'quilombola',
+  'assentamento',
   'aquifero',
   'bioma',
   'ferrovia',
@@ -87,6 +89,15 @@ router.get('/api/map/layers/:tipo', async (req, res) => {
       geojson = await fetchMapLayerPorto(pool, minx, miny, maxx, maxy, limit)
     } else if (tipoRaw === 'rodovia') {
       geojson = await fetchMapLayerRodovia(
+        pool,
+        minx,
+        miny,
+        maxx,
+        maxy,
+        limit,
+      )
+    } else if (tipoRaw === 'assentamento') {
+      geojson = await fetchMapLayerAssentamentoIncra(
         pool,
         minx,
         miny,

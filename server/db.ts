@@ -1,9 +1,6 @@
 import { supabase } from './supabase'
-import {
-  computeAllScores,
-  type ScoreInput,
-  type ScoreResult,
-} from './scoreEngine'
+import type { ScoreResult } from './scoreEngine'
+import { runS31MotorAndPersist, type S31MassCaches } from './scoringMotorS31'
 import type { CfemBreakdownMunicipio } from '../src/types/index'
 
 // ── Territorial Analysis (PostGIS automático) ──────────────────
@@ -363,108 +360,19 @@ export async function getFiscal(municipioIbge: string) {
   return data as Record<string, unknown>
 }
 
-function capagToScoreEngineLetter(
-  capagData: Record<string, unknown> | null,
-): string | null {
-  if (!capagData) return null
-  const raw = capagData.nota ?? capagData.capag
-  if (raw == null) return null
-  const s = String(raw).trim()
-  if (!s) return null
-  const up = s.toUpperCase()
-  if (up.startsWith('N.D') || up.startsWith('N.E')) return up.replace(/\s/g, '')
-  const letter = s.match(/[ABCD]/i)
-  if (letter) return letter[0].toUpperCase()
-  return null
-}
-
 /**
- * Computa scores automáticos para um processo (PostGIS + master + CAPAG + incentivos).
+ * S31 v3: calcula Risk + OS a partir de `processo_id` (SQL + config_scores) e, se `persist`,
+ * grava `scores` com `scores_fonte = s31_v3_20260427`.
+ * Na API use `{ persist: false }` (default) para nao regravar a cada leitura.
  */
 export async function computeScoresAuto(
-  processo: {
-    numero: string
-    substancia: string
-    substancia_familia: string
-    fase: string
-    regime: string | null
-    area_ha: number
-    alvara_validade: string | null
-    uf: string
-    ativo_derivado?: boolean
-  },
-  analise: TerritorialAnalysis,
-  mercado: Record<string, unknown> | null,
-  capagData: Record<string, unknown> | null,
-  fiscalData: Record<string, unknown> | null,
+  processoId: string,
+  options?: { persist?: boolean; massCaches?: S31MassCaches },
 ): Promise<ScoreResult> {
-  const { data: incentivosRow } = await supabase
-    .from('incentivos_uf')
-    .select('score_incentivo')
-    .eq('uf', processo.uf)
-    .maybeSingle()
-
-  const capagStr = capagToScoreEngineLetter(capagData)
-
-  const precoUsd =
-    mercado?.preco_usd != null ? Number(mercado.preco_usd) : null
-  const gapPp =
-    mercado?.gap_pp != null ? Number(mercado.gap_pp) : null
-  const teorPct =
-    mercado?.teor_pct != null ? Number(mercado.teor_pct) : null
-
-  const f = fiscalData
-
-  const input: ScoreInput = {
-    substancia: processo.substancia,
-    substancia_familia: processo.substancia_familia || 'outros',
-    fase: processo.fase,
-    regime: processo.regime,
-    area_ha: processo.area_ha,
-    alvara_validade: processo.alvara_validade,
-    uf: processo.uf,
-    ativo_derivado: processo.ativo_derivado !== false,
-    areas_protegidas: analise.areas_protegidas,
-    infraestrutura: analise.infraestrutura,
-    portos: analise.portos,
-    bioma: analise.bioma,
-    aquiferos: analise.aquiferos,
-    mercado: mercado
-      ? {
-          preco_usd:
-            precoUsd != null && !Number.isNaN(precoUsd) ? precoUsd : null,
-          gap_pp:
-            gapPp != null && !Number.isNaN(gapPp) ? gapPp : null,
-          tendencia:
-            mercado.tendencia != null
-              ? String(mercado.tendencia)
-              : null,
-          teor_pct:
-            teorPct != null && !Number.isNaN(teorPct) ? teorPct : null,
-          mineral_critico_2025: Boolean(mercado.mineral_critico_2025),
-        }
-      : null,
-    capag: capagStr,
-    score_incentivo:
-      incentivosRow?.score_incentivo != null
-        ? Number(incentivosRow.score_incentivo)
-        : null,
-
-    idh: f?.idh != null ? Number(f.idh) : null,
-    populacao: f?.populacao != null ? Number(f.populacao) : null,
-    area_km2: f?.area_km2 != null ? Number(f.area_km2) : null,
-    densidade: f?.densidade != null ? Number(f.densidade) : null,
-    receita_tributaria:
-      f?.receita_tributaria != null ? Number(f.receita_tributaria) : null,
-    divida_consolidada:
-      f?.divida_consolidada != null && String(f.divida_consolidada).trim() !== ''
-        ? Number(f.divida_consolidada)
-        : f?.passivo_nao_circulante != null
-          ? Number(f.passivo_nao_circulante)
-          : null,
-  }
-
-  return computeAllScores(input)
+  return runS31MotorAndPersist(processoId, {
+    persist: options?.persist === true,
+    massCaches: options?.massCaches,
+  })
 }
 
 /**

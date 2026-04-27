@@ -1,0 +1,9 @@
+# https://editorconfig.org
+# Prevents tools from saving .ts as UTF-16 (breaks Vite/oxc). Cursor/VS Code: respect charset.
+root = true
+
+[*]
+charset = utf-8
+
+[*.{ts,tsx,js,jsx,mjs,cjs,json,css,html,vue,svelte}]
+charset = utf-8

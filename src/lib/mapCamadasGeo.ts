@@ -5,6 +5,7 @@ export type CamadaGeoId =
   | 'terras_indigenas'
   | 'unidades_conservacao'
   | 'quilombolas'
+  | 'assentamentos'
   | 'sitios_arqueologicos'
   | 'aquiferos'
   | 'massas_agua'
@@ -26,6 +27,7 @@ export const CAMADAS_GEO_ORDER: CamadaGeoId[] = [
   'terras_indigenas',
   'unidades_conservacao',
   'quilombolas',
+  'assentamentos',
   'sitios_arqueologicos',
   'app_hidrica',
   'massas_agua',
@@ -41,6 +43,7 @@ export const CAMADAS_GEO_LEGEND_ORDER: CamadaGeoId[] = [
   'terras_indigenas',
   'unidades_conservacao',
   'quilombolas',
+  'assentamentos',
   'biomas',
   'sitios_arqueologicos',
   'aquiferos',
@@ -57,6 +60,7 @@ export const CAMADAS_GEO_LABEL: Record<CamadaGeoId, string> = {
   terras_indigenas: 'Terras Indígenas',
   unidades_conservacao: 'Unidades de Conservação',
   quilombolas: 'Quilombolas',
+  assentamentos: 'Assentamentos INCRA',
   sitios_arqueologicos: 'Sítios arqueológicos (IPHAN)',
   aquiferos: 'Aquíferos',
   massas_agua: "Massas d'água (BHO)",
@@ -73,6 +77,7 @@ export const CAMADAS_GEO_COLOR: Record<CamadaGeoId, string> = {
   terras_indigenas: '#E07A5F',
   unidades_conservacao: '#4A9E4A',
   quilombolas: '#C4915A',
+  assentamentos: '#7B8B3D',
   sitios_arqueologicos: '#8B5A3C',
   aquiferos: '#4A90B8',
   massas_agua: '#4DA6D9',
@@ -128,6 +133,8 @@ export const CAMADA_GEO_HOVER_LAYER_IDS: string[] = [
   'api-hidrovias-line',
   'api-ti-fill',
   'api-quilombola-fill',
+  'api-assentamento-fill',
+  'api-assentamento-line',
   'api-uc-pi-fill',
   'api-uc-us-fill',
   'api-aquifero-fill',
@@ -158,6 +165,7 @@ const LAYERS_BY_CAMADA: Record<CamadaGeoId, string[]> = {
     'geo-quilombolas-circle',
     'geo-quilombolas-label',
   ],
+  assentamentos: [],
   ferrovias: ['geo-ferrovias-halo', 'geo-ferrovias-line', 'geo-ferrovias-label'],
   portos: ['geo-portos-circle', 'geo-portos-label'],
   biomas: [],
@@ -694,6 +702,7 @@ export function defaultCamadasGeo(): Record<CamadaGeoId, boolean> {
     terras_indigenas: false,
     unidades_conservacao: false,
     quilombolas: false,
+    assentamentos: false,
     sitios_arqueologicos: false,
     aquiferos: false,
     massas_agua: false,

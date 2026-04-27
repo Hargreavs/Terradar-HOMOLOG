@@ -557,7 +557,7 @@ export function ambientalDetalheMockFromProcesso(p: {
           nome: 'Resumo',
           valor: 0,
           texto: 'Nenhuma restrição ambiental identificada nas camadas ativas do mock',
-          fonte: 'Terrae',
+          fonte: 'TERRADAR',
         },
       ],
     }

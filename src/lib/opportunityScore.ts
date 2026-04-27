@@ -3,6 +3,11 @@ import type { AlertaLegislativo, Processo } from '../types'
 export type PerfilRisco = 'conservador' | 'moderado' | 'arrojado'
 export type ObjetivoProspeccao = 'investir' | 'novo_requerimento' | 'avaliar_portfolio'
 
+export interface DimensaoOportunidadeJsonb {
+  valor?: number
+  subfatores?: unknown[]
+}
+
 export interface OpportunityResult {
   processoId: string
   scoreTotal: number
@@ -12,8 +17,33 @@ export interface OpportunityResult {
   faixa: 'alta' | 'moderada' | 'baixa' | 'desfavoravel'
   fatoresPositivos: string[]
   fatoresAtencao: string[]
+  /** Campos opcionais preenchidos pela RPC do Radar (TERRADAR D1) */
+  numero?: string | null
+  substancia?: string | null
+  titular?: string | null
+  uf?: string | null
+  municipio?: string | null
+  areaHa?: number | null
+  fase?: string | null
+  regime?: string | null
+  cnpjTitular?: string | null
+  riskScore?: number | null
+  riskLabel?: string | null
+  osConservador?: number | null
+  osModerado?: number | null
+  osArrojado?: number | null
+  dimensoesOportunidade?: {
+    atratividade?: DimensaoOportunidadeJsonb
+    viabilidade?: DimensaoOportunidadeJsonb
+    seguranca?: DimensaoOportunidadeJsonb
+  } | null
+  dimensoesRisco?: unknown
+  /** Extraído de `dimensoes_oportunidade.penalidades` (S31) quando a RPC devolve o JSON. */
+  penalidades?: string[]
+  calculatedAt?: string | null
 }
 
+/** @deprecated S31 Fase 3: tabelas substituídas por scores no banco (RPC). */
 const RELEVANCIA_SUBSTANCIA: Record<string, number> = {
   DISPRÓSIO: 100,
   NEODÍMIO: 95,
@@ -29,6 +59,7 @@ const RELEVANCIA_SUBSTANCIA: Record<string, number> = {
   QUARTZO: 25,
 }
 
+/** @deprecated S31 Fase 3: tabelas substituídas por scores no banco (RPC). */
 const GAP_SUBSTANCIA: Record<string, number> = {
   DISPRÓSIO: 22.2,
   NEODÍMIO: 22.2,
@@ -44,6 +75,7 @@ const GAP_SUBSTANCIA: Record<string, number> = {
   QUARTZO: -2.0,
 }
 
+/** @deprecated S31 Fase 3: tabelas substituídas por scores no banco (RPC). */
 const PRECO_USD_T: Record<string, number> = {
   DISPRÓSIO: 290_000,
   NEODÍMIO: 68_000,
@@ -59,6 +91,7 @@ const PRECO_USD_T: Record<string, number> = {
   'TERRAS RARAS': 68_000,
 }
 
+/** @deprecated S31 Fase 3: tabelas substituídas por scores no banco (RPC). */
 const TENDENCIA_SUBSTANCIA: Record<string, 'alta' | 'estavel' | 'queda'> = {
   DISPRÓSIO: 'alta',
   NEODÍMIO: 'alta',
@@ -75,7 +108,7 @@ const TENDENCIA_SUBSTANCIA: Record<string, 'alta' | 'estavel' | 'queda'> = {
 }
 
 export const PESOS_PERFIL: Record<PerfilRisco, { a: number; b: number; c: number }> = {
-  conservador: { a: 0.25, b: 0.3, c: 0.45 },
+  conservador: { a: 0.2, b: 0.3, c: 0.5 },
   moderado: { a: 0.4, b: 0.3, c: 0.3 },
   arrojado: { a: 0.55, b: 0.25, c: 0.2 },
 }
@@ -401,6 +434,7 @@ function textoFator(
  * Mesma convenção se aplica ao Risk Score:
  *   Arredondar Geológico, Ambiental, Social, Regulatório para inteiro
  *   ANTES de aplicar pesos (0.25, 0.30, 0.25, 0.20).
+ * @deprecated S31 Fase 3: o Radar usa RPC `fn_radar_listar_oportunidades` no TERRADAR.
  */
 export function computeOpportunityForProcesso(
   processo: Processo,
@@ -541,21 +575,6 @@ export function computeOpportunityForProcesso(
   }
   while (fatoresAtencao.length > 2) fatoresAtencao.pop()
 
-  if (processo.id === 'p_864231') {
-    const scoreTotal =
-      perfilRisco === 'conservador' ? 72 : perfilRisco === 'moderado' ? 70 : 70
-    return {
-      processoId: processo.id,
-      scoreTotal,
-      scoreAtratividade: 68,
-      scoreViabilidade: 65,
-      scoreSeguranca: 79,
-      faixa: faixaFromScore(scoreTotal),
-      fatoresPositivos: fatoresPositivos.slice(0, 3),
-      fatoresAtencao: fatoresAtencao.slice(0, 2),
-    }
-  }
-
   return {
     processoId: processo.id,
     scoreTotal: score,
@@ -568,6 +587,7 @@ export function computeOpportunityForProcesso(
   }
 }
 
+/** @deprecated S31 Fase 3: o Radar usa RPC no TERRADAR. */
 export function runProspeccao(
   processos: Processo[],
   perfil: PerfilRisco,

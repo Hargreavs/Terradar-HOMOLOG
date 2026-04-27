@@ -875,10 +875,10 @@ function IntelKpiTooltip({
 }
 
 const INTEL_KPI_TOOLTIP_CORPO_PROCESSOS =
-  'Total de processos minerários ativos e bloqueados no universo monitorado pelo Terrae. Inclui todos os regimes: Concessão de Lavra, Autorização de Pesquisa, Req. de Lavra, Licenciamento e Mineral Estratégico.'
+  'Total de processos minerários ativos e bloqueados no universo monitorado pelo TERRADAR. Inclui todos os regimes: Concessão de Lavra, Autorização de Pesquisa, Req. de Lavra, Licenciamento e Mineral Estratégico.'
 
 const INTEL_KPI_TOOLTIP_CORPO_HECTARES =
-  'Soma das áreas de todos os processos monitorados, em hectares. Representa a extensão territorial total sob análise pelo Terrae, equivalente à área georreferenciada no SIGMINE/ANM.'
+  'Soma das áreas de todos os processos monitorados, em hectares. Representa a extensão territorial total sob análise pelo TERRADAR, equivalente à área georreferenciada no SIGMINE/ANM.'
 
 const INTEL_KPI_TOOLTIP_CORPO_RISCO =
   'Média dos Risk Scores de todos os processos com score calculado. O Risk Score varia de 0 a 100 e pondera quatro dimensões: Geológico (25%), Ambiental (30%), Social (25%) e Regulatório (20%).'
@@ -893,7 +893,7 @@ const INTEL_INFO_TEXTO_PRODUCAO_GRAFICO =
   'O gráfico usa índice base 100, onde 100 representa a produção de cada substância em 2019. Valores acima de 100 indicam crescimento em relação a 2019; por exemplo, 150 significa 50% a mais que a produção de 2019. Substâncias com produção zero em 2019 são exibidas como \'sem produção\' no ano base.'
 
 const INTEL_INFO_TEXTO_RISCO_KPI =
-  'O Risk Score é um indicador proprietário do Terrae que varia de 0 a 100. É calculado ponderando quatro dimensões: Geológico (25%), Ambiental (30%), Social (25%) e Regulatório (20%). Abaixo de 40 é considerado baixo risco, entre 40 e 69 risco médio, acima de 70 alto risco.'
+  'O Risk Score é um indicador proprietário do TERRADAR que varia de 0 a 100. É calculado ponderando quatro dimensões: Geológico (25%), Ambiental (30%), Social (25%) e Regulatório (20%). Abaixo de 40 é considerado baixo risco, entre 40 e 69 risco médio, acima de 70 alto risco.'
 
 const INTEL_INFO_TEXTO_DISTRIBUICAO_REGIME =
   'Regime é a modalidade jurídica do título minerário outorgado pela ANM. Cada regime tem direitos e obrigações distintos. A Concessão de Lavra é o título definitivo para extração, enquanto a Autorização de Pesquisa permite apenas estudos geológicos.'

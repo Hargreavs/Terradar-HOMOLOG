@@ -3,9 +3,12 @@ import type { OpportunityResult } from './opportunityScore'
 import {
   gerarVariaveisAutomaticas,
   type OpportunityCardVariaveis,
+  type VariavelPontuacao,
 } from './opportunityCardCopy'
 
 /**
+ * @deprecated S31 Fase 3: mocks de card; TERRADAR usa `dimensoesOportunidade` da RPC.
+ *
  * Dados concretos (texto + fonte) por processo para cards de oportunidade.
  * Chaves: ids estáveis em `processos.mock` (p3, p23, p22, p21).
  */
@@ -480,14 +483,74 @@ export function getOpportunityCardVariaveis(processoId: string): OpportunityCard
   return OPPORTUNITY_CARD_VARIAVEIS_POR_PROCESSO_ID[processoId] ?? null
 }
 
-export type OpportunityCardFonte = 'manual' | 'auto'
+export type OpportunityCardFonte = 'manual' | 'auto' | 'real'
 
-/** Dados curados (p3, p23, p22, p21) ou cópia automática derivada do processo e dos scores. */
+function mapSubfatorRpcToVariavel(raw: unknown): VariavelPontuacao | null {
+  if (raw == null || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  const nomeRaw = o.nome
+  const nome = typeof nomeRaw === 'string' && nomeRaw.trim() ? nomeRaw.trim() : '—'
+  const brutoN =
+    typeof o.valor_bruto === 'number' && Number.isFinite(o.valor_bruto)
+      ? Math.max(0, Math.min(100, Math.round(o.valor_bruto)))
+      : undefined
+  const pondN =
+    typeof o.valor === 'number' && Number.isFinite(o.valor)
+      ? Math.max(0, Math.min(100, Math.round(o.valor)))
+      : undefined
+  const valor = brutoN ?? pondN ?? 0
+  const texto =
+    typeof o.texto === 'string' && o.texto.trim()
+      ? o.texto.trim()
+      : typeof o.label === 'string' && o.label.trim()
+        ? o.label.trim()
+        : '—'
+  const fonte =
+    typeof o.fonte === 'string' && o.fonte.trim() ? o.fonte.trim() : '—'
+  return { nome, valor, valorBruto: brutoN, texto, fonte }
+}
+
+function variaveisFromSubfatores(raw: unknown): VariavelPontuacao[] {
+  if (!Array.isArray(raw)) return []
+  const out: VariavelPontuacao[] = []
+  for (const item of raw) {
+    const v = mapSubfatorRpcToVariavel(item)
+    if (v) out.push(v)
+  }
+  return out
+}
+
+/** Usa JSONB `dimensoesOportunidade` quando presente (Radar TERRADAR via RPC). */
+function cardFromDimensoesOportunidade(
+  d: NonNullable<OpportunityResult['dimensoesOportunidade']>,
+): OpportunityCardVariaveis {
+  return {
+    atratividade: variaveisFromSubfatores(d.atratividade?.subfatores),
+    viabilidade: variaveisFromSubfatores(d.viabilidade?.subfatores),
+    seguranca: variaveisFromSubfatores(d.seguranca?.subfatores),
+  }
+}
+
+/**
+ * Dados curados (p3, p23, p22, p21), dimensões da RPC, ou cópia automática derivada do processo e dos scores.
+ */
 export function resolveOpportunityCardVariaveis(
-  processo: Processo,
   scores: OpportunityResult,
+  processo: Processo | null,
 ): { card: OpportunityCardVariaveis; fonte: OpportunityCardFonte } {
-  const manual = getOpportunityCardVariaveis(processo.id)
-  if (manual) return { card: manual, fonte: 'manual' }
-  return { card: gerarVariaveisAutomaticas(processo, scores), fonte: 'auto' }
+  if (scores.dimensoesOportunidade != null) {
+    return {
+      card: cardFromDimensoesOportunidade(scores.dimensoesOportunidade),
+      fonte: 'real',
+    }
+  }
+  if (processo) {
+    const manual = getOpportunityCardVariaveis(processo.id)
+    if (manual) return { card: manual, fonte: 'manual' }
+    return { card: gerarVariaveisAutomaticas(processo, scores), fonte: 'auto' }
+  }
+  return {
+    card: { atratividade: [], viabilidade: [], seguranca: [] },
+    fonte: 'real',
+  }
 }

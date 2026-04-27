@@ -84,6 +84,13 @@ import {
   distanciaTextColor,
   formatDateBR,
 } from '../../lib/territorialAmbientalDisplay'
+import {
+  CORES_DISTANCIA,
+  type TipoAreaSensivel,
+  corDistancia,
+  textoCorDistS31,
+} from '../../lib/distanciaCor'
+import { biomaMultiplicadorS31, corMultiplicadorBioma } from '../../lib/biomaS31'
 
 type AbaId =
   | 'processo'
@@ -1876,10 +1883,21 @@ export function RelatorioCompleto({
     useState<PerfilOportunidadeOSKey>('conservador')
   const [hoverPerfilOportunidade, setHoverPerfilOportunidade] =
     useState<PerfilOportunidadeOSKey | null>(null)
+  const [cptUfData, setCptUfData] = useState<Record<string, unknown> | null>(null)
 
   useEffect(() => {
     if (aberto) setAba(abaInicial)
   }, [aberto, abaInicial, abaRiscoRequestId])
+
+  useEffect(() => {
+    if (!processo?.uf || aba !== 'territorio') return
+    const ac = new AbortController()
+    void fetch(`/api/cpt/uf/${processo.uf}`, { signal: ac.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => setCptUfData(j))
+      .catch(() => setCptUfData(null))
+    return () => ac.abort()
+  }, [aba, processo?.id, processo?.uf])
 
   const alertasOrdenados = useMemo(() => {
     if (!processo) return []
@@ -2270,13 +2288,21 @@ export function RelatorioCompleto({
       ? `UC Uso sustentável · ${ucUsNome}`
       : rotuloUcUmaLinha(ucUsNome ?? '', ucUsTipo ?? null)
 
-  const areasSensiveisTiUcRows = [
+  const areasSensiveisTiUcRows: {
+    dot: string
+    nome: string
+    tipo: string
+    km: number | null | undefined
+    semIdTexto: string
+    fator: TipoAreaSensivel
+  }[] = [
     {
       dot: DOT_TI,
       nome: nomeTiLinha,
       tipo: 'Terra Indígena' as const,
       km: territorial.distancia_ti_km,
       semIdTexto: 'Sem terra indígena na região',
+      fator: 'TI',
     },
     ...(temUcPi
       ? [
@@ -2287,6 +2313,7 @@ export function RelatorioCompleto({
             km: territorial.distancia_uc_pi_km as number,
             semIdTexto:
               'Sem unidade de conservação identificada na região monitorada',
+            fator: 'UC_PI' as TipoAreaSensivel,
           },
         ]
       : []),
@@ -2297,6 +2324,7 @@ export function RelatorioCompleto({
       km: ucUsKm,
       semIdTexto:
         'Sem unidade de conservação identificada na região monitorada',
+      fator: 'UC_US',
     },
   ]
 
@@ -2987,7 +3015,17 @@ export function RelatorioCompleto({
                     ? DOT_AUSENCIA_POSITIVA
                     : '#D3D1C7'
                   const distSens =
-                    row.km != null ? distanciaSensivelLabel(row.km) : null
+                    row.km != null && !Number.isNaN(Number(row.km))
+                      ? (() => {
+                          const k = Number(row.km)
+                          const s31 = textoCorDistS31(
+                            row.fator,
+                            k,
+                            k <= 0.01,
+                          )
+                          return { text: s31.text, color: s31.color }
+                        })()
+                      : null
                   return (
                     <Fragment key={i}>
                       {i > 0 ? (
@@ -3306,6 +3344,185 @@ export function RelatorioCompleto({
               />
             </Card>
 
+            {cptUfData != null && typeof cptUfData.tier === 'string' ? (
+              <Card>
+                <SecLabel branco>Pressão social · CPT</SecLabel>
+                <p style={{ fontSize: FS.sm, color: '#888780', margin: '0 0 8px 0' }}>
+                  Conflitos no campo — UF:{' '}
+                  <span style={{ color: '#D3D1C7', fontWeight: 500 }}>
+                    {processo.uf}
+                  </span>
+                </p>
+                {(() => {
+                  const mult = Number(cptUfData.multiplicador)
+                  const tier = String(cptUfData.tier)
+                  const tierMap: Record<
+                    string,
+                    { label: string; cor: string; emoji: string }
+                  > = {
+                    super_critica: {
+                      label: 'SUPER CRÍTICA',
+                      cor: '#E24B4A',
+                      emoji: '🔴',
+                    },
+                    critica: { label: 'CRÍTICA', cor: '#EF9F27', emoji: '🟠' },
+                    media: { label: 'MÉDIA', cor: '#E8A830', emoji: '🟡' },
+                    baixa: { label: 'BAIXA', cor: '#1D9E75', emoji: '🟢' },
+                  }
+                  const t = tierMap[tier] ?? tierMap.baixa
+                  const f20 = Number(cptUfData.familias_2020) || 0
+                  const f24 = Number(cptUfData.familias_2024) || 0
+                  const tend =
+                    f20 > 0 ? Math.round(((f24 - f20) / f20) * 100) : null
+                  return (
+                    <>
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: '1fr 1fr',
+                          gap: 10,
+                          marginBottom: 10,
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontSize: FS.sm, color: '#888780' }}>
+                            Ocorrências (5 anos)
+                          </div>
+                          <div style={{ fontSize: FS.lg, color: '#D3D1C7' }}>
+                            {cptUfData.total_ocorrencias_5anos != null
+                              ? Number(
+                                  cptUfData.total_ocorrencias_5anos,
+                                ).toLocaleString('pt-BR')
+                              : '—'}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: FS.sm, color: '#888780' }}>
+                            Famílias afetadas
+                          </div>
+                          <div style={{ fontSize: FS.lg, color: '#D3D1C7' }}>
+                            {cptUfData.total_familias_5anos != null
+                              ? Number(
+                                  cptUfData.total_familias_5anos,
+                                ).toLocaleString('pt-BR')
+                              : '—'}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: FS.sm, color: '#888780' }}>
+                            Tier
+                          </div>
+                          <div style={{ fontSize: FS.lg, color: t.cor }}>
+                            {t.emoji} {t.label}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: FS.sm, color: '#888780' }}>
+                            Mult. risco social
+                          </div>
+                          <div style={{ fontSize: FS.lg, color: t.cor }}>
+                            ×{Number.isFinite(mult) ? mult.toFixed(2) : '—'}
+                          </div>
+                        </div>
+                      </div>
+                      {tend != null ? (
+                        <p
+                          style={{
+                            fontSize: FS.md,
+                            color: '#888780',
+                            borderTop: '1px solid #2C2C2A',
+                            paddingTop: 8,
+                            margin: 0,
+                          }}
+                        >
+                          Tendência famílias 2020 → 2024:{' '}
+                          <span
+                            style={{
+                              color: tend > 0 ? '#E8A830' : '#1D9E75',
+                            }}
+                          >
+                            {tend > 0 ? '↗' : '↘'} {Math.abs(tend)}%
+                          </span>
+                        </p>
+                      ) : null}
+                      <p
+                        style={{
+                          fontSize: 11,
+                          color: '#5F5E5A',
+                          margin: '10px 0 0 0',
+                        }}
+                      >
+                        Fonte: Atlas CPT (Cedoc/CPT)
+                      </p>
+                    </>
+                  )
+                })()}
+              </Card>
+            ) : null}
+
+            {processo.amb_assentamento_sobrepoe === true ||
+            processo.amb_assentamento_2km === true ? (
+              <Card>
+                <SecLabel branco>Assentamento INCRA</SecLabel>
+                {processo.amb_assentamento_sobrepoe ? (
+                  <div
+                    style={{
+                      borderRadius: 6,
+                      border: '1px solid rgba(245, 158, 11, 0.4)',
+                      background: 'rgba(245, 158, 11, 0.06)',
+                      padding: 8,
+                    }}
+                  >
+                    <p
+                      style={{
+                        fontSize: FS.md,
+                        color: '#E8A830',
+                        fontWeight: 600,
+                        margin: 0,
+                      }}
+                    >
+                      Processo sobrepõe assentamento
+                    </p>
+                    <p
+                      style={{ fontSize: FS.sm, color: '#888780', margin: '6px 0 0 0' }}
+                    >
+                      Pode haver conflito fundiário · impacto no risco social
+                      (modelo S31).
+                    </p>
+                  </div>
+                ) : null}
+                {!processo.amb_assentamento_sobrepoe &&
+                processo.amb_assentamento_2km ? (
+                  <div
+                    style={{
+                      borderRadius: 6,
+                      border: '1px solid #2C2C2A',
+                      background: 'rgba(0,0,0,0.2)',
+                      padding: 8,
+                    }}
+                  >
+                    <p style={{ fontSize: FS.md, color: '#D3D1C7', margin: 0 }}>
+                      Assentamento a ≤ 2 km do processo
+                    </p>
+                    <p
+                      style={{ fontSize: FS.sm, color: '#888780', margin: '6px 0 0 0' }}
+                    >
+                      Modelo S31: atenção em licenciamento e consultas.
+                    </p>
+                  </div>
+                ) : null}
+                <p
+                  style={{
+                    fontSize: 11,
+                    color: '#5F5E5A',
+                    margin: '10px 0 0 0',
+                  }}
+                >
+                  Fonte: INCRA · polígono de assentamentos
+                </p>
+              </Card>
+            ) : null}
+
             <Card>
               <SecLabel branco>Logística</SecLabel>
               <div style={{ display: 'flex', flexDirection: 'column' }}>
@@ -3500,6 +3717,34 @@ export function RelatorioCompleto({
               >
                 {biomaImplicacoes(territorial.bioma)}
               </p>
+              {territorial.bioma && territorial.bioma.trim() !== '' ? (
+                <div
+                  style={{
+                    borderTop: '1px solid #2C2C2A',
+                    marginTop: 12,
+                    paddingTop: 10,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                  }}
+                >
+                  <span style={{ fontSize: FS.md, color: '#888780' }}>
+                    Multiplicador risco ambiental
+                  </span>
+                  <span
+                    style={{
+                      fontSize: FS.lg,
+                      fontWeight: 600,
+                      color: corMultiplicadorBioma(
+                        biomaMultiplicadorS31(territorial.bioma),
+                      ),
+                    }}
+                  >
+                    ×{biomaMultiplicadorS31(territorial.bioma).toFixed(2)}
+                  </span>
+                </div>
+              ) : null}
               <FonteLabel
                 dataIso={timestamps.unidades_conservacao}
                 fonte="IBGE / Biomas"
@@ -3796,7 +4041,8 @@ export function RelatorioCompleto({
                         style={{
                           fontSize: FS.md,
                           fontWeight: 500,
-                          color: distanciaTextColor(s.distancia_km),
+                          color: CORES_DISTANCIA[corDistancia('SITIO_ARQ', s.distancia_km)]
+                            .texto,
                           flexShrink: 0,
                         }}
                       >
@@ -5347,7 +5593,7 @@ export function RelatorioCompleto({
                       risco operacional para processo encerrado ou extinto.
                     </p>
                   ) : null}
-                  {processo.risk_breakdown ? (
+                  {(riskDecomposicaoMemo || processo.risk_breakdown) ? (
                     <div
                       style={{
                         marginTop: 18,
@@ -5360,12 +5606,21 @@ export function RelatorioCompleto({
                       }}
                     >
                       {(
-                        [
-                          ['Geológico', processo.risk_breakdown.geologico],
-                          ['Ambiental', processo.risk_breakdown.ambiental],
-                          ['Social', processo.risk_breakdown.social],
-                          ['Regulatório', processo.risk_breakdown.regulatorio],
-                        ] as const
+                        riskDecomposicaoMemo
+                          ? [
+                              ['Geológico', riskDecomposicaoMemo.geologico.score],
+                              ['Ambiental', riskDecomposicaoMemo.ambiental.score],
+                              ['Social', riskDecomposicaoMemo.social.score],
+                              ['Regulatório', riskDecomposicaoMemo.regulatorio.score],
+                            ] as const
+                          : processo.risk_breakdown
+                            ? [
+                                ['Geológico', processo.risk_breakdown.geologico],
+                                ['Ambiental', processo.risk_breakdown.ambiental],
+                                ['Social', processo.risk_breakdown.social],
+                                ['Regulatório', processo.risk_breakdown.regulatorio],
+                              ] as const
+                            : []
                       ).map(([label, val]) => {
                         const cor = corFaixaRisco(val)
                         return (
@@ -5430,7 +5685,7 @@ export function RelatorioCompleto({
               )}
               <FonteLabel
                 dataIso={timestamps.cadastro_mineiro}
-                fonte="Terrae, com dados ANM, FUNAI, ICMBio e IBGE"
+                fonte="TERRADAR, com dados ANM, FUNAI, ICMBio e IBGE"
                 marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
               />
             </Card>
@@ -5439,6 +5694,10 @@ export function RelatorioCompleto({
               <Card>
                 <RiskDecomposicaoRelatorioPanel
                   decomposicao={riskDecomposicaoMemo}
+                  processo={processo}
+                  territorial={territorial}
+                  fiscalRico={fiscal}
+                  dadosAnm={dados_anm}
                 />
               </Card>
             ) : null}

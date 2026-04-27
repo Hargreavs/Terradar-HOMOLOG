@@ -109,6 +109,7 @@ const CAMADAS_GEO_GROUPS: { title: string; ids: CamadaGeoId[] }[] = [
       'terras_indigenas',
       'unidades_conservacao',
       'quilombolas',
+      'assentamentos',
       'biomas',
       'sitios_arqueologicos',
     ],
@@ -152,6 +153,11 @@ const CAMADAS_GEO_ITEM: Record<
     Icon: TreePine,
   },
   quilombolas: { label: 'Quilombolas', color: '#C4915A', Icon: Home },
+  assentamentos: {
+    label: 'Assentamentos INCRA',
+    color: '#7B8B3D',
+    Icon: Home,
+  },
   sitios_arqueologicos: {
     label: 'Sítios Arqueológicos',
     color: '#8B5A3C',

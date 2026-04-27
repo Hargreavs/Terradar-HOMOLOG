@@ -67,7 +67,11 @@ import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion'
 import { useMapLayer, type BBox } from '../../hooks/useMapLayer'
 import { zoomThresholds } from '../../lib/zoomThresholds'
 import { useProcessosViewport } from '../../hooks/useProcessosViewport'
-import { mapViewportFeaturesToProcessos } from '../../lib/mapProcessoFromDbRow'
+import {
+  mapDbRowToMapProcesso,
+  mapViewportFeaturesToProcessos,
+} from '../../lib/mapProcessoFromDbRow'
+import { normalizarNumeroANM } from '../../lib/numeroAnm'
 import {
   MOTION_MAP_INTRO_DURATION_MS,
   MOTION_MAP_INTRO_LEGEND_DELAY_MS,
@@ -77,6 +81,7 @@ import {
 } from '../../lib/motionDurations'
 import type { ReportData } from '../../lib/reportTypes'
 import {
+  buscarProcessoPorNumero,
   fetchProcessoCompleto,
   type ProcessoCompleto,
 } from '../../lib/processoApi'
@@ -338,6 +343,16 @@ function buildEnrichmentPatch(
         proc.rescore_blocked_territorial,
       )
     }
+    if ('amb_assentamento_sobrepoe' in proc) {
+      patch.amb_assentamento_sobrepoe = toNullableBool(
+        proc.amb_assentamento_sobrepoe,
+      )
+    }
+    if ('amb_assentamento_2km' in proc) {
+      patch.amb_assentamento_2km = toNullableBool(
+        proc.amb_assentamento_2km,
+      )
+    }
   }
 
   const sp = proc?.scores_persistido as
@@ -397,6 +412,22 @@ function buildEnrichmentPatch(
     Array.isArray(br) && br.length > 0
       ? (br as CfemBreakdownMunicipio[])
       : null
+
+  const drFinal = patch.dimensoes_risco_persistido
+  if (drFinal && riskScoreHonesto != null) {
+    const g = drFinal as {
+      geologico?: { valor?: number }
+      ambiental?: { valor?: number }
+      social?: { valor?: number }
+      regulatorio?: { valor?: number }
+    }
+    patch.risk_breakdown = {
+      geologico: Number(g.geologico?.valor ?? 0),
+      ambiental: Number(g.ambiental?.valor ?? 0),
+      social: Number(g.social?.valor ?? 0),
+      regulatorio: Number(g.regulatorio?.valor ?? 0),
+    }
+  }
 
   return patch
 }
@@ -673,6 +704,70 @@ function addProcessosLayers(
       'line-opacity': 1,
     },
   })
+}
+
+/**
+ * Com processo selecionado no mapa (clique no polígono), reduz opacidade dos demais.
+ * Vindo da busca/Intel, `aplicarFocoEntreProcessos` fica falso: todos os processos
+ * com a mesma opacidade base (sólida no selecionado, sem efeito de “foco”).
+ */
+const PROCESSO_FOCUS_OP = {
+  fillSel: 0.45,
+  fillDim: 0.12,
+  haloSel: 0.12,
+  haloDim: 0.04,
+  outlineSel: 1,
+  outlineDim: 0.26,
+} as const
+
+function applyProcessoSelectionFocus(
+  map: mapboxgl.Map,
+  processoIdSelecionado: string | null,
+  aplicarFocoEntreProcessos: boolean,
+) {
+  if (!map.getLayer('processos-fill')) return
+
+  if (processoIdSelecionado == null || !aplicarFocoEntreProcessos) {
+    safeSetPaint(
+      map,
+      'processos-fill',
+      'fill-opacity',
+      PROCESSO_FOCUS_OP.fillSel,
+    )
+    safeSetPaint(
+      map,
+      'processos-halo',
+      'line-opacity',
+      PROCESSO_FOCUS_OP.haloSel,
+    )
+    safeSetPaint(
+      map,
+      'processos-outline',
+      'line-opacity',
+      PROCESSO_FOCUS_OP.outlineSel,
+    )
+    return
+  }
+
+  const id = processoIdSelecionado
+  safeSetPaint(map, 'processos-fill', 'fill-opacity', [
+    'case',
+    ['==', ['get', 'id'], id],
+    PROCESSO_FOCUS_OP.fillSel,
+    PROCESSO_FOCUS_OP.fillDim,
+  ])
+  safeSetPaint(map, 'processos-halo', 'line-opacity', [
+    'case',
+    ['==', ['get', 'id'], id],
+    PROCESSO_FOCUS_OP.haloSel,
+    PROCESSO_FOCUS_OP.haloDim,
+  ])
+  safeSetPaint(map, 'processos-outline', 'line-opacity', [
+    'case',
+    ['==', ['get', 'id'], id],
+    PROCESSO_FOCUS_OP.outlineSel,
+    PROCESSO_FOCUS_OP.outlineDim,
+  ])
 }
 
 const PROCESSOS_CLICK_LAYERS = [
@@ -1121,7 +1216,7 @@ function attachProcessosLayerHandlers(
           pendingFecharProcessoTimeoutRef.current = null
         }
 
-        useMapStore.getState().selecionarProcesso(proc)
+        useMapStore.getState().selecionarProcesso(proc, 'map')
         openProcessoPopupOnMap(
           map,
           proc,
@@ -1226,6 +1321,7 @@ export function MapView() {
   const { montado: painelFiltrosMontado, animar: painelFiltrosAnimar } =
     usePainelFiltrosAnimation(painelFiltrosAberto)
   const processoSelecionado = useMapStore((s) => s.processoSelecionado)
+  const selecaoOrigemProcesso = useMapStore((s) => s.selecaoOrigemProcesso)
   const relatorioDrawerAberto = useMapStore((s) => s.relatorioDrawerAberto)
   const setRelatorioDrawerAberto = useMapStore((s) => s.setRelatorioDrawerAberto)
   const pendingNavigation = useMapStore((s) => s.pendingNavigation)
@@ -1246,6 +1342,9 @@ export function MapView() {
     bottom: number
     left: number
   } | null>(null)
+
+  /** Cancela fetch assync de processo se uma navegacao mais recente ocorrer (pendente ja foi limpo no store). */
+  const processoNavAsyncSeqRef = useRef(0)
 
   const intelSidebarAutoCloseSeqActiveRef = useRef(false)
   const intelSidebarAutoCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -1456,7 +1555,9 @@ export function MapView() {
         ])
         const patch = buildEnrichmentPatch(p, rd, api)
         const pEnriquecido = { ...p, ...patch } as Processo
-        setRelatorioDadosApi(relatorioDataFromReportData(rd, pEnriquecido))
+        setRelatorioDadosApi(
+          relatorioDataFromReportData(rd, pEnriquecido, api.mercado ?? null),
+        )
         useMapStore.getState().mergeProcessoSelecionado(patch)
       } catch (e) {
         setRelatorioApiErro(
@@ -1610,68 +1711,146 @@ export function MapView() {
 
       try {
         if (nav.type === 'processo') {
-          const proc = useMapStore
-            .getState()
-            .processos.find((x) => x.id === nav.payload)
-          if (!proc) return
+          const st0 = useMapStore.getState()
+          const numTrim = nav.numeroAnm?.trim()
+          const numCanon = numTrim ? normalizarNumeroANM(numTrim) || numTrim : null
+          let proc: Processo | undefined =
+            st0.processos.find((x) => x.id === nav.payload) ||
+            (numCanon
+              ? st0.processos.find(
+                  (x) => x.numero.replace(/\s/g, '') === numCanon.replace(/\s/g, ''),
+                )
+              : undefined)
 
-          useMapStore.getState().selecionarProcesso(proc)
-          openIntelSidebarForPendingNavigation()
+          const runProcessoNavigation = (p: Processo) => {
+            useMapStore.getState().selecionarProcesso(p, 'busca')
+            openIntelSidebarForPendingNavigation()
 
-          afterFilterSidebarLayout(() => {
-            ensureIntelSnap()
-            const b = boundsFromSingleProcesso(proc)
-            let opened = false
-            const openPop = () => {
-              if (opened) return
-              opened = true
-              openProcessoPopupOnMap(
-                map,
-                proc,
-                tearDown,
-                processoPopupRootRef,
-                processoPopupRef,
-                pendingFecharProcessoTimeoutRef,
-                () => verRelatorioRef.current(),
-                () => abrirRelatorioAbaRiscoRef.current(),
-              )
-            }
-            let timerArmed = false
-            const armTimerOnce = () => {
-              if (timerArmed) return
-              timerArmed = true
-              startIntelAutoCloseTimerAfterMoveEnd()
-            }
-            if (b && !b.isEmpty()) {
-              map.fitBounds(b, {
-                padding: intelPad(100),
-                duration: 1000,
-                maxZoom: 15,
+            afterFilterSidebarLayout(() => {
+              ensureIntelSnap()
+              const b = boundsFromSingleProcesso(p)
+              let opened = false
+              const openPop = () => {
+                if (opened) return
+                opened = true
+                openProcessoPopupOnMap(
+                  map,
+                  p,
+                  tearDown,
+                  processoPopupRootRef,
+                  processoPopupRef,
+                  pendingFecharProcessoTimeoutRef,
+                  () => verRelatorioRef.current(),
+                  () => abrirRelatorioAbaRiscoRef.current(),
+                )
+              }
+              let timerArmed = false
+              const armTimerOnce = () => {
+                if (timerArmed) return
+                timerArmed = true
+                startIntelAutoCloseTimerAfterMoveEnd()
+              }
+              if (b && !b.isEmpty()) {
+                map.fitBounds(b, {
+                  padding: intelPad(100),
+                  duration: 1000,
+                  maxZoom: 13,
+                })
+              } else if (
+                Number.isFinite(p.lng) &&
+                Number.isFinite(p.lat) &&
+                !Number.isNaN(p.lng) &&
+                !Number.isNaN(p.lat)
+              ) {
+                const padBase = ensureIntelSnap()
+                map.flyTo({
+                  center: [p.lng, p.lat],
+                  zoom: 13,
+                  duration: 1000,
+                  essential: true,
+                  padding: {
+                    top: padBase.top,
+                    right: padBase.right,
+                    bottom: padBase.bottom,
+                    left: padBase.left + getIntelLeftReservePx(),
+                  },
+                })
+              } else if (p.uf) {
+                const manual = ufBoundsLngLat(p.uf)
+                const padBase = ensureIntelSnap()
+                if (manual) {
+                  map.fitBounds(manual, {
+                    padding: intelPad(80),
+                    duration: 1000,
+                    maxZoom: 10,
+                  })
+                } else {
+                  const [sw, ne] = BRAZIL_BOUNDS_LNG_LAT
+                  const brCenter: [number, number] = [
+                    (sw[0] + ne[0]) / 2,
+                    (sw[1] + ne[1]) / 2,
+                  ]
+                  map.flyTo({
+                    center: brCenter,
+                    zoom: 4,
+                    duration: 1000,
+                    padding: {
+                      top: padBase.top,
+                      right: padBase.right,
+                      bottom: padBase.bottom,
+                      left: padBase.left + getIntelLeftReservePx(),
+                    },
+                  })
+                }
+              }
+              map.once('moveend', () => {
+                openPop()
+                armTimerOnce()
               })
-            } else {
-              const padBase = ensureIntelSnap()
-              map.flyTo({
-                center: [proc.lng, proc.lat],
-                zoom: 12,
-                duration: 1000,
-                essential: true,
-                padding: {
-                  top: padBase.top,
-                  right: padBase.right,
-                  bottom: padBase.bottom,
-                  left: padBase.left + getIntelLeftReservePx(),
-                },
-              })
-            }
-            map.once('moveend', () => {
-              openPop()
-              armTimerOnce()
+              window.setTimeout(() => {
+                openPop()
+                armTimerOnce()
+              }, 1100)
             })
-            window.setTimeout(() => {
-              openPop()
-              armTimerOnce()
-            }, 1100)
-          })
+          }
+
+          if (proc) {
+            runProcessoNavigation(proc)
+            return
+          }
+
+          if (numCanon) {
+            const asyncSeq = ++processoNavAsyncSeqRef.current
+            void (async () => {
+              const raw = await buscarProcessoPorNumero(numCanon)
+              if (asyncSeq !== processoNavAsyncSeqRef.current) {
+                return
+              }
+              if (!raw) {
+                return
+              }
+              const novo = mapDbRowToMapProcesso(raw, { permitirSemGeom: true })
+              if (!novo) {
+                return
+              }
+              const existente = useMapStore
+                .getState()
+                .processos.find((q) => q.numero === novo.numero)
+              if (existente) {
+                useMapStore.setState((s) => ({
+                  processos: s.processos.map((q) =>
+                    q.numero === novo.numero ? novo : q,
+                  ),
+                }))
+              } else {
+                useMapStore.getState().adicionarProcesso(novo)
+              }
+              runProcessoNavigation(novo)
+            })()
+            return
+          }
+
+          useMapStore.getState().setPendingNavigation(null)
           return
         }
 
@@ -1912,8 +2091,27 @@ export function MapView() {
       }
       const src = map.getSource('processos') as mapboxgl.GeoJSONSource | undefined
       src?.setData(filtrados)
+      {
+        const st = useMapStore.getState()
+        applyProcessoSelectionFocus(
+          map,
+          st.processoSelecionado?.id ?? null,
+          st.selecaoOrigemProcesso === 'map' && st.processoSelecionado != null,
+        )
+      }
     })
   }, [])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!mapLoaded || !map?.isStyleLoaded()) return
+    if (!map.getLayer('processos-fill')) return
+    applyProcessoSelectionFocus(
+      map,
+      processoSelecionado?.id ?? null,
+      selecaoOrigemProcesso === 'map' && processoSelecionado != null,
+    )
+  }, [mapLoaded, processoSelecionado?.id, selecaoOrigemProcesso])
 
   useEffect(() => {
     const map = mapRef.current
@@ -1922,14 +2120,28 @@ export function MapView() {
     const src = map.getSource('processos') as mapboxgl.GeoJSONSource | undefined
     if (!src) return
 
-    const filtrados = useMapStore.getState().getProcessosFiltrados()
-    src.setData(buildGeoJSON(filtrados, modoVisualizacao))
+    const st = useMapStore.getState()
+    const filtrados = st.getProcessosFiltrados()
+    const sel = st.processoSelecionado
 
-    const sel = useMapStore.getState().processoSelecionado
+    /**
+     * Seleção vinda da busca: o processo pode deixar de passar em
+     * `getProcessosFiltrados` (ex.: legenda de regime) após flyTo / refresh do
+     * lote, e o efeito antigo limpava `selecionarProcesso(null)` — isso
+     * fechava o drawer de relatório no fim da animação. Manter a seleção e
+     * incluir o processo no GeoJSON para o polígono continuar coerente.
+     */
     if (sel && !filtrados.some((p) => p.id === sel.id)) {
+      if (st.selecaoOrigemProcesso === 'busca') {
+        tearDownProcessoPopupRef.current?.()
+        src.setData(buildGeoJSON([...filtrados, sel], modoVisualizacao))
+        return
+      }
       tearDownProcessoPopupRef.current?.()
       useMapStore.getState().selecionarProcesso(null)
     }
+
+    src.setData(buildGeoJSON(filtrados, modoVisualizacao))
   }, [mapLoaded, filtros, modoVisualizacao, intelTitularFilter, processos])
 
   /**
@@ -2145,13 +2357,16 @@ export function MapView() {
 
     let prevProcessoId: string | null =
       useMapStore.getState().processoSelecionado?.id ?? null
+    let prevSelecaoOrigem = useMapStore.getState().selecaoOrigemProcesso
 
     const unsub = useMapStore.subscribe((state) => {
       const currentProc = state.processoSelecionado
       const newId = currentProc?.id ?? null
+      const newOrigem = state.selecaoOrigemProcesso
 
-      if (newId === prevProcessoId) return
+      if (newId === prevProcessoId && newOrigem === prevSelecaoOrigem) return
       prevProcessoId = newId
+      prevSelecaoOrigem = newOrigem
 
       if (currentProc) {
         showLinesFor(currentProc)
@@ -2247,6 +2462,14 @@ export function MapView() {
     bbox: viewportBbox,
     zoom: viewportZoom,
     limit: 500,
+  })
+
+  const assentamentoData = useMapLayer({
+    tipo: 'assentamento',
+    enabled: !!camadasGeo.assentamentos && mapLoaded,
+    bbox: viewportBbox,
+    zoom: viewportZoom,
+    limit: 2000,
   })
 
   // Camada UC Proteção Integral (bbox-aware, mesmo toggle unidades_conservacao)
@@ -2816,6 +3039,62 @@ export function MapView() {
       if (map.getLayer(sid)) map.setLayoutProperty(sid, 'visibility', 'none')
     }
   }, [mapLoaded, quilombolaData, camadasGeo.quilombolas])
+
+  // Assentamentos INCRA (API)
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+
+    const SRC_ID = 'api-assentamento-src'
+    const FILL_ID = 'api-assentamento-fill'
+    const LINE_ID = 'api-assentamento-line'
+
+    const fc =
+      assentamentoData ?? { type: 'FeatureCollection' as const, features: [] }
+
+    if (!map.getSource(SRC_ID)) {
+      map.addSource(SRC_ID, {
+        type: 'geojson',
+        promoteId: 'id',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: fc as any,
+      })
+      map.addLayer(
+        {
+          id: FILL_ID,
+          type: 'fill',
+          source: SRC_ID,
+          paint: {
+            'fill-color': '#7B8B3D',
+            'fill-opacity': 0.4,
+            'fill-outline-color': '#5A6829',
+          },
+        },
+        'processos-fill',
+      )
+      map.addLayer(
+        {
+          id: LINE_ID,
+          type: 'line',
+          source: SRC_ID,
+          paint: {
+            'line-color': '#5A6829',
+            'line-width': 1,
+            'line-opacity': 0.85,
+          },
+        },
+        'processos-fill',
+      )
+    } else {
+      const src = map.getSource(SRC_ID) as mapboxgl.GeoJSONSource | undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      src?.setData(fc as any)
+    }
+
+    const vis = camadasGeo.assentamentos ? 'visible' : 'none'
+    if (map.getLayer(FILL_ID)) map.setLayoutProperty(FILL_ID, 'visibility', vis)
+    if (map.getLayer(LINE_ID)) map.setLayoutProperty(LINE_ID, 'visibility', vis)
+  }, [mapLoaded, assentamentoData, camadasGeo.assentamentos])
 
   // Sync UC Proteção Integral no Mapbox (API)
   useEffect(() => {
@@ -3439,6 +3718,15 @@ export function MapView() {
         addProcessosLayers(map, geoJSON)
         addCamadasGeoLayers(map, 'processos-fill', CAMADAS_GEO_JSON)
         syncCamadasGeoVisibility(map, useMapStore.getState().camadasGeo)
+
+        {
+          const st = useMapStore.getState()
+          applyProcessoSelectionFocus(
+            map,
+            st.processoSelecionado?.id ?? null,
+            st.selecaoOrigemProcesso === 'map' && st.processoSelecionado != null,
+          )
+        }
 
         applySatelliteStylePostLoad(map, MAPBOX_STYLE_SATELLITE)
 

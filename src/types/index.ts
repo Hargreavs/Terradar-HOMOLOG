@@ -213,6 +213,12 @@ export interface Processo {
    * município onde o processo tem lançamento). Populado por `/api/processo`.
    */
   cfem_por_municipio_breakdown?: CfemBreakdownMunicipio[] | null
+
+  /** `v_processo_enriquecido` / análise territorial S31. */
+  bioma_territorial?: string | null
+  /** Flags ambientais pós-`sp_bulk_amb` (S31). */
+  amb_assentamento_sobrepoe?: boolean | null
+  amb_assentamento_2km?: boolean | null
 }
 
 export interface GeoJSONPolygon {

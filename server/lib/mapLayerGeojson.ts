@@ -673,6 +673,64 @@ export async function fetchMapLayerQuilombola(
   return rowGeojson(await pool.query(sql, [minx, miny, maxx, maxy, limit]))
 }
 
+export async function fetchMapLayerAssentamentoIncra(
+  pool: Pool,
+  minx: number,
+  miny: number,
+  maxx: number,
+  maxy: number,
+  limit: number,
+): Promise<Record<string, unknown>> {
+  const sql = `
+    WITH fil AS (
+      SELECT
+        ap.id,
+        ap.nome,
+        ap.categoria,
+        ap.orgao,
+        ap.uf,
+        ap.geom
+      FROM geo_areas_protegidas ap
+      WHERE ap.tipo = 'ASSENTAMENTO_INCRA'
+        AND ap.geom IS NOT NULL
+        AND ap.geom && ST_Transform(
+          ST_MakeEnvelope($1::float8, $2::float8, $3::float8, $4::float8, 4326),
+          4674
+        )
+      ORDER BY ap.id
+      LIMIT $5
+    )
+    SELECT jsonb_build_object(
+      'type', 'FeatureCollection',
+      'count', (SELECT count(*)::int FROM fil),
+      'truncated', (SELECT (SELECT count(*)::int FROM fil) >= $5),
+      'features', COALESCE(
+        (SELECT jsonb_agg(
+          jsonb_build_object(
+            'type', 'Feature',
+            'id', f.id::text,
+            'properties', jsonb_build_object(
+              'id', f.id::text,
+              'feature_id', f.id,
+              'nome', f.nome,
+              'categoria', f.categoria,
+              'orgao', f.orgao,
+              'uf', f.uf
+            ),
+            'geometry', ST_AsGeoJSON(
+              ST_SimplifyPreserveTopology(ST_Transform(f.geom, 4326), ${SIMPLIFY_DEG})
+            )::jsonb
+          )
+          ORDER BY f.id
+        )
+        FROM fil f),
+        '[]'::jsonb
+      )
+    ) AS geojson
+  `
+  return rowGeojson(await pool.query(sql, [minx, miny, maxx, maxy, limit]))
+}
+
 export async function fetchMapLayerAquifero(
   pool: Pool,
   minx: number,

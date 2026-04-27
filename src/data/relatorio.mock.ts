@@ -393,6 +393,8 @@ export interface RelatorioOportunidadeData {
     viabilidade: VariavelOportunidadeMock[]
     seguranca: VariavelOportunidadeMock[]
   }
+  /** Motor S31 v3: penalidades aplicadas (ex.: veto, bloqueio). */
+  penalidades?: string[]
   cruzamento: {
     tipo: 'analise'
     /** Parágrafo de abertura. */

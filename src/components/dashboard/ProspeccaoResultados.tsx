@@ -1,67 +1,46 @@
-import { ArrowLeft, ChevronRight, Info, SearchX } from 'lucide-react'
+import { ArrowLeft, SearchX, X } from 'lucide-react'
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
   type KeyboardEvent,
   type MouseEvent,
+  type RefObject,
 } from 'react'
-import { createPortal } from 'react-dom'
-import { autoUpdate, computePosition, flip, offset, shift } from '@floating-ui/dom'
-import type { Processo } from '../../types'
-import { corSubstanciaOuUndefined } from '../../lib/corSubstancia'
-import {
-  buildDescricoesBarras,
-  computeDimScoresFromCard,
-  corBolinhaAtencao,
-  flattenVariaveis,
-  gerarFatoresDestacados,
-  scoreTotalFromDimScores,
-  type VariavelPontuacao,
-} from '../../lib/opportunityCardCopy'
-import { resolveOpportunityCardVariaveis } from '../../lib/opportunityCardMockData'
+import { motionGroupStyle } from '../../lib/motionStyles'
 import {
   CORES_DIMENSAO,
   PESOS_PERFIL,
   corFaixaOpportunity,
   corMiniBarraValor,
-  faixaFromScore,
   getOpportunityLabel,
   qualificadorTextoMiniBarra,
   type OpportunityResult,
   type PerfilRisco,
 } from '../../lib/opportunityScore'
 import { GridBreathingResultadosAnimation } from './animations/GridBreathingResultadosAnimation'
-import { barFillStyle, motionGroupStyle } from '../../lib/motionStyles'
+import { clampBarPct } from '../../lib/radar/bars'
 import { TODAS_SUBST } from '../../lib/substancias'
 
-
-/** Borda 1px, dourado mais suave que o accent pleno (#EF9F27) */
 const OPPORTUNITY_CARD_SELECTED_BORDER = 'rgba(239, 159, 39, 0.38)'
 const OPPORTUNITY_CARD_SELECTED_SHADOW = '0 0 12px rgba(239, 159, 39, 0.05)'
 
-const pillUnified: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 8,
-  padding: '5px 14px',
-  borderRadius: 20,
-  fontSize: 14,
-  fontWeight: 500,
-  backgroundColor: '#1A1A18',
-  color: '#B4B2A9',
-  borderWidth: 1,
-  borderStyle: 'solid',
-  borderColor: '#2C2C2A',
+function cn(...parts: (string | false | undefined)[]): string {
+  return parts.filter(Boolean).join(' ')
 }
 
-function perfilDotColor(proRisco: PerfilRisco): string {
-  if (proRisco === 'conservador') return '#1D9E75'
-  if (proRisco === 'moderado') return '#E8A830'
-  return '#E24B4A'
+function formatArea(ha: number): string {
+  if (!Number.isFinite(ha)) return '—'
+  return `${ha.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} ha`
+}
+
+function substanciaPillLabel(raw: string): string {
+  return raw
+    .split(/\s+/)
+    .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w))
+    .join(' ')
 }
 
 function titleCaseSubst(s: string): string {
@@ -71,157 +50,529 @@ function titleCaseSubst(s: string): string {
     .join(' ')
 }
 
-/** Cor do texto da posição no ranking (#1 ouro, #2 prata, #3 bronze, demais neutro). */
-function corRanking(posicao: number): string {
-  if (posicao === 1) return '#EF9F27'
-  if (posicao === 2) return '#B4B2A9'
-  if (posicao === 3) return '#C07840'
-  return '#5F5E5A'
+function ehSubfatorParasita(v: { texto?: unknown; fonte?: unknown }): boolean {
+  const texto = String((v as { texto?: unknown }).texto ?? '').toLowerCase()
+  const padroes = [
+    'não compõe',
+    'nao compoe',
+    'pendente',
+    'fallback',
+    'indisponível',
+    'indisponivel',
+    'não disponível',
+    'nao disponivel',
+  ]
+  return padroes.some((p) => texto.includes(p))
 }
 
-/** Fontes exibidas no `title` de cada variável do drilldown */
-const FONTES_DRILLDOWN: Record<string, string> = {
-  'Relevância da substância': 'Fonte: USGS Mineral Commodity Summaries',
-  'Gap reserva/produção': 'Fonte: ANM/SIGMINE',
-  'Preço USD/t': 'Fonte: Trading Economics, USGS',
-  'Tendência de demanda': 'Fonte: USGS, relatórios setoriais',
-  'Valor estimado da reserva': 'Fonte: ANM/SIGMINE, Trading Economics',
-  'CAPAG do município': 'Fonte: STN/SICONFI',
-  'CAPAG município': 'Fonte: STN/SICONFI',
-  'Fase do processo': 'Fonte: ANM/SIGMINE',
-  'Infraestrutura logística': 'Fonte: DNIT, ANTT, ANTAQ',
-  'Área do processo': 'Fonte: ANM/SIGMINE',
-  'Autonomia fiscal': 'Fonte: STN/SICONFI',
-  'Situação do processo': 'Fonte: ANM/SIGMINE',
-  'Incentivos regionais': 'Fonte: BNDES, Sudene, Sudam',
-  'Solidez geral': 'Fonte: Cálculo TERRADAR (média ponderada dos riscos)',
-  'Conformidade ambiental': 'Fonte: ICMBio, IBAMA, CAR/SICAR',
-  'Regularidade regulatória': 'Fonte: ANM/SIGMINE, Adoo',
-  'Histórico de despachos': 'Fonte: ANM/SIGMINE',
-  'Ausência de restrições': 'Fonte: Adoo (Diários Oficiais)',
-  'Alertas favoráveis': 'Fonte: Adoo (Diários Oficiais)',
+function MiniBarra({ label, valor }: { label: string; valor: number }) {
+  const cor = corMiniBarraValor(valor)
+  const widthPct = Math.max(0, Math.min(100, valor))
+  return (
+    <div className="flex items-center gap-3">
+      <span className="min-w-[76px] text-[12px] text-zinc-500">{label}</span>
+      <div className="h-[5px] flex-1 overflow-hidden rounded-sm bg-zinc-900">
+        <div className="h-full rounded-sm" style={{ width: `${widthPct}%`, background: cor }} />
+      </div>
+      <span
+        className="min-w-[24px] text-right text-[13px] font-medium tabular-nums"
+        style={{ color: cor }}
+      >
+        {valor}
+      </span>
+    </div>
+  )
 }
 
-function perfilNomeTitulo(p: PerfilRisco | null): string {
-  if (p === 'conservador') return 'Conservador'
-  if (p === 'arrojado') return 'Arrojado'
-  return 'Moderado'
-}
-
-function PesoBarDrilldown({
-  pesos,
-  heightPx,
+function CardResultado({
+  r,
+  ord,
+  onVerMapa,
+  onVerCalculo,
 }: {
-  pesos: { a: number; b: number; c: number }
-  heightPx: number
+  r: OpportunityResult
+  ord: number
+  onVerMapa: () => void
+  onVerCalculo: () => void
 }) {
+  const scoreCor = corFaixaOpportunity(r.faixa)
+  const scoreLabel = getOpportunityLabel(r.scoreTotal)
+  const isLavra = (r.fase ?? '').toLowerCase().includes('lavra')
   return (
-    <div
-      style={{
-        display: 'flex',
-        gap: 3,
-        height: heightPx,
-        borderRadius: 3,
-        overflow: 'hidden',
-        width: '100%',
-      }}
-    >
-      <div style={{ flex: pesos.a, minWidth: 0, backgroundColor: CORES_DIMENSAO.atratividade }} />
-      <div style={{ flex: pesos.b, minWidth: 0, backgroundColor: CORES_DIMENSAO.viabilidade }} />
-      <div style={{ flex: pesos.c, minWidth: 0, backgroundColor: CORES_DIMENSAO.seguranca }} />
+    <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 flex items-baseline gap-2">
+            <span
+              className="text-[18px] font-medium tabular-nums leading-none"
+              style={{ color: '#EF9F27' }}
+            >
+              #{ord}
+            </span>
+            <span className="text-[15px] font-medium tabular-nums text-zinc-100">
+              {r.numero ?? '—'}
+            </span>
+          </div>
+          <div
+            className="truncate text-[13px] leading-snug text-zinc-300"
+            title={r.titular ?? undefined}
+          >
+            {r.titular?.trim() ? r.titular : '—'}
+          </div>
+          <div className="mt-0.5 text-[12px] text-zinc-500">
+            {[r.municipio, r.uf].filter(Boolean).join(', ')}
+            {r.areaHa != null && Number.isFinite(r.areaHa) ? ` · ${formatArea(r.areaHa)}` : ''}
+          </div>
+        </div>
+        <div className="flex flex-shrink-0 flex-col items-center gap-1">
+          <span
+            className="inline-flex items-center justify-center rounded-full text-[18px] font-medium tabular-nums"
+            style={{
+              width: 48,
+              height: 48,
+              border: `2px solid ${scoreCor}`,
+              color: scoreCor,
+            }}
+          >
+            {r.scoreTotal}
+          </span>
+          <span
+            className="whitespace-nowrap text-[10px] font-medium uppercase tracking-wider"
+            style={{ color: scoreCor }}
+          >
+            {scoreLabel}
+          </span>
+        </div>
+      </div>
+      <div className="mb-3 flex gap-2 border-t border-zinc-800 pt-3">
+        {r.substancia ? (
+          <span className="inline-flex items-center rounded bg-amber-500/10 px-2.5 py-1 text-[12px] font-medium text-amber-200">
+            {substanciaPillLabel(r.substancia)}
+          </span>
+        ) : null}
+        {r.fase ? (
+          <span
+            className={cn(
+              'inline-flex items-center rounded border px-2.5 py-1 text-[12px] font-medium',
+              isLavra
+                ? 'border-green-500/20 bg-green-500/10 text-green-300'
+                : 'border-zinc-800 bg-zinc-900 text-zinc-400',
+            )}
+          >
+            {r.fase}
+          </span>
+        ) : null}
+        {r.penalidades && r.penalidades.length > 0 ? (
+          <span
+            className="inline-flex items-center rounded border border-red-500/35 bg-red-500/10 px-2.5 py-1 text-[12px] font-medium text-red-200"
+            title={r.penalidades.join(' · ')}
+          >
+            Penalidades
+          </span>
+        ) : null}
+      </div>
+      <div className="mb-4 flex flex-col gap-1.5">
+        <MiniBarra label="Atratividade" valor={r.scoreAtratividade ?? 0} />
+        <MiniBarra label="Viabilidade" valor={r.scoreViabilidade ?? 0} />
+        <MiniBarra label="Segurança" valor={r.scoreSeguranca ?? 0} />
+      </div>
+      <div className="flex gap-2 border-t border-zinc-800 pt-3">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onVerMapa()
+          }}
+          style={{ cursor: 'pointer' }}
+          className="rounded-md bg-amber-500 px-4 py-2 text-[13px] font-medium text-zinc-950 transition-colors hover:bg-amber-400"
+        >
+          Ver no Mapa
+        </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onVerCalculo()
+          }}
+          style={{ cursor: 'pointer' }}
+          className="rounded-md border border-zinc-800 bg-transparent px-4 py-2 text-[13px] text-zinc-300 transition-colors hover:border-zinc-700"
+        >
+          Ver cálculo
+        </button>
+      </div>
     </div>
   )
 }
 
-const PERFIS_TOOLTIP_ORDER: PerfilRisco[] = ['conservador', 'moderado', 'arrojado']
+interface SubfatorDrill {
+  nome?: string
+  valor?: number
+  valor_bruto?: number
+  peso_pct?: number
+  texto?: string
+  fonte?: string
+  label?: string
+}
 
-function PerfilTooltipArrow({ pointsDown }: { pointsDown: boolean }) {
+function fmtPtSubfator(n: number): string {
+  const arredondado = Math.round(n * 10) / 10
+  if (arredondado === Math.round(arredondado)) {
+    return String(Math.round(arredondado))
+  }
+  return arredondado.toFixed(1).replace('.', ',')
+}
+
+function SubfatorLinha({ subfator }: { subfator: SubfatorDrill }) {
+  const pesoPct = Number((subfator as { peso_pct?: unknown }).peso_pct) || 0
+  const tetoSubfator = pesoPct * 100
+  const valorBrutoN = Number((subfator as { valor_bruto?: unknown }).valor_bruto)
+  let valorCaptado = Number((subfator as { valor?: unknown }).valor)
+  if (!Number.isFinite(valorCaptado) && tetoSubfator > 0 && Number.isFinite(valorBrutoN)) {
+    valorCaptado = (valorBrutoN / 100) * tetoSubfator
+  }
+  if (!Number.isFinite(valorCaptado)) valorCaptado = 0
+  const aproveitamentoPct = tetoSubfator > 0 ? (valorCaptado / tetoSubfator) * 100 : 0
+  const q = qualificadorTextoMiniBarra(aproveitamentoPct)
   return (
-    <div
-      style={{
-        display: 'flex',
-        justifyContent: 'center',
-        width: '100%',
-        lineHeight: 0,
-        flexShrink: 0,
-      }}
-      aria-hidden
-    >
-      {pointsDown ? (
-        <svg width="8" height="4" viewBox="0 0 8 4">
-          <polygon points="0,0 8,0 4,4" fill="#1A1A18" stroke="#3C3C3A" strokeWidth="0.75" />
-        </svg>
-      ) : (
-        <svg width="8" height="4" viewBox="0 0 8 4">
-          <polygon points="0,4 8,4 4,0" fill="#1A1A18" stroke="#3C3C3A" strokeWidth="0.75" />
-        </svg>
-      )}
+    <div>
+      <div className="mb-2 flex items-baseline justify-between gap-3">
+        <span className="text-[13px] text-zinc-300">{subfator.nome ?? subfator.label ?? '—'}</span>
+        <div className="flex flex-shrink-0 items-baseline gap-2">
+          <span className="text-[13px] font-medium tabular-nums" style={{ color: q.color }}>
+            {fmtPtSubfator(valorCaptado)} de {fmtPtSubfator(tetoSubfator)}
+          </span>
+          <span className="min-w-[40px] text-right text-[11px] tracking-wide" style={{ color: '#888780' }}>
+            {q.label}
+          </span>
+        </div>
+      </div>
+      <div className="h-1 overflow-hidden rounded-sm bg-zinc-900">
+        <div
+          className="h-full"
+          style={{
+            width: `${Math.max(0, Math.min(100, aproveitamentoPct))}%`,
+            background: q.color,
+          }}
+        />
+      </div>
     </div>
   )
 }
 
-function PerfilPesosTooltipPanel({ perfilAtivo }: { perfilAtivo: PerfilRisco }) {
+type DimK = 'atratividade' | 'viabilidade' | 'seguranca'
+
+function hexToRgba(hex: string, alpha: number): string {
+  const h = hex.replace('#', '')
+  if (h.length !== 6) return hex
+  const r = parseInt(h.slice(0, 2), 16)
+  const g = parseInt(h.slice(2, 4), 16)
+  const b = parseInt(h.slice(4, 6), 16)
+  return `rgba(${r},${g},${b},${alpha})`
+}
+
+function fmtPonderacao(n: number): string {
+  return n
+    .toFixed(4)
+    .replace('.', ',')
+    .replace(/0+$/, '')
+    .replace(/,$/, '')
+}
+
+function PontuacaoFinalCard({
+  r,
+  perfil: _perfil,
+  pesos,
+}: {
+  r: OpportunityResult
+  perfil: PerfilRisco
+  pesos: { a: number; b: number; c: number }
+}) {
+  const scoreCor = corFaixaOpportunity(r.faixa)
+  const scoreLabel = getOpportunityLabel(r.scoreTotal)
+  const a = r.scoreAtratividade ?? 0
+  const v = r.scoreViabilidade ?? 0
+  const s = r.scoreSeguranca ?? 0
+  const contribA = a * pesos.a
+  const contribV = v * pesos.b
+  const contribS = s * pesos.c
+  const fmt = fmtPonderacao
   return (
     <div
+      className="mt-4 overflow-hidden rounded-lg p-4"
       style={{
-        background: '#1A1A18',
-        border: '1px solid #3C3C3A',
-        borderRadius: 8,
-        padding: '12px 16px',
-        boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-        width: '100%',
-        boxSizing: 'border-box',
+        background: `linear-gradient(135deg, ${hexToRgba(scoreCor, 0.05)} 0%, ${hexToRgba(scoreCor, 0.06)} 100%)`,
+        border: `1px solid ${hexToRgba(scoreCor, 0.25)}`,
+        borderLeft: `3px solid ${scoreCor}`,
       }}
     >
-      {PERFIS_TOOLTIP_ORDER.map((p, idx) => {
-        const pesos = PESOS_PERFIL[p]
-        const pa = Math.round(pesos.a * 100)
-        const pv = Math.round(pesos.b * 100)
-        const ps = Math.round(pesos.c * 100)
-        const nome = perfilNomeTitulo(p)
-        return (
-          <div key={p} style={{ marginBottom: idx < PERFIS_TOOLTIP_ORDER.length - 1 ? 10 : 0 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: '#D3D1C7' }}>
-              {nome}
-              {perfilAtivo === p ? (
-                <span style={{ fontWeight: 400, color: '#888780', fontSize: 14 }}> (atual)</span>
-              ) : null}
-            </div>
-            <div style={{ marginTop: 4 }}>
-              <PesoBarDrilldown pesos={pesos} heightPx={4} />
-            </div>
-            <div style={{ fontSize: 13, color: '#888780', marginTop: 4 }}>
-              A {pa}% · V {pv}% · S {ps}%
+      <div>
+        <div className="text-[11px] uppercase tracking-[0.06em] text-zinc-100">Pontuação final</div>
+        <div className="mt-1.5 text-[28px] font-medium tabular-nums" style={{ color: scoreCor }}>
+          {r.scoreTotal}
+        </div>
+        <div className="mt-1 text-[11px] font-medium uppercase tracking-[0.06em]" style={{ color: scoreCor }}>
+          {scoreLabel.toUpperCase()}
+        </div>
+        <div
+          className="mt-3 border-t border-solid pt-3 text-[14px] leading-relaxed text-zinc-300"
+          style={{ borderColor: hexToRgba(scoreCor, 0.15) }}
+        >
+          <p className="m-0 flex flex-wrap items-baseline gap-x-2 gap-y-1.5 tabular-nums">
+            <span className="whitespace-nowrap">
+              A {a} × {fmt(pesos.a)} <span className="text-zinc-500">→</span> {fmt(contribA)}
+            </span>
+            <span className="text-zinc-600" aria-hidden>
+              |
+            </span>
+            <span className="whitespace-nowrap">
+              V {v} × {fmt(pesos.b)} <span className="text-zinc-500">→</span> {fmt(contribV)}
+            </span>
+            <span className="text-zinc-600" aria-hidden>
+              |
+            </span>
+            <span className="whitespace-nowrap">
+              S {s} × {fmt(pesos.c)} <span className="text-zinc-500">→</span> {fmt(contribS)}
+            </span>
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DimensaoExpandivel({
+  k,
+  nome,
+  peso,
+  valor,
+  subfatores,
+  cor,
+  aberta,
+  onToggle,
+  reducedMotion,
+}: {
+  k: DimK
+  nome: string
+  peso: number
+  valor: number
+  subfatores: unknown[] | undefined
+  cor: string
+  aberta: boolean
+  onToggle: (key: DimK) => void
+  reducedMotion: boolean
+}) {
+  const subLista = (Array.isArray(subfatores) ? subfatores : []).filter(
+    (sf) => !ehSubfatorParasita(sf as { texto?: unknown }),
+  )
+  const temSubs = subLista.length > 0
+  const trClass = reducedMotion
+    ? ''
+    : 'transition-[grid-template-rows] duration-300 ease-in-out'
+  const barStyle: CSSProperties = reducedMotion
+    ? { width: `${clampBarPct(valor)}%`, background: cor }
+    : { width: `${clampBarPct(valor)}%`, background: cor, transition: 'width 0.35s ease-out' }
+  return (
+    <div className="mb-4">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          onToggle(k)
+        }}
+        className="mb-2 flex w-full cursor-pointer items-center justify-between text-left"
+        aria-expanded={aberta}
+        aria-controls={`dim-drill-${k}`}
+        id={`dim-head-${k}`}
+      >
+        <span className="flex items-center gap-1.5 text-[14px] font-medium text-zinc-100">
+          <span className="text-xs text-zinc-500" aria-hidden>
+            {aberta ? '▼' : '▶'}
+          </span>
+          {nome} <span className="font-normal text-zinc-500">({Math.round(peso * 100)}%)</span>
+        </span>
+        <span className="text-[15px] font-medium tabular-nums" style={{ color: cor }}>
+          {valor}
+        </span>
+      </button>
+      <div className="mb-5 h-[5px] overflow-hidden rounded-sm bg-zinc-900">
+        <div className="h-full rounded-sm" style={barStyle} />
+      </div>
+      {temSubs ? (
+        <div
+          className={cn('grid', trClass, aberta ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]')}
+          id={`dim-drill-${k}`}
+          role="region"
+          aria-labelledby={`dim-head-${k}`}
+        >
+          <div className="min-h-0 overflow-hidden">
+            <div className="space-y-4 border-l border-zinc-800 pl-4">
+              {subLista.map((sf, i) => (
+                <SubfatorLinha key={i} subfator={sf as SubfatorDrill} />
+              ))}
             </div>
           </div>
-        )
-      })}
+        </div>
+      ) : null}
     </div>
   )
+}
+
+function DrilldownCalculo({
+  r,
+  perfil,
+  pesos,
+  onVoltar,
+  reducedMotion,
+}: {
+  r: OpportunityResult
+  perfil: PerfilRisco
+  pesos: { a: number; b: number; c: number }
+  onVoltar: () => void
+  reducedMotion: boolean
+}) {
+  const [dimAberta, setDimAberta] = useState<DimK | null>(null)
+  const toggleDim = useCallback((k: DimK) => {
+    setDimAberta((prev) => (prev === k ? null : k))
+  }, [])
+  const sa = r.scoreAtratividade ?? 0
+  const sv = r.scoreViabilidade ?? 0
+  const ss = r.scoreSeguranca ?? 0
+  const dimensoes = r.dimensoesOportunidade
+  return (
+    <div
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+      className="p-5"
+      role="presentation"
+    >
+      <div className="mb-3">
+        <div className="mb-1 text-[13px] font-medium text-zinc-100">Decomposição da Pontuação</div>
+        <p className="mb-4 text-[12px] leading-relaxed text-zinc-400">
+          Cada subfator contribui com até <span className="font-medium text-zinc-200">peso × 100</span> pontos
+          para sua dimensão. A barra mostra quanto desse potencial foi capturado.
+        </p>
+      </div>
+      <div className="mb-1 flex h-1.5 overflow-hidden rounded-sm bg-zinc-900">
+        <div style={{ width: `${pesos.a * 100}%`, background: CORES_DIMENSAO.atratividade }} />
+        <div style={{ width: `${pesos.b * 100}%`, background: CORES_DIMENSAO.viabilidade }} />
+        <div style={{ width: `${pesos.c * 100}%`, background: CORES_DIMENSAO.seguranca }} />
+      </div>
+      <div className="mb-6 flex text-[12px] leading-tight text-zinc-400">
+        <span className="text-center" style={{ flex: pesos.a, minWidth: 0 }}>
+          Atratividade {Math.round(pesos.a * 100)}%
+        </span>
+        <span className="text-center" style={{ flex: pesos.b, minWidth: 0 }}>
+          Viabilidade {Math.round(pesos.b * 100)}%
+        </span>
+        <span className="text-center" style={{ flex: pesos.c, minWidth: 0 }}>
+          Segurança {Math.round(pesos.c * 100)}%
+        </span>
+      </div>
+      <DimensaoExpandivel
+        k="atratividade"
+        nome="Atratividade"
+        peso={pesos.a}
+        valor={sa}
+        subfatores={dimensoes?.atratividade?.subfatores as unknown[] | undefined}
+        cor={CORES_DIMENSAO.atratividade}
+        aberta={dimAberta === 'atratividade'}
+        onToggle={toggleDim}
+        reducedMotion={reducedMotion}
+      />
+      <DimensaoExpandivel
+        k="viabilidade"
+        nome="Viabilidade"
+        peso={pesos.b}
+        valor={sv}
+        subfatores={dimensoes?.viabilidade?.subfatores as unknown[] | undefined}
+        cor={CORES_DIMENSAO.viabilidade}
+        aberta={dimAberta === 'viabilidade'}
+        onToggle={toggleDim}
+        reducedMotion={reducedMotion}
+      />
+      <DimensaoExpandivel
+        k="seguranca"
+        nome="Segurança"
+        peso={pesos.c}
+        valor={ss}
+        subfatores={dimensoes?.seguranca?.subfatores as unknown[] | undefined}
+        cor={CORES_DIMENSAO.seguranca}
+        aberta={dimAberta === 'seguranca'}
+        onToggle={toggleDim}
+        reducedMotion={reducedMotion}
+      />
+      <PontuacaoFinalCard r={r} perfil={perfil} pesos={pesos} />
+      <div className="mt-4 border-t border-zinc-800 pt-4">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onVoltar()
+          }}
+          className="cursor-pointer rounded-md border border-zinc-800 bg-transparent px-4 py-2 text-[13px] text-zinc-300 transition-colors hover:border-zinc-700"
+        >
+          Voltar
+        </button>
+      </div>
+    </div>
+  )
+}
+
+const filtroChipsClass =
+  'inline-flex items-center gap-2 rounded-full border border-zinc-800 bg-zinc-900 px-3.5 py-2 text-[13px] text-zinc-200'
+
+function perfilDotColor(proRisco: PerfilRisco): string {
+  if (proRisco === 'conservador') return '#1D9E75'
+  if (proRisco === 'moderado') return '#E8A830'
+  return '#E24B4A'
+}
+
+function botaoPaginacaoStyle(disabled: boolean): CSSProperties {
+  return {
+    padding: '8px 16px',
+    fontSize: 14,
+    fontWeight: 500,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderStyle: 'solid',
+    borderColor: disabled ? '#2C2C2A' : '#5F5E5A',
+    background: 'transparent',
+    color: disabled ? '#5F5E5A' : '#D3D1C7',
+    cursor: disabled ? 'not-allowed' : 'pointer',
+  }
 }
 
 export function ProspeccaoResultados({
   resultados,
-  excluidosCount,
-  resultadosDescartados,
-  processoById,
+  totalOportunidades,
+  paginaAtual,
+  carregandoPagina,
+  onIrParaPagina,
+  pageSize,
+  resultadosListRef,
   proRisco,
   proSubst,
   proUfs,
   selectedResultId,
   setSelectedResultId,
   cardVis,
-  barsReady,
+  barsReady: _barsReady,
   reducedMotion,
   navigateProcessoMapa,
   handleRefinarBusca,
+  handleRefinarBuscaDesdeVazio,
   handleVoltarAoRadar,
   showToast,
+  onAbrirRefinarSubst,
+  onRemoverFiltroSubst,
 }: {
   resultados: OpportunityResult[]
-  excluidosCount: number
-  resultadosDescartados: OpportunityResult[]
-  processoById: Map<string, Processo>
+  totalOportunidades: number | null
+  paginaAtual: number
+  carregandoPagina: boolean
+  onIrParaPagina: (pagina: number) => void | Promise<void>
+  pageSize: number
+  resultadosListRef: RefObject<HTMLDivElement | null>
   proRisco: PerfilRisco | null
   proSubst: string[]
   proUfs: string[]
@@ -230,46 +581,18 @@ export function ProspeccaoResultados({
   cardVis: boolean[]
   barsReady: boolean
   reducedMotion: boolean
-  navigateProcessoMapa: (id: string) => void
+  navigateProcessoMapa: (processoId: string, numeroAnm?: string | null) => void
   handleRefinarBusca: () => void
+  handleRefinarBuscaDesdeVazio: () => void
   handleVoltarAoRadar: () => void
   showToast: (m: string) => void
+  onAbrirRefinarSubst: () => void
+  onRemoverFiltroSubst: (substancia: string) => void
 }) {
-  const cardsGridRef = useRef<HTMLDivElement>(null)
+  void _barsReady
+  const cardsGridRef = resultadosListRef
   const [drilldownOpen, setDrilldownOpen] = useState<string | null>(null)
   const drilldownOpenRef = useRef<string | null>(null)
-  const [expandedDimension, setExpandedDimension] = useState<string | null>(null)
-  const [showDescartados, setShowDescartados] = useState(false)
-  const [perfilPesosInfoHover, setPerfilPesosInfoHover] = useState(false)
-  const perfilInfoBtnRef = useRef<HTMLButtonElement | null>(null)
-  const perfilTooltipFloatingRef = useRef<HTMLDivElement | null>(null)
-  const perfilHoverLeaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [perfilInfoTooltipBelow, setPerfilInfoTooltipBelow] = useState(false)
-  const [perfilTooltipPos, setPerfilTooltipPos] = useState<{ top: number; left: number } | null>(
-    null,
-  )
-
-  const clearPerfilHoverLeaveTimer = useCallback(() => {
-    if (perfilHoverLeaveTimerRef.current != null) {
-      clearTimeout(perfilHoverLeaveTimerRef.current)
-      perfilHoverLeaveTimerRef.current = null
-    }
-  }, [])
-
-  const openPerfilPesosInfo = useCallback(() => {
-    clearPerfilHoverLeaveTimer()
-    setPerfilPesosInfoHover(true)
-  }, [clearPerfilHoverLeaveTimer])
-
-  const scheduleClosePerfilPesosInfo = useCallback(() => {
-    clearPerfilHoverLeaveTimer()
-    perfilHoverLeaveTimerRef.current = window.setTimeout(() => {
-      perfilHoverLeaveTimerRef.current = null
-      setPerfilPesosInfoHover(false)
-    }, 120)
-  }, [clearPerfilHoverLeaveTimer])
-
-  /** Flip drilldown: fade-out → swap → fade-in (um card por vez) */
   const [flipActiveId, setFlipActiveId] = useState<string | null>(null)
   const [flipOpaque, setFlipOpaque] = useState(true)
   const flipTimersRef = useRef<ReturnType<typeof setTimeout>[]>([])
@@ -337,83 +660,6 @@ export function ProspeccaoResultados({
   }, [selectedResultId])
 
   useEffect(() => {
-    if (drilldownOpen == null) setExpandedDimension(null)
-  }, [drilldownOpen])
-
-  useEffect(() => {
-    if (drilldownOpen == null) {
-      clearPerfilHoverLeaveTimer()
-      setPerfilPesosInfoHover(false)
-    }
-  }, [drilldownOpen, clearPerfilHoverLeaveTimer])
-
-  useEffect(() => {
-    return () => clearPerfilHoverLeaveTimer()
-  }, [clearPerfilHoverLeaveTimer])
-
-  useLayoutEffect(() => {
-    if (!perfilPesosInfoHover) {
-      setPerfilTooltipPos(null)
-      return
-    }
-
-    let cancelled = false
-    let cleanupAuto: (() => void) | undefined
-    let rafId = 0
-    let attempts = 0
-    const maxAttempts = 40
-
-    const runPosition = (btn: HTMLElement, float: HTMLElement) => {
-      computePosition(btn, float, {
-        strategy: 'fixed',
-        placement: 'top',
-        middleware: [offset(8), flip(), shift({ padding: 8 })],
-      }).then(({ x, y, placement }) => {
-        if (cancelled) return
-        setPerfilTooltipPos({ top: y, left: x })
-        setPerfilInfoTooltipBelow(placement.startsWith('bottom'))
-      })
-    }
-
-    const setup = () => {
-      if (cancelled) return
-      const btn = perfilInfoBtnRef.current
-      const float = perfilTooltipFloatingRef.current
-      const rect = btn?.getBoundingClientRect()
-      const validBtn =
-        btn &&
-        rect &&
-        rect.width >= 1 &&
-        rect.height >= 1 &&
-        Number.isFinite(rect.left) &&
-        Number.isFinite(rect.top)
-
-      if (!validBtn || !float) {
-        if (attempts++ < maxAttempts) {
-          rafId = requestAnimationFrame(setup)
-        }
-        return
-      }
-
-      const update = () => {
-        if (cancelled) return
-        runPosition(btn, float)
-      }
-
-      cleanupAuto = autoUpdate(btn, float, update)
-      update()
-    }
-
-    setup()
-
-    return () => {
-      cancelled = true
-      cancelAnimationFrame(rafId)
-      cleanupAuto?.()
-    }
-  }, [perfilPesosInfoHover, drilldownOpen, flipOpaque, flipActiveId])
-
-  useEffect(() => {
     if (selectedResultId == null) return
     const handlePointerDown = (e: PointerEvent) => {
       const root = cardsGridRef.current
@@ -426,9 +672,17 @@ export function ProspeccaoResultados({
 
   const perfilForDrill = proRisco ?? 'moderado'
   const pesosDrill = PESOS_PERFIL[perfilForDrill]
-  const pesoA = Math.round(pesosDrill.a * 100)
-  const pesoV = Math.round(pesosDrill.b * 100)
-  const pesoS = Math.round(pesosDrill.c * 100)
+  const totalPaginas =
+    totalOportunidades != null
+      ? Math.max(1, Math.ceil(totalOportunidades / pageSize))
+      : 1
+  const proximaSemContagem = totalOportunidades === null
+  const podeProximaComContagem =
+    totalOportunidades != null && paginaAtual < totalPaginas
+  const podeProximaSemContagem = proximaSemContagem && resultados.length === pageSize
+  const desabilitaProxima = proximaSemContagem
+    ? !podeProximaSemContagem
+    : !podeProximaComContagem
 
   return (
     <div
@@ -436,7 +690,6 @@ export function ProspeccaoResultados({
         position: 'relative',
         backgroundColor: '#0D0D0C',
         minHeight: '100%',
-        /* Evita que o padrão absoluto “esticado” com o conteúdo; altura fixa em viewport (cf. radar home). */
         overflow: 'hidden',
       }}
     >
@@ -501,7 +754,9 @@ export function ProspeccaoResultados({
                   color: '#F1EFE8',
                 }}
               >
-                {resultados.length} oportunidades identificadas
+                {totalOportunidades !== null
+                  ? `${totalOportunidades.toLocaleString('pt-BR')} oportunidades identificadas`
+                  : `${resultados.length} oportunidades carregadas`}
               </h2>
             </div>
 
@@ -565,15 +820,10 @@ export function ProspeccaoResultados({
             }}
           >
             {proRisco ? (
-              <span style={pillUnified}>
+              <span className={filtroChipsClass}>
                 <span
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: '50%',
-                    backgroundColor: perfilDotColor(proRisco),
-                    flexShrink: 0,
-                  }}
+                  className="h-2 w-2 flex-shrink-0 rounded-full"
+                  style={{ backgroundColor: perfilDotColor(proRisco) }}
                   aria-hidden
                 />
                 {proRisco.charAt(0).toUpperCase() + proRisco.slice(1)}
@@ -581,28 +831,58 @@ export function ProspeccaoResultados({
             ) : null}
 
             {proSubst.includes(TODAS_SUBST) ? (
-              <span style={pillUnified}>Todas</span>
+              <span className={filtroChipsClass}>Todas</span>
             ) : (
               proSubst.map((s) => (
-                <span key={s} style={pillUnified}>
-                  {titleCaseSubst(s)}
+                <span
+                  key={s}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[13px] text-amber-200"
+                >
+                  <span>{titleCaseSubst(s)}</span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRemoverFiltroSubst(s)
+                    }}
+                    aria-label={`Remover ${s}`}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#888780',
+                      cursor: 'pointer',
+                      padding: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <X size={14} />
+                  </button>
                 </span>
               ))
             )}
 
             {proUfs.length > 0 ? (
               proUfs.map((uf) => (
-                <span key={uf} style={pillUnified}>
+                <span key={uf} className={filtroChipsClass}>
                   {uf}
                 </span>
               ))
             ) : (
-              <span style={pillUnified}>Brasil</span>
+              <span className={filtroChipsClass}>Brasil</span>
             )}
+
+            <button
+              type="button"
+              onClick={onAbrirRefinarSubst}
+              className="cursor-pointer rounded-full border border-dashed border-zinc-700 bg-transparent px-3.5 py-2 text-[13px] text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-200"
+            >
+              + Filtrar substância
+            </button>
           </div>
         </div>
 
-        {resultados.length === 0 ? (
+        {resultados.length === 0 && paginaAtual === 1 ? (
           <div
             style={{
               position: 'relative',
@@ -641,12 +921,12 @@ export function ProspeccaoResultados({
                   lineHeight: 1.5,
                 }}
               >
-                Nenhum processo atende aos critérios mínimos de score para o perfil selecionado. Tente ampliar as
-                substâncias ou a região.
+                Nenhum processo atende aos critérios mínimos de score para o perfil selecionado. Tente
+                ampliar as substâncias ou a região.
               </p>
               <button
                 type="button"
-                onClick={handleRefinarBusca}
+                onClick={handleRefinarBuscaDesdeVazio}
                 style={{
                   marginTop: 24,
                   backgroundColor: '#EF9F27',
@@ -670,90 +950,7 @@ export function ProspeccaoResultados({
               >
                 Refinar busca
               </button>
-              {excluidosCount > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => setShowDescartados(!showDescartados)}
-                  style={{
-                    marginTop: 12,
-                    border: 'none',
-                    background: 'none',
-                    fontSize: 13,
-                    color: '#888780',
-                    cursor: 'pointer',
-                    textDecoration: 'underline',
-                    textUnderlineOffset: 3,
-                  }}
-                >
-                  {showDescartados ? 'Ocultar' : 'Ver'} processos analisados ({excluidosCount})
-                </button>
-              ) : null}
             </div>
-
-            {showDescartados && resultadosDescartados.length > 0 ? (
-              <div
-                style={{
-                  position: 'relative',
-                  zIndex: 1,
-                  marginTop: 32,
-                  width: '100%',
-                  maxWidth: 800,
-                  marginLeft: 'auto',
-                  marginRight: 'auto',
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 12,
-                    textTransform: 'uppercase',
-                    letterSpacing: 1,
-                    color: '#888780',
-                    fontWeight: 600,
-                    marginBottom: 12,
-                  }}
-                >
-                  Processos analisados (abaixo do score mínimo)
-                </div>
-                <div
-                  style={{
-                    backgroundColor: 'rgba(26, 26, 24, 0.85)',
-                    backdropFilter: 'blur(8px)',
-                    WebkitBackdropFilter: 'blur(8px)',
-                    borderRadius: 8,
-                    borderWidth: 1,
-                    borderStyle: 'solid',
-                    borderColor: '#2C2C2A',
-                    overflow: 'hidden',
-                  }}
-                >
-                  {resultadosDescartados.map((row, i) => {
-                    const p = processoById.get(row.processoId)
-                    if (!p) return null
-                    return (
-                      <div
-                        key={row.processoId}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          padding: '10px 16px',
-                          borderTop: i > 0 ? '1px solid #2C2C2A' : 'none',
-                          fontSize: 13,
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                          <span style={{ color: '#5F5E5A', fontWeight: 600, width: 32 }}>{row.scoreTotal}</span>
-                          <span style={{ color: '#D3D1C7' }}>{p.numero}</span>
-                          <span style={{ color: '#888780' }}>{p.substancia}</span>
-                          <span style={{ color: '#5F5E5A' }}>{p.uf}</span>
-                        </div>
-                        <span style={{ color: '#5F5E5A', fontSize: 12 }}>Abaixo do mínimo</span>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            ) : null}
           </div>
         ) : (
           <div
@@ -765,56 +962,21 @@ export function ProspeccaoResultados({
               alignItems: 'start',
             }}
           >
+            {resultados.length === 0 && paginaAtual > 1 ? (
+              <div
+                style={{
+                  gridColumn: '1 / -1',
+                  textAlign: 'center',
+                  color: '#888780',
+                  fontSize: 14,
+                  padding: '32px 16px',
+                }}
+              >
+                Nada nesta página. Use &quot;Anterior&quot; ou ajuste a busca.
+              </div>
+            ) : null}
             {resultados.map((r, i) => {
-              const p = processoById.get(r.processoId)
-              if (!p) return null
-              const { card: cardVar, fonte: cardFonte } = resolveOpportunityCardVariaveis(p, r)
-              const dimFromCard = computeDimScoresFromCard(cardVar)
-              const dimScoresBarras =
-                cardFonte === 'manual'
-                  ? dimFromCard
-                  : {
-                      a: r.scoreAtratividade,
-                      v: r.scoreViabilidade,
-                      s: r.scoreSeguranca,
-                    }
-              const descricoesBarras = buildDescricoesBarras(cardVar, dimScoresBarras)
-              const scoreBarA = dimScoresBarras.a
-              const scoreBarV = dimScoresBarras.v
-              const scoreBarS = dimScoresBarras.s
-              const scoreTotalDisplay =
-                cardFonte === 'manual'
-                  ? scoreTotalFromDimScores(dimFromCard, proRisco ?? 'moderado')
-                  : r.scoreTotal
-              const faixaDisplay =
-                cardFonte === 'manual' ? faixaFromScore(scoreTotalDisplay) : r.faixa
-              const fatoresCard = gerarFatoresDestacados(
-                flattenVariaveis(cardVar),
-                descricoesBarras,
-              )
-              const drillDims = [
-                {
-                  label: 'Atratividade',
-                  v: scoreBarA,
-                  peso: pesoA,
-                  variaveis: cardVar.atratividade,
-                },
-                {
-                  label: 'Viabilidade',
-                  v: scoreBarV,
-                  peso: pesoV,
-                  variaveis: cardVar.viabilidade,
-                },
-                {
-                  label: 'Segurança',
-                  v: scoreBarS,
-                  peso: pesoS,
-                  variaveis: cardVar.seguranca,
-                },
-              ]
-              const corFaixa = corFaixaOpportunity(faixaDisplay)
               const isSelected = selectedResultId === r.processoId
-              const corSub = corSubstanciaOuUndefined(p.substancia) ?? '#888780'
 
               const applyCardSurfaceAfterToggle = (
                 el: HTMLDivElement,
@@ -845,29 +1007,6 @@ export function ProspeccaoResultados({
                 } else {
                   setSelectedResultId(r.processoId)
                   setDrilldownOpen(null)
-                }
-              }
-
-              const handleScoreZoneClick = (e: MouseEvent<HTMLDivElement>) => {
-                e.stopPropagation()
-                setSelectedResultId(r.processoId)
-                if (drilldownOpenRef.current === r.processoId) {
-                  beginFlipClose()
-                } else {
-                  beginFlipOpen(r.processoId)
-                }
-              }
-
-              const handleScoreZoneKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  setSelectedResultId(r.processoId)
-                  if (drilldownOpenRef.current === r.processoId) {
-                    beginFlipClose()
-                  } else {
-                    beginFlipOpen(r.processoId)
-                  }
                 }
               }
 
@@ -918,72 +1057,6 @@ export function ProspeccaoResultados({
                 >
                   <div
                     style={{
-                      background: `linear-gradient(135deg, ${corFaixa}25 0%, ${corFaixa}0A 100%)`,
-                      padding: '16px 20px',
-                      borderRadius: '12px 12px 0 0',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontSize: 32,
-                        fontWeight: 700,
-                        letterSpacing: -0.5,
-                        color: corRanking(i + 1),
-                        lineHeight: 1,
-                      }}
-                    >
-                      #{i + 1}
-                    </span>
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={handleScoreZoneClick}
-                      onKeyDown={handleScoreZoneKeyDown}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 10,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: 50,
-                          height: 50,
-                          borderRadius: '50%',
-                          backgroundColor: `${corFaixa}20`,
-                          borderWidth: 2,
-                          borderStyle: 'solid',
-                          borderColor: corFaixa,
-                          boxShadow: `0 0 16px ${corFaixa}40`,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
-                      >
-                        <span style={{ fontSize: 21, fontWeight: 700, color: '#F1EFE8' }}>
-                          {scoreTotalDisplay}
-                        </span>
-                      </div>
-                      <span
-                        style={{
-                          fontSize: 14,
-                          fontWeight: 600,
-                          color: corFaixa,
-                          textTransform: 'uppercase',
-                          letterSpacing: 0.5,
-                        }}
-                      >
-                        {getOpportunityLabel(scoreTotalDisplay)}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div
-                    style={{
                       ...(reducedMotion
                         ? {}
                         : {
@@ -1002,631 +1075,83 @@ export function ProspeccaoResultados({
                           : 'auto',
                     }}
                   >
-                  {drilldownOpen !== r.processoId ? (
-                    <div style={{ padding: '16px 20px 20px 20px', backgroundColor: '#1A1A18' }}>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-                        <span style={{ fontSize: 17, fontWeight: 500, color: '#F1EFE8' }}>{p.numero}</span>
-                        <span
-                          style={{
-                            padding: '2px 10px',
-                            borderRadius: 12,
-                            fontSize: 14,
-                            fontWeight: 500,
-                            backgroundColor: `${corSub}15`,
-                            color: corSub,
-                            borderWidth: 1,
-                            borderStyle: 'solid',
-                            borderColor: `${corSub}30`,
+                    {drilldownOpen !== r.processoId ? (
+                      <div>
+                        <CardResultado
+                          r={r}
+                          ord={i + 1}
+                          onVerMapa={() => {
+                            const n = (r.numero && String(r.numero).trim()) || ''
+                            const id = (r.processoId && String(r.processoId).trim()) || ''
+                            if (!n && !id) {
+                              console.warn('[Ver no Mapa] Card sem numero nem processoId', r)
+                              return
+                            }
+                            navigateProcessoMapa(id, n || null)
                           }}
-                        >
-                          {titleCaseSubst(p.substancia)}
-                        </span>
+                          onVerCalculo={() => {
+                            setSelectedResultId(r.processoId)
+                            beginFlipOpen(r.processoId)
+                          }}
+                        />
                       </div>
-                      <div style={{ marginTop: 4, fontSize: 15, color: '#B4B2A9' }}>{p.titular}</div>
-                      <div style={{ marginTop: 2, fontSize: 15, color: '#8A8880' }}>
-                        {p.municipio}, {p.uf} · {p.area_ha?.toLocaleString('pt-BR') ?? '–'} ha
+                    ) : (
+                      <div style={{ backgroundColor: '#1A1A18' }} className="bg-[#1A1A18]">
+                        <DrilldownCalculo
+                          key={r.processoId}
+                          r={r}
+                          perfil={perfilForDrill}
+                          pesos={pesosDrill}
+                          onVoltar={beginFlipClose}
+                          reducedMotion={reducedMotion}
+                        />
                       </div>
-
-                      <div style={{ height: 1, backgroundColor: '#2C2C2A', marginTop: 14, marginBottom: 14 }} />
-
-                      {[
-                        {
-                          label: 'Atratividade',
-                          v: scoreBarA,
-                          tooltip: descricoesBarras[0],
-                        },
-                        {
-                          label: 'Viabilidade',
-                          v: scoreBarV,
-                          tooltip: descricoesBarras[1],
-                        },
-                        {
-                          label: 'Segurança',
-                          v: scoreBarS,
-                          tooltip: descricoesBarras[2],
-                        },
-                      ].map((b, bi) => {
-                        const c = corMiniBarraValor(b.v)
-                        return (
-                          <div
-                            key={b.label}
-                            style={{ marginBottom: bi < 2 ? 14 : 0 }}
-                          >
-                            <div
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                              }}
-                            >
-                              <span
-                                style={{
-                                  fontSize: 14,
-                                  fontWeight: 700,
-                                  color: '#888780',
-                                  width: 104,
-                                  flexShrink: 0,
-                                }}
-                              >
-                                {b.label}
-                              </span>
-                              <div
-                                style={{
-                                  flex: 1,
-                                  height: 5,
-                                  backgroundColor: '#2C2C2A',
-                                  borderRadius: 3,
-                                  overflow: 'hidden',
-                                  minWidth: 30,
-                                }}
-                              >
-                                <div style={barFillStyle(b.v, barsReady, bi, reducedMotion, c)} />
-                              </div>
-                              <span
-                                style={{
-                                  fontSize: 16,
-                                  fontWeight: 700,
-                                  color: c,
-                                  marginLeft: 6,
-                                  minWidth: 44,
-                                  flexShrink: 0,
-                                  textAlign: 'right',
-                                }}
-                              >
-                                {b.v}
-                              </span>
-                            </div>
-                            <div
-                              style={{
-                                marginLeft: 104,
-                                marginTop: 2,
-                                fontSize: 15,
-                                color: '#8A8880',
-                                lineHeight: 1.45,
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                                minWidth: 0,
-                              }}
-                              title={b.tooltip}
-                            >
-                              {b.tooltip}
-                            </div>
-                          </div>
-                        )
-                      })}
-
-                      <div style={{ height: 1, backgroundColor: '#2C2C2A', marginTop: 14, marginBottom: 14 }} />
-
-                      <div style={{ fontSize: 14, color: '#B4B2A9', lineHeight: 1.45 }}>
-                        {fatoresCard.map((f, fi) => (
-                          <div
-                            key={`fc${fi}`}
-                            style={{
-                              display: 'flex',
-                              gap: 6,
-                              alignItems: 'flex-start',
-                              marginTop: fi > 0 ? 4 : 0,
-                            }}
-                          >
-                            {f.tipo === 'positivo' ? (
-                              <span style={{ color: '#1D9E75', flexShrink: 0, fontSize: 14 }}>✓</span>
-                            ) : (
-                              <span
-                                style={{
-                                  color: corBolinhaAtencao(f.variavel.valor),
-                                  flexShrink: 0,
-                                  fontSize: 14,
-                                }}
-                              >
-                                ●
-                              </span>
-                            )}
-                            <span>
-                              {f.variavel.texto} ({f.variavel.fonte})
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-
-                      <div
-                        style={{
-                          maxHeight:
-                            isSelected && drilldownOpen !== r.processoId ? 120 : 0,
-                          opacity:
-                            isSelected && drilldownOpen !== r.processoId ? 1 : 0,
-                          overflow: 'hidden',
-                          marginTop: isSelected && drilldownOpen !== r.processoId ? 14 : 0,
-                          paddingTop: isSelected && drilldownOpen !== r.processoId ? 14 : 0,
-                          borderTopWidth: 1,
-                          borderTopStyle: 'solid',
-                          borderTopColor:
-                            isSelected && drilldownOpen !== r.processoId
-                              ? '#2C2C2A'
-                              : 'transparent',
-                          display: 'flex',
-                          gap: 10,
-                          transition: reducedMotion
-                            ? undefined
-                            : 'max-height 250ms ease-out, opacity 200ms ease-out, margin-top 250ms ease-out, padding-top 250ms ease-out, border-color 200ms ease-out',
-                        }}
-                      >
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              navigateProcessoMapa(p.id)
-                            }}
-                            style={{
-                              backgroundColor: '#EF9F27',
-                              color: '#0D0D0C',
-                              fontSize: 16,
-                              fontWeight: 600,
-                              borderRadius: 6,
-                              padding: '7px 14px',
-                              border: 'none',
-                              cursor: 'pointer',
-                              transition: 'filter 0.15s ease-out, box-shadow 0.15s ease-out',
-                            }}
-                            onMouseEnter={(e) => {
-                              e.currentTarget.style.filter = 'brightness(1.1)'
-                              e.currentTarget.style.boxShadow = '0 0 24px rgba(239, 159, 39, 0.35)'
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.filter = 'none'
-                              e.currentTarget.style.boxShadow = 'none'
-                            }}
-                          >
-                            Ver no Mapa
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              beginFlipOpen(r.processoId)
-                            }}
-                            style={{
-                              borderWidth: 1,
-                              borderStyle: 'solid',
-                              borderColor: '#5F5E5A',
-                              color: '#B4B2A9',
-                              fontSize: 16,
-                              fontWeight: 500,
-                              borderRadius: 6,
-                              padding: '7px 14px',
-                              background: 'transparent',
-                              cursor: 'pointer',
-                              transition: 'border-color 0.15s ease, color 0.15s ease',
-                            }}
-                            onMouseEnter={(e) => {
-                              e.currentTarget.style.borderColor = '#888780'
-                              e.currentTarget.style.color = '#F1EFE8'
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.borderColor = '#5F5E5A'
-                              e.currentTarget.style.color = '#B4B2A9'
-                            }}
-                          >
-                            Ver cálculo
-                          </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div
-                      onClick={(e) => e.stopPropagation()}
-                      onKeyDown={(e) => e.stopPropagation()}
-                      style={{
-                        padding: '16px 20px 20px 20px',
-                        backgroundColor: '#1A1A18',
-                      }}
-                    >
-                      <div style={{ fontSize: 14, fontWeight: 600, color: '#D3D1C7', marginBottom: 8 }}>
-                        Decomposição da Pontuação
-                      </div>
-                      <div style={{ marginBottom: 16 }}>
-                        <div
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 6,
-                            marginBottom: 12,
-                          }}
-                        >
-                          <span style={{ fontSize: 15, fontWeight: 500, color: '#B4B2A9' }}>
-                            Perfil {perfilNomeTitulo(proRisco)}
-                          </span>
-                          <div
-                            style={{ display: 'inline-flex', alignItems: 'center' }}
-                            onMouseEnter={openPerfilPesosInfo}
-                            onMouseLeave={scheduleClosePerfilPesosInfo}
-                          >
-                            <button
-                              ref={perfilInfoBtnRef}
-                              type="button"
-                              aria-label="Informação sobre pesos por perfil"
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                padding: 0,
-                                border: 'none',
-                                background: 'none',
-                                cursor: 'pointer',
-                              }}
-                            >
-                              <Info size={15} color="#5F5E5A" aria-hidden />
-                            </button>
-                          </div>
-                        </div>
-                        <PesoBarDrilldown pesos={pesosDrill} heightPx={6} />
-                        <div
-                          style={{
-                            display: 'flex',
-                            gap: 2,
-                            marginTop: 6,
-                            marginBottom: 16,
-                          }}
-                        >
-                          <div
-                            style={{
-                              flex: pesosDrill.a,
-                              minWidth: 0,
-                              fontSize: 13,
-                              fontWeight: 400,
-                              color: '#888780',
-                              textAlign: 'center',
-                            }}
-                          >
-                            Atratividade {pesoA}%
-                          </div>
-                          <div
-                            style={{
-                              flex: pesosDrill.b,
-                              minWidth: 0,
-                              fontSize: 13,
-                              fontWeight: 400,
-                              color: '#888780',
-                              textAlign: 'center',
-                            }}
-                          >
-                            Viabilidade {pesoV}%
-                          </div>
-                          <div
-                            style={{
-                              flex: pesosDrill.c,
-                              minWidth: 0,
-                              fontSize: 13,
-                              fontWeight: 400,
-                              color: '#888780',
-                              textAlign: 'center',
-                            }}
-                          >
-                            Segurança {pesoS}%
-                          </div>
-                        </div>
-                      </div>
-                      {drillDims.map((dim, di) => {
-                        const c = corMiniBarraValor(dim.v)
-                        const isExpanded = expandedDimension === dim.label
-                        return (
-                          <div
-                            key={dim.label}
-                            style={{ marginBottom: di === 2 ? 40 : di < 2 ? 14 : 0 }}
-                          >
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setExpandedDimension(isExpanded ? null : dim.label)
-                              }}
-                              style={{
-                                width: '100%',
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'center',
-                                background: 'none',
-                                border: 'none',
-                                padding: '6px 0',
-                                cursor: 'pointer',
-                              }}
-                            >
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                                <ChevronRight
-                                  size={14}
-                                  color="#5F5E5A"
-                                  style={{
-                                    transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
-                                    transition: 'transform 0.15s ease',
-                                    flexShrink: 0,
-                                  }}
-                                />
-                                <span
-                                  style={{
-                                    fontSize: 14,
-                                    fontWeight: 700,
-                                    color: '#888780',
-                                    textAlign: 'left',
-                                  }}
-                                >
-                                  {dim.label} ({dim.peso}%)
-                                </span>
-                              </div>
-                              <span
-                                style={{
-                                  fontSize: 16,
-                                  fontWeight: 700,
-                                  color: c,
-                                  marginLeft: 8,
-                                  flexShrink: 0,
-                                  textAlign: 'right',
-                                  whiteSpace: 'nowrap',
-                                }}
-                              >
-                                {dim.v}
-                              </span>
-                            </button>
-                            <div
-                              style={{
-                                height: 5,
-                                backgroundColor: '#2C2C2A',
-                                borderRadius: 3,
-                                overflow: 'hidden',
-                                marginTop: 4,
-                              }}
-                            >
-                              <div
-                                style={{
-                                  height: '100%',
-                                  width: `${dim.v}%`,
-                                  backgroundColor: c,
-                                  borderRadius: 3,
-                                }}
-                              />
-                            </div>
-                            <div
-                              style={{
-                                maxHeight: isExpanded ? 500 : 0,
-                                opacity: isExpanded ? 1 : 0,
-                                overflow: 'hidden',
-                                transition: reducedMotion
-                                  ? undefined
-                                  : 'max-height 300ms ease-out, opacity 200ms ease-out, margin-top 300ms ease-out',
-                                marginTop: isExpanded ? 10 : 0,
-                                marginLeft: 20,
-                                paddingLeft: 12,
-                                borderLeft: `2px solid ${c}30`,
-                              }}
-                            >
-                                {dim.variaveis.map((vrow, vi) => {
-                                  const q = qualificadorTextoMiniBarra(vrow.valor)
-                                  const fonteVar =
-                                    'fonte' in vrow && typeof (vrow as VariavelPontuacao).fonte === 'string'
-                                      ? `Fonte: ${(vrow as VariavelPontuacao).fonte}`
-                                      : FONTES_DRILLDOWN[vrow.nome]
-                                  return (
-                                  <div
-                                    key={vi}
-                                    style={{ marginTop: vi > 0 ? 10 : 0 }}
-                                    title={fonteVar}
-                                  >
-                                    <div
-                                      style={{
-                                        display: 'flex',
-                                        justifyContent: 'space-between',
-                                        alignItems: 'center',
-                                        gap: 10,
-                                      }}
-                                    >
-                                      <span
-                                        style={{
-                                          fontSize: 14,
-                                          color: '#8A8880',
-                                          lineHeight: 1.35,
-                                        }}
-                                      >
-                                        {vrow.nome}
-                                      </span>
-                                      <span
-                                        style={{
-                                          display: 'inline-flex',
-                                          alignItems: 'center',
-                                          flexShrink: 0,
-                                        }}
-                                      >
-                                        <span
-                                          style={{
-                                            fontSize: 14,
-                                            fontWeight: 600,
-                                            color: corMiniBarraValor(vrow.valor),
-                                          }}
-                                        >
-                                          {vrow.valor}
-                                        </span>
-                                        <span style={{ fontSize: 14, color: q.color, marginLeft: 6 }}>
-                                          {q.label}
-                                        </span>
-                                      </span>
-                                    </div>
-                                    <div
-                                      style={{
-                                        height: 3,
-                                        backgroundColor: '#2C2C2A',
-                                        borderRadius: 2,
-                                        overflow: 'hidden',
-                                        marginTop: 4,
-                                      }}
-                                    >
-                                      <div
-                                        style={{
-                                          height: '100%',
-                                          width: `${vrow.valor}%`,
-                                          backgroundColor: corMiniBarraValor(vrow.valor),
-                                          borderRadius: 2,
-                                          opacity: 0.7,
-                                        }}
-                                      />
-                                    </div>
-                                  </div>
-                                  )
-                                })}
-                            </div>
-                          </div>
-                        )
-                      })}
-                      <div
-                        style={{
-                          marginTop: 16,
-                          padding: '12px 16px',
-                          borderRadius: 8,
-                          backgroundColor: `${corFaixa}0F`,
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          gap: 12,
-                        }}
-                      >
-                        <div
-                          style={{
-                            display: 'flex',
-                            flexDirection: 'column',
-                            alignItems: 'flex-start',
-                            gap: 4,
-                            minWidth: 0,
-                          }}
-                        >
-                          <span
-                            style={{
-                              fontSize: 15,
-                              fontWeight: 700,
-                              color: '#D3D1C7',
-                            }}
-                          >
-                            Pontuação final
-                          </span>
-                          <div style={{ fontSize: 14, fontWeight: 400, color: '#888780' }}>
-                            <span style={{ color: CORES_DIMENSAO.atratividade, fontWeight: 600 }}>A</span>
-                            <span style={{ color: '#888780', fontWeight: 400 }}> {scoreBarA}</span>
-                            <span style={{ color: '#5F5E5A' }}> · </span>
-                            <span style={{ color: CORES_DIMENSAO.viabilidade, fontWeight: 600 }}>V</span>
-                            <span style={{ color: '#888780', fontWeight: 400 }}> {scoreBarV}</span>
-                            <span style={{ color: '#5F5E5A' }}> · </span>
-                            <span style={{ color: CORES_DIMENSAO.seguranca, fontWeight: 600 }}>S</span>
-                            <span style={{ color: '#888780', fontWeight: 400 }}> {scoreBarS}</span>
-                          </div>
-                        </div>
-                        <span
-                          style={{
-                            fontSize: 18,
-                            fontWeight: 700,
-                            color: corFaixa,
-                            flexShrink: 0,
-                          }}
-                        >
-                          {scoreTotalDisplay}
-                        </span>
-                      </div>
-                      <div
-                        style={{
-                          marginTop: 16,
-                          paddingTop: 14,
-                          borderTop: '1px solid #2C2C2A',
-                          display: 'flex',
-                          gap: 10,
-                        }}
-                      >
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            beginFlipClose()
-                          }}
-                          style={{
-                            borderWidth: 1,
-                            borderStyle: 'solid',
-                            borderColor: '#5F5E5A',
-                            color: '#B4B2A9',
-                            fontSize: 16,
-                            fontWeight: 500,
-                            borderRadius: 6,
-                            padding: '7px 14px',
-                            background: 'transparent',
-                            cursor: 'pointer',
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.borderColor = '#888780'
-                            e.currentTarget.style.color = '#F1EFE8'
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.borderColor = '#5F5E5A'
-                            e.currentTarget.style.color = '#B4B2A9'
-                          }}
-                        >
-                          Voltar
-                        </button>
-                      </div>
-                      {perfilPesosInfoHover
-                        ? createPortal(
-                            <div
-                              ref={perfilTooltipFloatingRef}
-                              role="presentation"
-                              onMouseEnter={openPerfilPesosInfo}
-                              onMouseLeave={scheduleClosePerfilPesosInfo}
-                              style={{
-                                position: 'fixed',
-                                top: perfilTooltipPos?.top ?? 0,
-                                left: perfilTooltipPos?.left ?? 0,
-                                zIndex: 10050,
-                                width: 240,
-                                display: 'flex',
-                                flexDirection: 'column',
-                                alignItems: 'stretch',
-                                pointerEvents: perfilTooltipPos != null ? 'auto' : 'none',
-                                opacity: perfilTooltipPos != null ? 1 : 0,
-                              }}
-                            >
-                              {perfilInfoTooltipBelow ? (
-                                <>
-                                  <PerfilTooltipArrow pointsDown={false} />
-                                  <div style={{ marginTop: -1 }}>
-                                    <PerfilPesosTooltipPanel perfilAtivo={perfilForDrill} />
-                                  </div>
-                                </>
-                              ) : (
-                                <>
-                                  <PerfilPesosTooltipPanel perfilAtivo={perfilForDrill} />
-                                  <div style={{ marginTop: -1 }}>
-                                    <PerfilTooltipArrow pointsDown />
-                                  </div>
-                                </>
-                              )}
-                            </div>,
-                            document.body,
-                          )
-                        : null}
-                    </div>
-                  )}
+                    )}
                   </div>
                 </div>
               )
             })}
+            {resultados.length > 0 || paginaAtual > 1 ? (
+              <div
+                style={{
+                  gridColumn: '1 / -1',
+                  display: 'flex',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '24px 0',
+                  fontSize: 14,
+                  color: '#B4B2A9',
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    void onIrParaPagina(paginaAtual - 1)
+                  }}
+                  disabled={paginaAtual === 1 || carregandoPagina}
+                  style={botaoPaginacaoStyle(paginaAtual === 1 || carregandoPagina)}
+                >
+                  ← Anterior
+                </button>
+                {totalOportunidades === null ? null : (
+                  <span>
+                    Página <strong>{paginaAtual}</strong> de{' '}
+                    {totalPaginas.toLocaleString('pt-BR')}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    void onIrParaPagina(paginaAtual + 1)
+                  }}
+                  disabled={desabilitaProxima || carregandoPagina}
+                  style={botaoPaginacaoStyle(desabilitaProxima || carregandoPagina)}
+                >
+                  Próxima →
+                </button>
+              </div>
+            ) : null}
           </div>
         )}
       </div>

@@ -437,6 +437,38 @@ export function OportunidadeDecomposicaoRelatorioPanel({
           </div>
         )
       })}
+
+      {oportunidade.penalidades && oportunidade.penalidades.length > 0 ? (
+        <div
+          style={{
+            marginTop: 20,
+            borderRadius: 6,
+            border: '1px solid rgba(248, 113, 113, 0.4)',
+            background: 'rgba(248, 113, 113, 0.07)',
+            padding: 10,
+            boxSizing: 'border-box',
+          }}
+        >
+          <div
+            style={{
+              fontSize: FS.sm,
+              fontWeight: 700,
+              color: '#F87171',
+              marginBottom: 6,
+            }}
+          >
+            Penalidades aplicadas (motor S31)
+          </div>
+          {oportunidade.penalidades.map((p, i) => (
+            <div
+              key={`${i}-${p.slice(0, 20)}`}
+              style={{ fontSize: FS.md, color: '#D3D1C7', lineHeight: 1.45, marginTop: i > 0 ? 4 : 0 }}
+            >
+              {p}
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   )
 }

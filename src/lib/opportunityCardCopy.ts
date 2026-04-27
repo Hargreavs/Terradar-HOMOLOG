@@ -1,11 +1,15 @@
 import type { Processo } from '../types'
+import { labelFonte, mostrarFonte, trocarTerraeEmCopy } from './radar/fontes'
 import type { OpportunityResult, PerfilRisco } from './opportunityScore'
 import { PESOS_PERFIL } from './opportunityScore'
 
 /** Variável de uma dimensão da pontuação de oportunidade (valor 0–100 + cópia legível). */
 export interface VariavelPontuacao {
   nome: string
+  /** Valor 0-100 exibido (RPC: preferir alinhado a `valor_bruto`). */
   valor: number
+  /** Quando a RPC manda, barra/qualificador usam isto. */
+  valorBruto?: number
   texto: string
   fonte: string
 }
@@ -87,13 +91,17 @@ export function gerarDescricaoDimensao(
   if (variaveis.length === 0) return ''
   const { gargalo, destaque } = minMaxVariaveis(variaveis)
 
+  const parenFonte = (raw: string) => {
+    const m = mostrarFonte(raw)
+    return m ? ` (${m})` : ''
+  }
   let out: string
   if (scoreDimensao < 40) {
-    out = `${gargalo.texto} (${gargalo.fonte})`
+    out = `${trocarTerraeEmCopy(gargalo.texto)}${parenFonte(gargalo.fonte)}`
   } else if (scoreDimensao >= 70) {
-    out = `${destaque.texto} (${destaque.fonte})`
+    out = `${trocarTerraeEmCopy(destaque.texto)}${parenFonte(destaque.fonte)}`
   } else {
-    out = `${destaque.texto}, porém ${gargalo.nome} limitado (${gargalo.fonte})`
+    out = `${trocarTerraeEmCopy(destaque.texto)}, porém ${gargalo.nome} limitado${parenFonte(gargalo.fonte)}`
   }
   return stripPontoFinal(out)
 }

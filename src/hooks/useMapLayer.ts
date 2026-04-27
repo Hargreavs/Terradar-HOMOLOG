@@ -5,6 +5,7 @@ export type TipoCamada =
   | 'uc_pi'
   | 'uc_us'
   | 'quilombola'
+  | 'assentamento'
   | 'aquifero'
   | 'bioma'
   | 'ferrovia'

@@ -569,3 +569,41 @@ input[type='number']::-webkit-outer-spin-button {
 input[type='number'] {
   -moz-appearance: textfield;
 }
+
+@layer utilities {
+  /* Barra de rolagem fina: pouco visivel em repouso, aparece no hover ou com foco interno. */
+  .scrollbar-thin-auto {
+    scrollbar-width: thin !important;
+    scrollbar-color: transparent transparent !important;
+    transition: scrollbar-color 0.2s ease;
+  }
+
+  .scrollbar-thin-auto:hover,
+  .scrollbar-thin-auto:focus-within {
+    scrollbar-color: rgb(63 63 70 / 0.6) transparent !important;
+  }
+
+  .scrollbar-thin-auto::-webkit-scrollbar {
+    width: 8px !important;
+    height: 8px !important;
+  }
+
+  .scrollbar-thin-auto::-webkit-scrollbar-track {
+    background: transparent !important;
+  }
+
+  .scrollbar-thin-auto::-webkit-scrollbar-thumb {
+    background: transparent !important;
+    border-radius: 4px;
+    transition: background 0.2s ease;
+  }
+
+  .scrollbar-thin-auto:hover::-webkit-scrollbar-thumb,
+  .scrollbar-thin-auto:focus-within::-webkit-scrollbar-thumb {
+    background: rgb(63 63 70 / 0.6) !important;
+  }
+
+  .scrollbar-thin-auto::-webkit-scrollbar-thumb:hover {
+    background: rgb(82 82 91 / 0.8) !important;
+  }
+}

@@ -19,7 +19,13 @@ import {
 export type { CamadaGeoId } from '../lib/mapCamadasGeo'
 
 export type PendingNavigation =
-  | { type: 'processo'; payload: string; timestamp: number }
+  | {
+      type: 'processo'
+      payload: string
+      timestamp: number
+      /** Número ANM: carrega o processo com `buscarProcessoPorNumero` se ainda nao estiver no store (Radar, Ver no mapa). */
+      numeroAnm?: string
+    }
   | { type: 'estado'; payload: string; timestamp: number }
   | { type: 'regime'; payload: Regime; timestamp: number }
   | { type: 'titular'; payload: string; timestamp: number }
@@ -120,10 +126,15 @@ function loadProcessos(): Processo[] {
 
 const NUMERO_RX = /\d{3}\.\d{3}\/\d{4}/
 
+/** De onde veio a seleção atual: clique no polígono (foco esbate outros) vs busca/Intel (polígono sólido). */
+export type ProcessoSelecaoOrigem = 'map' | 'busca'
+
 export interface MapStore {
   processos: Processo[]
   filtros: FiltrosState
   processoSelecionado: Processo | null
+  /** Só o clique no mapa aplica o modo foco (opacidade dos outros processos). Busca/Intel: null ou `busca`. */
+  selecaoOrigemProcesso: ProcessoSelecaoOrigem | null
   /** Pedido de câmara; `processoId` permite fitBounds mesmo se outro efeito limpar a seleção. */
   flyTo: {
     lat: number
@@ -152,7 +163,10 @@ export interface MapStore {
     value: FiltrosState[K],
   ) => void
   toggleCamada: (regime: Regime) => void
-  selecionarProcesso: (processo: Processo | null) => void
+  selecionarProcesso: (
+    processo: Processo | null,
+    origem?: ProcessoSelecaoOrigem,
+  ) => void
   /** Merge shallow no processo selecionado (ex.: enriquecer RS após fetch). Ignora se `patch.id` ≠ atual. */
   mergeProcessoSelecionado: (patch: Partial<Processo>) => void
   /** Adiciona processo vindo da API (evita duplicar por `numero`). */
@@ -264,6 +278,7 @@ export const useMapStore = create<MapStore>()(
       processos: loadProcessos(),
       filtros: defaultFiltros(),
       processoSelecionado: null,
+      selecaoOrigemProcesso: null,
       flyTo: null,
       hoveredProcessoId: null,
       relatorioDrawerAberto: false,
@@ -306,10 +321,16 @@ export const useMapStore = create<MapStore>()(
           },
         })),
 
-      selecionarProcesso: (processo) =>
+      selecionarProcesso: (processo, origem) => {
+        if (processo == null) {
+          set({ processoSelecionado: null, selecaoOrigemProcesso: null })
+          return
+        }
         set({
           processoSelecionado: processo,
-        }),
+          selecaoOrigemProcesso: origem ?? 'busca',
+        })
+      },
 
       mergeProcessoSelecionado: (patch) =>
         set((state) => {
