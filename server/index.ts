@@ -6,6 +6,7 @@ import express from 'express'
 import mapRouter from './routes/map'
 import processosViewportRouter from './routes/processos-viewport'
 import radarRouter from './routes/radar'
+import { scoreBreakdownRouter } from './routes/scoreBreakdown'
 import { POST } from '../app/api/generate-report/route'
 import { supabase } from './supabase'
 import { pool } from './pool'
@@ -33,6 +34,7 @@ app.use(express.json({ limit: '50mb' }))
 app.use(mapRouter)
 app.use(processosViewportRouter)
 app.use(radarRouter)
+app.use(scoreBreakdownRouter)
 
 function hasManualRiskScore(
   scores: Record<string, unknown> | null,
