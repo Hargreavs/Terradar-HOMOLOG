@@ -5,6 +5,138 @@
 import './env'
 import postgres, { type JSONValue } from 'postgres'
 import type { ScoreResult } from './scoreEngine'
+import type { DimensaoOutput, SubfatorOutput } from './scoringS31BreakdownTypes'
+
+export type { DimensaoOutput, SubfatorOutput } from './scoringS31BreakdownTypes'
+
+function fmtKm(n: number): string {
+  return n.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+}
+
+function classifyLabelRisk(bruto0_100: number): string {
+  if (bruto0_100 < 40) return 'Risco baixo'
+  if (bruto0_100 < 70) return 'Risco médio'
+  return 'Risco alto'
+}
+
+function classifyLabelOpp(bruto0_100: number): string {
+  if (bruto0_100 < 25) return 'Oportunidade baixa'
+  if (bruto0_100 < 50) return 'Oportunidade média'
+  if (bruto0_100 < 75) return 'Oportunidade alta'
+  return 'Oportunidade muito alta'
+}
+
+function biomaCoef(b: string | null | undefined): number {
+  if (!b) return 1
+  const k = b.trim()
+  const o: Record<string, number> = {
+    Amazonia: 1.3,
+    'Amazônia': 1.3,
+    'MATA ATLANTICA': 1.2,
+    'MATA ATLÂNTICA': 1.2,
+    Pantanal: 1.25,
+    Cerrado: 1.1,
+    Caatinga: 1,
+    Pampa: 1,
+  }
+  return o[k] ?? 1
+}
+
+function warnCoerenciaDimensao(label: string, d: DimensaoOutput) {
+
+  const ponderados = d.subfatores.filter((r) => r.peso_pct != null)
+
+  const residuais = d.subfatores.filter((r) => r.peso_pct == null)
+
+  const somaPond = ponderados.reduce((s, r) => s + r.valor, 0)
+
+  const somaResidual = residuais.reduce((s, r) => s + r.valor, 0)
+
+  if (Math.abs(somaPond + somaResidual - d.valor) > 0.501)
+
+    console.warn(
+
+      '[scoringMotorS31] Coerência ' +
+
+        label +
+
+        ': ponderados=' +
+
+        somaPond.toFixed(3) +
+
+        ' + ajuste=' +
+
+        somaResidual.toFixed(3) +
+
+        ' vs dimensão.valor=' +
+
+        d.valor,
+
+    )
+
+}
+
+
+
+const fmtBr1 = (n: number) =>
+
+  new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 1 }).format(n)
+
+
+
+function textoRegulPendencias(n: number | null): string {
+
+  const c =
+
+    n != null && Number.isFinite(Number(n)) ? Math.max(0, Math.floor(Number(n))) : null
+
+  if (c == null || c <= 0) return 'Sem pendências administrativas em aberto no retrato atual do cadastro.'
+
+  if (c === 1)
+
+    return 'Há uma pendência administrativa em aberto segundo o retrato atual do cadastro público.'
+
+  return `Há ${c} pendências administrativas em aberto segundo o retrato atual do cadastro público.`
+
+}
+
+
+
+function textoRegulCaducidade(dCad: number | null): string {
+
+  if (dCad == null)
+
+    return 'Prazos de validade incompletos no cadastro ou sem data objetiva aqui — situação examinada com o regime declarado.'
+
+  if (dCad < 0) return 'Documentação obrigatória aparece já vencida na linha temporal do cadastro.'
+
+  return `Documentação obrigatória com cerca de ${Math.round(dCad)} dias até a data‑limite tratada pelo cadastro.`
+
+}
+
+
+
+function textoRegulUltimaMov(dias: number | null): string {
+
+  if (dias == null) return 'Data do último evento público não consolidada aqui.'
+
+  return `Última movimentação pública há cerca de ${Math.round(dias)} dias segundo o último evento disponível.`
+
+}
+
+
+
+function textoRegulCapag(notaRaw: string | null | undefined): string {
+
+  if (notaRaw != null && String(notaRaw).trim().length > 0)
+
+    return `Situação fiscal municipal segundo nota declarada (${String(notaRaw).trim()}) nos critérios oficiais de capacidade de pagamento do ente.`
+
+  return 'Nota técnico‑fiscal do ente local não declarada aqui; cenário tratado como neutro.'
+
+}
+
+
 
 const dbUrl = process.env.DATABASE_URL ?? process.env.VITE_DATABASE_URL
 let _sql: ReturnType<typeof postgres> | null = null
@@ -197,11 +329,53 @@ const mine = (ls: LayerRow[], p: (l: LayerRow) => boolean) => {
 const ovl = (ls: LayerRow[], p: (l: LayerRow) => boolean, x: number) =>
   ls.some((l) => p(l) && (l.sobreposicao_pct ?? 0) >= x)
 
-export function dimGeologico(p: ProcessoMotorRow, cfg: Record<string, unknown> | null) {
-  return Math.min(100, Math.round(0.5 * pickSubScore(p.substancia, cfg) + 25))
+export function dimGeologico(
+  p: ProcessoMotorRow,
+  cfg: Record<string, unknown> | null,
+  options?: { returnSubfatores?: boolean },
+): number | DimensaoOutput {
+  const scoreSubst = pickSubScore(p.substancia, cfg)
+  const scoreQual = 50
+  const valor = Math.min(100, Math.round(0.5 * scoreSubst + scoreQual * 0.5))
+  if (!options?.returnSubfatores) return valor
+  const sf: SubfatorOutput[] = [
+    {
+      nome: 'Substância mineral',
+      fonte: 'ANM/config_scores (2_RS_GEOLOGICO)',
+      label: classifyLabelRisk(scoreSubst),
+      texto:
+        p.substancia != null && String(p.substancia).trim().length > 0
+          ? `Substância declarada: "${String(p.substancia)}". Índice de relevância minerária ${fmtKm(scoreSubst)}.`
+          : 'Substância não informada; cadastro tratado aqui como neutro.',
+      valor: scoreSubst * 0.5,
+      peso_pct: 0.5,
+      valor_bruto: scoreSubst,
+    },
+    {
+      nome: 'Qualidade da informação cadastral',
+      fonte: 'Baseline cadastro S31 (50)',
+      label: classifyLabelRisk(scoreQual),
+      texto:
+        scoreQual >= 40
+          ? `Qualidade cadastral documental (${fmtKm(scoreQual)}) segundo o referencial uniforme do motor.`
+          : 'Qualidade documental granular indisponível; referência intermediária uniforme quando o detalhe não veio no extrato.',
+      valor: scoreQual * 0.5,
+      peso_pct: 0.5,
+      valor_bruto: scoreQual,
+    },
+  ]
+  const out: DimensaoOutput = { valor, subfatores: sf }
+  warnCoerenciaDimensao('Geológico', out)
+  return out
 }
 
-export async function dimAmbiental(p: ProcessoMotorRow, ls: LayerRow[]) {
+export async function dimAmbiental(
+  p: ProcessoMotorRow,
+  ls: LayerRow[],
+  options?: { returnSubfatores?: boolean },
+): Promise<number | DimensaoOutput> {
+  const want = !!options?.returnSubfatores
+  const subs: SubfatorOutput[] = []
   const s = getSql()
   const t1 = ls.find(ti)
   const q1 = ls.find(qx)
@@ -209,22 +383,147 @@ export async function dimAmbiental(p: ProcessoMotorRow, ls: LayerRow[]) {
   const tiS = p.amb_ti_sobrepoe === true || ovl(ls, ti, 100)
   const qS = p.amb_quilombola_sobrepoe === true || ovl(ls, qx, 100)
   const uS = p.amb_uc_pi_sobrepoe === true || ucp.some((u) => (u.sobreposicao_pct ?? 0) >= 100)
-  if (tiS || qS || uS) return biomaMult(100, p.bioma_territorial)
+
+  const fonteMix = 'ICMBio/FUNAI/INCRA/ANA + territorial_layers + SQL interno'
+  const pushBio = (preBio: number, valorFinal: number) => {
+    if (!want) return
+    const coef = biomaCoef(p.bioma_territorial)
+    subs.push({
+            nome: 'Multiplicador de bioma',
+
+      fonte: 'IBGE/bioma_territorial',
+
+      label: '',
+
+      texto:
+
+        p.bioma_territorial != null && String(p.bioma_territorial).trim().length > 0
+
+          ? `${String(p.bioma_territorial).trim()}: multiplicador ${fmtBr1(coef)}× sobre os pontos ambientais brutos (antes do teto aplicado).`
+
+          : `Bioma não informado ao cadastro; multiplicador 1,0× sobre os pontos ambientais brutos.`,
+
+      valor: valorFinal - preBio,
+
+      peso_pct: null,
+
+      valor_bruto: coef,
+
+    })
+  }
+
+  if (tiS || qS || uS) {
+    const preBio = 100
+    const valorFinal = biomaMult(100, p.bioma_territorial)
+    if (!want) return valorFinal
+    const partes: string[] = []
+    if (tiS) partes.push('sobreposição com Terra Indígena homologada ou camada equivalente')
+    if (qS) partes.push('sobreposição com comunidade quilombola ou camada equivalente')
+    if (uS) partes.push('sobreposição com UC de Proteção Integral ou camada equivalente')
+    subs.push({
+      nome: 'Sobreposição ambiental (teto 100 antes do bioma)',
+      fonte: fonteMix,
+      label: classifyLabelRisk(100),
+      texto: partes.length > 0 ? partes.join('; ') + '.' : 'Vetor de sobreposição calculado.',
+      valor: preBio,
+      peso_pct: 1,
+      valor_bruto: 100,
+    })
+    pushBio(preBio, valorFinal)
+    const out: DimensaoOutput = { valor: valorFinal, subfatores: subs }
+    warnCoerenciaDimensao('Ambiental', out)
+    return out
+  }
+
   let pt = 0
+
+  const pushDelta = (row: SubfatorOutput) => {
+    if (row.valor === 0) return
+    pt += row.valor
+    if (want) subs.push(row)
+  }
+
   if (t1 && !tiS) {
-    if (t1.distancia_km <= 5) pt += 50
-    else if (t1.distancia_km <= 10) pt += 30
-    else if (t1.distancia_km <= 20) pt += 15
+    let delta = 0
+    let bruto = 0
+    let txt = ''
+    if (t1.distancia_km <= 5) {
+      delta = 50
+      bruto = 50
+      txt = `${t1.nome ?? 'Terra Indígena'} a ${fmtKm(t1.distancia_km)} km (≤ 5 km).`
+    } else if (t1.distancia_km <= 10) {
+      delta = 30
+      bruto = 30
+      txt = `${t1.nome ?? 'Terra Indígena'} a ${fmtKm(t1.distancia_km)} km (≤ 10 km).`
+    } else if (t1.distancia_km <= 20) {
+      delta = 15
+      bruto = 15
+      txt = `${t1.nome ?? 'Terra Indígena'} a ${fmtKm(t1.distancia_km)} km (≤ 20 km).`
+    }
+    pushDelta({
+      nome: 'Proximidade a Terra Indígena',
+      fonte: 'FUNAI/territorial_layers',
+      label: classifyLabelRisk(bruto),
+      texto:
+        delta > 0
+          ? txt
+          : `Sem proximidade em faixa de pontuação; mais próximo: ${fmtKm(t1.distancia_km)} km.`,
+      valor: delta,
+      peso_pct: 1,
+      valor_bruto: bruto,
+    })
   }
+
   const umin = ucp.length ? Math.min(...ucp.map((u) => u.distancia_km)) : Number.POSITIVE_INFINITY
+  const ucNear = ucp.length ? ucp.reduce((a, b) => (a.distancia_km <= b.distancia_km ? a : b)) : null
   if (Number.isFinite(umin) && !uS) {
-    if (umin <= 5) pt += 40
-    else if (umin <= 10) pt += 20
+    let delta = 0
+    let bruto = 0
+    let txt = ''
+    if (umin <= 5) {
+      delta = 40
+      bruto = 40
+      txt = `${ucNear?.nome ?? 'UC PI'} a ${fmtKm(umin)} km (≤ 5 km).`
+    } else if (umin <= 10) {
+      delta = 20
+      bruto = 20
+      txt = `${ucNear?.nome ?? 'UC PI'} a ${fmtKm(umin)} km (≤ 10 km).`
+    } else txt = `Sem UC de Proteção Integral próxima em faixa pontuada (${fmtKm(umin)} km).`
+    pushDelta({
+      nome: 'UC Proteção Integral próxima',
+      fonte: 'ICMBio/territorial_layers',
+      label: classifyLabelRisk(bruto),
+      texto: delta > 0 ? txt : `Sem pontos: distância ${fmtKm(umin)} km.`,
+      valor: delta,
+      peso_pct: 1,
+      valor_bruto: bruto,
+    })
   }
+
   if (q1 && !qS) {
-    if (q1.distancia_km <= 5) pt += 45
-    else if (q1.distancia_km <= 10) pt += 25
+    let delta = 0
+    let bruto = 0
+    let txt = ''
+    if (q1.distancia_km <= 5) {
+      delta = 45
+      bruto = 45
+      txt = `${q1.nome ?? 'Território quilombola'} a ${fmtKm(q1.distancia_km)} km (≤ 5 km).`
+    } else if (q1.distancia_km <= 10) {
+      delta = 25
+      bruto = 25
+      txt = `${q1.nome ?? 'Território quilombola'} a ${fmtKm(q1.distancia_km)} km (≤ 10 km).`
+    }
+    pushDelta({
+      nome: 'Proximidade a território quilombola',
+      fonte: 'INCRA/territorial_layers',
+      label: classifyLabelRisk(bruto),
+      texto: delta > 0 ? txt : `Sem quilombola em faixa pontuada (${fmtKm(q1.distancia_km)} km).`,
+      valor: delta,
+      peso_pct: 1,
+      valor_bruto: bruto,
+    })
   }
+
   // Usa coluna geog precomputada (4326) + GIST em geo_sitios_arqueologicos — evita ST_Transform por linha
   if (p.geog != null) {
     const d0 = (await s`
@@ -235,31 +534,149 @@ export async function dimAmbiental(p: ProcessoMotorRow, ls: LayerRow[]) {
         AND ST_DWithin(p.geog, s.geog, 5000)
     `) as { d: string | null }[]
     const dk = d0[0]?.d != null ? Number(d0[0].d) : null
+    let dkPts = 0
     if (dk != null && Number.isFinite(dk)) {
-      if (dk <= 1) pt += 30
-      else if (dk <= 5) pt += 15
+      if (dk <= 1) dkPts = 30
+      else if (dk <= 5) dkPts = 15
     }
+    if (dkPts > 0 && dk != null)
+      pushDelta({
+        nome: 'Sítios arqueológicos próximos',
+        fonte: 'IPHAN/geo_sitios_arqueologicos',
+        label: classifyLabelRisk(dkPts),
+        texto: `Sítio arqueológico a ${fmtKm(dk)} km (≤ ${dkPts === 30 ? '1' : '5'} km).`,
+        valor: dkPts,
+        peso_pct: 1,
+        valor_bruto: dkPts,
+      })
   }
+
   const ap = p.app_overlap_pct
   if (ap != null) {
-    if (ap > 10) pt += 25
-    else if (ap >= 1) pt += 15
-    else if (ap > 0) pt += 8
-  } else if (p.amb_app_sobrepoe) pt += 8
+    let delta = 0
+    if (ap > 10) delta = 25
+    else if (ap >= 1) delta = 15
+    else if (ap > 0) delta = 8
+    pushDelta({
+      nome: 'APP hídrica',
+      fonte: 'ANA/geo_processos/overlap_pct',
+      label: classifyLabelRisk(delta),
+      texto:
+        delta > 0
+          ? `Sobreposição com APP ${fmtKm(ap)}%`
+          : 'Sem sobreposição APP registrada sobre limiares de pontuação.',
+      valor: delta,
+      peso_pct: 1,
+      valor_bruto: delta,
+    })
+  } else if (p.amb_app_sobrepoe)
+    pushDelta({
+      nome: 'APP hídrica',
+      fonte: 'flags processo/motor',
+      label: classifyLabelRisk(8),
+      texto: 'Flag de sobreposição com APP.',
+      valor: 8,
+      peso_pct: 1,
+      valor_bruto: 8,
+    })
+
   const usL = ls.filter((l) => uucs(l))
-  if (usL.some((u) => (u.sobreposicao_pct ?? 0) > 0)) pt += 20
+  if (usL.some((u) => (u.sobreposicao_pct ?? 0) > 0))
+    pushDelta({
+      nome: 'UC Uso Sustentável próxima (sobreposição)',
+      fonte: 'ICMBio/territorial_layers',
+      label: classifyLabelRisk(20),
+      texto: 'Sobreposição com UC Uso Sustentável / APA etc.',
+      valor: 20,
+      peso_pct: 1,
+      valor_bruto: 20,
+    })
   else {
     const x = mine(ls, (l) => uucs(l) && !ucpi(l))
-    if (Number.isFinite(x) && x <= 5) pt += 10
+    if (Number.isFinite(x) && x <= 5)
+      pushDelta({
+        nome: 'UC Uso Sustentável próxima',
+        fonte: 'ICMBio/territorial_layers',
+        label: classifyLabelRisk(10),
+        texto: `Infraestrutura UC/US a ${fmtKm(x)} km (≤ 5 km); sem sobrep. positiva.`,
+        valor: 10,
+        peso_pct: 1,
+        valor_bruto: 10,
+      })
   }
+
+  const beforeFloor = pt
   if (p.amb_uc_us_5km) pt = Math.max(pt, 10)
+  const flo = pt - beforeFloor
+  if (want && flo > 0)
+    subs.push({
+      nome: 'Piso de proximidade UC Uso Sustentável (5 km)',
+      fonte: 'flags territorial',
+      label: classifyLabelRisk(10),
+      texto: `Flag amb_uc_us_5km aplica piso mínimo (+${fmtKm(flo)}) sem alteração da soma além da própria regra.`,
+      valor: flo,
+      peso_pct: 1,
+      valor_bruto: 10,
+    })
+
   const a = ls.find(aqu)
   if (a) {
-    if ((a.sobreposicao_pct ?? 0) > 0) pt += 15
-    else if (a.distancia_km <= 1) pt += 10
-    else if (a.distancia_km <= 5) pt += 5
-  } else if (p.amb_aquifero_5km) pt += 5
-  return biomaMult(Math.min(100, pt), p.bioma_territorial)
+    let delta = 0
+    let bruto = 0
+    let txt = ''
+    if ((a.sobreposicao_pct ?? 0) > 0) {
+      delta = 15
+      bruto = 15
+      txt = 'Sobreposição com aquífero.'
+    } else if (a.distancia_km <= 1) {
+      delta = 10
+      bruto = 10
+      txt = `Aquífero a ${fmtKm(a.distancia_km)} km (≤ 1 km).`
+    } else if (a.distancia_km <= 5) {
+      delta = 5
+      bruto = 5
+      txt = `Aquífero a ${fmtKm(a.distancia_km)} km (≤ 5 km).`
+    }
+    pushDelta({
+      nome: 'Aquífero subjacente',
+      fonte: 'ANA/camadas hidrogeológicas',
+      label: classifyLabelRisk(bruto),
+      texto: delta > 0 ? txt : 'Sem aquífero em faixa pontuada.',
+      valor: delta,
+      peso_pct: 1,
+      valor_bruto: bruto,
+    })
+  } else if (p.amb_aquifero_5km)
+    pushDelta({
+      nome: 'Aquífero subjacente',
+      fonte: 'flags territorial',
+      label: classifyLabelRisk(5),
+      texto: 'Flag amb_aquifero_5km.',
+      valor: 5,
+      peso_pct: 1,
+      valor_bruto: 5,
+    })
+
+  const rawLin = pt
+  const preBio = Math.min(100, rawLin)
+  if (want && rawLin > 100)
+    subs.push({
+      nome: 'Teto da soma linear (100 pontos)',
+      fonte: 'Regra motor S31 ambiental',
+      label: '',
+      texto: `Soma linear ${fmtKm(rawLin)} limitada a 100 antes do bioma.`,
+      valor: preBio - rawLin,
+      peso_pct: 1,
+      valor_bruto: preBio - rawLin,
+    })
+
+  const valorFinal = biomaMult(preBio, p.bioma_territorial)
+  if (!want) return valorFinal
+
+  pushBio(preBio, valorFinal)
+  const out: DimensaoOutput = { valor: valorFinal, subfatores: subs }
+  warnCoerenciaDimensao('Ambiental', out)
+  return out
 }
 
 function cmu(p: ProcessoMotorRow, ls: LayerRow[]) {
@@ -294,12 +711,149 @@ function pib0(x: number | null) {
   return 75
 }
 
-export function dimSocial(p: ProcessoMotorRow, ls: LayerRow[], cpt: number) {
+export function dimSocial(
+  p: ProcessoMotorRow,
+  ls: LayerRow[],
+  cpt: number,
+  options?: { returnSubfatores?: boolean },
+): number | DimensaoOutput {
   const c1 = cmu(p, ls)
   const c2 = Math.round(0.5 * idh0(p.idh_municipio) + 0.5 * pib0(p.pib_pc_municipio))
   const c3 = Math.min(100, Math.max(0, 30 + 70 * (cpt - 1)))
   const c4 = dns(p.densidade_demografica)
-  return Math.min(100, Math.round(c1 * 0.45 + c2 * 0.2 + c3 * 0.2 + c4 * 0.15))
+  const valor = Math.min(100, Math.round(c1 * 0.45 + c2 * 0.2 + c3 * 0.2 + c4 * 0.15))
+  if (!options?.returnSubfatores) return valor
+  const v1 = c1 * 0.45
+  const v2 = c2 * 0.2
+  const v3 = c3 * 0.2
+  const v4 = c4 * 0.15
+  const sumW = v1 + v2 + v3 + v4
+  const adj = valor - sumW
+  const ufS = (p.uf ?? '').trim()
+
+  const den = p.densidade_demografica
+
+  const textoDen =
+
+    den != null && Number.isFinite(den)
+
+      ? `Adensamento humano na área urbana habitual (~${fmtBr1(den)} hab/km²).`
+
+      : 'Densidade municipal não declarada ao motor; cenário tratado aqui como adensamento baixo‑moderado.'
+
+
+
+  const sf: SubfatorOutput[] = [
+
+    {
+
+      nome: 'Comunidades vulneráveis',
+
+      fonte: 'FUNAI/INCRA/ICMBio — malhas territoriais',
+
+      label: classifyLabelRisk(c1),
+
+      texto:
+
+        `Proximidade ou sobreposição com terras indígenas, quilombolas e demais territórios em situação de vulnerabilidade institucional, segundo distâncias calculadas sobre a malha vigente.`,
+
+      valor: v1,
+
+      peso_pct: 0.45,
+
+      valor_bruto: c1,
+
+    },
+
+    {
+
+      nome: 'Socioeconômico do município',
+
+      fonte: 'IBGE — IDH municipal e PIB/hab.',
+
+      label: classifyLabelRisk(c2),
+
+      texto:
+
+        `Condição socioeconômica sintetizada pelo IDH municipal e pela renda per capita oficialmente divulgada.`,
+
+      valor: v2,
+
+      peso_pct: 0.2,
+
+      valor_bruto: c2,
+
+    },
+
+    {
+
+      nome: 'Conflitos territoriais (CPT)',
+
+      fonte: 'CPT — registros estaduais',
+
+      label: classifyLabelRisk(c3),
+
+      texto:
+
+        ufS.length > 0
+
+          ? `Incidentes de conflitos no campo listados pelo CPT para o estado ${ufS.toUpperCase()}.`
+
+          : `Incidentes de conflitos no campo segundo cadastro CPT (UF não informada).`,
+
+      valor: v3,
+
+      peso_pct: 0.2,
+
+      valor_bruto: c3,
+
+    },
+
+    {
+
+      nome: 'Densidade demográfica',
+
+      fonte: 'IBGE — densidade municipal',
+
+      label: classifyLabelRisk(c4),
+
+      texto: textoDen,
+
+      valor: v4,
+
+      peso_pct: 0.15,
+
+      valor_bruto: c4,
+
+    },
+
+  ]
+
+  if (Math.abs(adj) > 1e-6) {
+
+    sf.push({
+
+      nome: 'Ajuste consolidador social',
+
+      fonte: 'arredondamento do índice da dimensão',
+
+      label: '',
+
+      texto: `Diferença de ${fmtBr1(adj)} para reconciliar o índice exibido com o arredondamento aplicado à combinação anterior (${fmtBr1(sumW)}).`,
+
+      valor: adj,
+
+      peso_pct: null,
+
+      valor_bruto: adj,
+
+    })
+
+  }
+
+  const out: DimensaoOutput = { valor, subfatores: sf }
+  warnCoerenciaDimensao('Social', out)
+  return out
 }
 
 function t0(d: number | null) { if (d == null) return 50; if (d > 365) return 80; if (d >= 180) return 50; if (d >= 30) return 20; return 5 }
@@ -313,18 +867,208 @@ function c0(d: number | null, r: string | null, f: string) {
 }
 function aut0(n: number, t: number) { return Math.min(100, n * 18 + Math.min(50, t / 5e4)) }
 
-export function dimRegul(p: ProcessoMotorRow, aut: { count: number; total: number }) {
+export function dimRegul(
+
+  p: ProcessoMotorRow,
+
+  aut: { count: number; total: number },
+
+  options?: { returnSubfatores?: boolean },
+
+): number | DimensaoOutput {
+
   const f = mapFase(p.fase ?? '')
-  const sp = p0(p.pendencias_abertas != null ? Number(p.pendencias_abertas) : 0)
-  const sc = c0(diasAteCaducidade(p.alvara_validade, p.regime), p.regime, f)
-  const st = t0(diasDesde(p.ultimo_evento_data))
+
+  const pendN = p.pendencias_abertas != null ? Number(p.pendencias_abertas) : null
+
+  const sp = p0(pendN != null ? pendN : 0)
+
+  const dCad = diasAteCaducidade(p.alvara_validade, p.regime)
+
+  const diasUlt = diasDesde(p.ultimo_evento_data)
+
+  const sc = c0(dCad, p.regime, f)
+
+  const st = t0(diasUlt)
+
   const sa = aut0(aut.count, aut.total)
+
   const sa2 = 5
+
   const cp = capagScore(p.capag_nota)
+
   let v = sp * 0.25 + sc * 0.2 + sa * 0.2 + st * 0.1 + sa2 * 0.1 + cp * 0.15
+
   if (sc >= 90 || sa >= 60) v = Math.max(v, 70)
-  return Math.min(100, Math.round(v * 10) / 10)
+
+  const valor = Math.min(100, Math.round(v * 10) / 10)
+
+  if (!options?.returnSubfatores) return valor
+
+  const p1 = sp * 0.25
+
+  const p2 = sc * 0.2
+
+  const p3 = sa * 0.2
+
+  const p4 = st * 0.1
+
+  const p5 = sa2 * 0.1
+
+  const p6 = cp * 0.15
+
+  const sumP = p1 + p2 + p3 + p4 + p5 + p6
+
+  const adj = valor - sumP
+
+  const sf: SubfatorOutput[] = [
+
+    {
+
+      nome: 'Pendências abertas',
+
+      fonte: 'cadastro público da ANM',
+
+      label: classifyLabelRisk(sp),
+
+      texto: textoRegulPendencias(pendN),
+
+      valor: p1,
+
+      peso_pct: 0.25,
+
+      valor_bruto: sp,
+
+    },
+
+    {
+
+      nome: 'Caducidade documental',
+
+      fonte: 'eventos públicos — licença/alvará',
+
+      label: classifyLabelRisk(sc),
+
+      texto: textoRegulCaducidade(dCad),
+
+      valor: p2,
+
+      peso_pct: 0.2,
+
+      valor_bruto: sc,
+
+    },
+
+    {
+
+      nome: 'Autuações e débitos',
+
+      fonte: 'ANM — autuações',
+
+      label: classifyLabelRisk(sa),
+
+      texto: `Autuações registradas (${aut.count}); volume econômico associado (${fmtKm(aut.total)}).`,
+
+      valor: p3,
+
+      peso_pct: 0.2,
+
+      valor_bruto: sa,
+
+    },
+
+    {
+
+      nome: 'Tempo do processo',
+
+      fonte: 'último movimento público',
+
+      label: classifyLabelRisk(st),
+
+      texto: textoRegulUltimaMov(diasUlt),
+
+      valor: p4,
+
+      peso_pct: 0.1,
+
+      valor_bruto: st,
+
+    },
+
+    {
+
+      nome: 'Alertas Adoo',
+
+      fonte: 'Adoo / receita estadual (integrações)',
+
+      label: '',
+
+      texto:
+
+        'Integração aos alertas externos ainda em curso nesta pilha; nenhum alerta consolidado retornado pela conexão vigente.',
+
+      valor: p5,
+
+      peso_pct: 0.1,
+
+      valor_bruto: sa2,
+
+    },
+
+    {
+
+      nome: 'CAPAG do município',
+
+      fonte: 'Tesouro Nacional — CAPAG',
+
+      label: classifyLabelRisk(cp),
+
+      texto: textoRegulCapag(p.capag_nota),
+
+      valor: p6,
+
+      peso_pct: 0.15,
+
+      valor_bruto: cp,
+
+    },
+
+  ]
+
+  if (Math.abs(adj) > 1e-8) {
+
+    sf.push({
+
+      nome: 'Ajuste consolidador regulatório',
+
+      fonte: 'arredondamento do índice da dimensão',
+
+      label: '',
+
+      texto: `Diferença de ${fmtBr1(adj)} entre a combinação numérica imediatamente anterior (${fmtBr1(
+
+        sumP,
+
+      )}) e o valor exibido (${fmtBr1(valor)}) após arredondar a uma casa decimal.`,
+
+      valor: adj,
+
+      peso_pct: null,
+
+      valor_bruto: adj,
+
+    })
+
+  }
+
+  const out: DimensaoOutput = { valor, subfatores: sf }
+
+  warnCoerenciaDimensao('Regulatório', out)
+
+  return out
+
 }
+
 
 function b7(x: number | null) { if (x == null) return 15; if (x >= 3) return 90; if (x >= 2) return 70; if (x >= 1) return 45; return 15 }
 function b3(ls: LayerRow[]) {
@@ -346,18 +1090,38 @@ function cf0(t: number) { if (t <= 0) return 20; if (t < 1e6) return 40; if (t <
 function ar0(a: number | null) { if (a == null) return 15; if (a > 2e3) return 90; if (a >= 500) return 70; if (a >= 100) return 50; if (a >= 50) return 30; return 15 }
 function bm0(b: string | null) { if (!b) return 50; const u = b.toUpperCase(); if (u.includes('AMAZ') || u.includes('PANTAN')) return 30; if (u.includes('MATA')) return 40; return 60 }
 
-function opAtr(p: ProcessoMotorRow, sub: SubData | null, cfg: Record<string, unknown> | null) {
+function opAtr(
+  p: ProcessoMotorRow,
+  sub: SubData | null,
+  cfg: Record<string, unknown> | null,
+  options?: { returnSubfatores?: boolean },
+): number | DimensaoOutput {
   const a1 = pickSubScore(p.substancia, cfg)
   const g = sub?.gap_pp
   let a2 = 40
-  if (g != null) { if (g > 15) a2 = 95; else if (g >= 10) a2 = 80; else if (g >= 5) a2 = 60; else if (g >= 1) a2 = 40; else a2 = 15 }
+  if (g != null) {
+    if (g > 15) a2 = 95
+    else if (g >= 10) a2 = 80
+    else if (g >= 5) a2 = 60
+    else if (g >= 1) a2 = 40
+    else a2 = 15
+  }
   const pr = sub?.preco_brl
   let a3 = 30
-  if (pr != null && pr > 0) { const lg = Math.log10(pr); if (lg > 5) a3 = 95; else if (lg >= 4) a3 = 80; else if (lg >= 3) a3 = 65; else if (lg >= 2) a3 = 45; else if (lg >= 1) a3 = 25; else a3 = 10 }
-  const M: Record<string, number> = { 'Alta (demanda)': 95, Alta: 90, 'Estavel': 50, 'Estável': 50, Queda: 15 }
+  if (pr != null && pr > 0) {
+    const lg = Math.log10(pr)
+    if (lg > 5) a3 = 95
+    else if (lg >= 4) a3 = 80
+    else if (lg >= 3) a3 = 65
+    else if (lg >= 2) a3 = 45
+    else if (lg >= 1) a3 = 25
+    else a3 = 10
+  }
+  const M: Record<string, number> = { 'Alta (demanda)': 95, Alta: 90, Estavel: 50, Estável: 50, Queda: 15 }
   const a4 = sub?.tendencia != null ? (M[sub.tendencia] ?? 50) : 50
   let a5 = 10
-  const vh = sub?.val_reserva_brl_ha, ah = p.area_ha
+  const vh = sub?.val_reserva_brl_ha,
+    ah = p.area_ha
   if (vh != null && ah != null && ah > 0) {
     const vt = vh * ah
     if (vt >= 1e9) a5 = 95
@@ -366,23 +1130,280 @@ function opAtr(p: ProcessoMotorRow, sub: SubData | null, cfg: Record<string, unk
     else if (vt >= 1e6) a5 = 35
   }
   let t = Math.round(a1 * 0.25 + a2 * 0.25 + a3 * 0.2 + a4 * 0.15 + a5 * 0.15)
-  if (sub?.mineral_critico_2025) t = Math.min(100, t + 10)
-  return t
+  const mc = !!sub?.mineral_critico_2025
+  if (mc) t = Math.min(100, t + 10)
+  if (!options?.returnSubfatores) return t
+  const w1 = a1 * 0.25
+  const w2 = a2 * 0.25
+  const w3 = a3 * 0.2
+  const w4 = a4 * 0.15
+  const w5 = a5 * 0.15
+  const baseR = Math.round(a1 * 0.25 + a2 * 0.25 + a3 * 0.2 + a4 * 0.15 + a5 * 0.15)
+  const sumW = w1 + w2 + w3 + w4 + w5
+  const adjBase = baseR - sumW
+  const bonus = mc ? Math.min(100, baseR + 10) - baseR : 0
+  const sf: SubfatorOutput[] = [
+    {
+      nome: 'Relevância da substância (A1)',
+      fonte: 'ANM/config_scores master_substâncias',
+      label: classifyLabelOpp(a1),
+      texto: `Substância ${p.substancia ?? '—'} mapeada com índice sintético ${fmtKm(a1)} no quadro atual.`,
+      valor: w1 + adjBase / 5,
+      peso_pct: 0.25,
+      valor_bruto: a1,
+    },
+    {
+      nome: 'Espaço de mercado (gap) (A2)',
+      fonte: 'master_substancias.gap_pp',
+      label: classifyLabelOpp(a2),
+      texto:
+        g != null
+          ? `Gap de mercado (${fmtKm(g)} p.p.) entre substância e benchmark interno.`
+          : 'Mercado não informado; cenário econômico marcado aqui como referência média.',
+      valor: w2 + adjBase / 5,
+      peso_pct: 0.25,
+      valor_bruto: a2,
+    },
+    {
+      nome: 'Preço de mercado (A3)',
+      fonte: 'séries mercado interno',
+      label: classifyLabelOpp(a3),
+      texto:
+        pr != null && pr > 0
+          ? `Preço médio monitorado (${fmtKm(pr)} BRL/t).`
+          : 'Preço externo não informado; posição econômica marcada aqui como fraca até nova evidência.',
+      valor: w3 + adjBase / 5,
+      peso_pct: 0.2,
+      valor_bruto: a3,
+    },
+    {
+      nome: 'Tendência de demanda (A4)',
+      fonte: 'curvas de mercado',
+      label: classifyLabelOpp(a4),
+      texto:
+        sub?.tendencia != null
+          ? `Tendência de mercado registrada: ${sub.tendencia}.`
+          : 'Tendência não informada; trajetória assumida estável até novo dado.',
+      valor: w4 + adjBase / 5,
+      peso_pct: 0.15,
+      valor_bruto: a4,
+    },
+    {
+      nome: 'Valor da reserva por hectare (A5)',
+      fonte: 'val_reserva × área',
+      label: classifyLabelOpp(a5),
+      texto:
+        vh != null && ah != null && ah > 0
+          ? `Valor reserva/ha × área (${fmtKm(vh)} × ${fmtKm(ah)} ha).`
+          : 'Sem valores de reserva econômica nem áreas declaradas; cenário econômico marcado aqui como muito restrito.',
+      valor: w5 + adjBase / 5,
+      peso_pct: 0.15,
+      valor_bruto: a5,
+    },
+  ]
+
+    sf.push({
+      nome: 'Bônus mineral crítico',
+      fonte: 'master_substancias.mineral_critico_2025',
+      label: '',
+      texto: mc ? 'Substância marcada como mineral crítico 2025: +10 pontos (fora da média ponderada).' : 'Substância sem flag de criticidade: sem bônus.',
+      valor: bonus,
+      peso_pct: null,
+      valor_bruto: mc ? 10 : 0,
+    })
+  const out: DimensaoOutput = { valor: t, subfatores: sf }
+  warnCoerenciaDimensao('Atratividade', out)
+  return out
 }
 
-function opVab(p: ProcessoMotorRow, ls: LayerRow[], cf: number, bnd: boolean) {
+function b3InfraText(ls: LayerRow[]): string {
+  const pred = (l: LayerRow) => /ferrov|porto|hidrovi/i.test(l.tipo) || l.tipo.toUpperCase().includes('FERRO')
+  const cand = ls.filter(pred)
+  if (!cand.length) return 'Nenhuma ferrovia, porto ou hidrovia identificada na malha listada; distância de referência neutra usada (20 em escala interna).'
+  const best = cand.reduce((a, b) => (a.distancia_km <= b.distancia_km ? a : b))
+  return `${best.tipo} a ${fmtKm(best.distancia_km)} km (menor distância).`
+}
+
+function opVab(
+  p: ProcessoMotorRow,
+  ls: LayerRow[],
+  cf: number,
+  bnd: boolean,
+  options?: { returnSubfatores?: boolean },
+): number | DimensaoOutput {
   const f = mapFase(p.fase ?? '')
-  const b1 = SCORE_FASE_OS[f] ?? 25, b2 = 50, b3m = b3(ls), b4 = p.ativo_derivado === false || f === 'encerrado' ? 5 : 90, b5 = cf0(cf)
+  const b1 = SCORE_FASE_OS[f] ?? 25,
+    b2 = 50,
+    b3m = b3(ls),
+    b4 = p.ativo_derivado === false || f === 'encerrado' ? 5 : 90,
+    b5 = cf0(cf)
   const b6m = fiscalB6(p)
-  const b7n = Math.min(100, b7(p.incentivo_b7) + (bnd ? 5 : 0))
-  return Math.round(
-    b1 * 0.2 + b2 * 0.15 + b3m * 0.15 + b4 * 0.15 + b5 * 0.1 + b6m * 0.1 + b7n * 0.05 + bm0(p.bioma_territorial) * 0.05 + ar0(p.area_ha) * 0.05
+  const b7Base = b7(p.incentivo_b7)
+  const b7n = Math.min(100, b7Base + (bnd ? 5 : 0))
+  const b8m = bm0(p.bioma_territorial)
+  const b9m = ar0(p.area_ha)
+  const valor = Math.round(
+    b1 * 0.2 + b2 * 0.15 + b3m * 0.15 + b4 * 0.15 + b5 * 0.1 + b6m * 0.1 + b7n * 0.05 + b8m * 0.05 + b9m * 0.05,
   )
+  if (!options?.returnSubfatores) return valor
+  const p1 = b1 * 0.2
+  const p2 = b2 * 0.15
+  const p3 = b3m * 0.15
+  const p4 = b4 * 0.15
+  const p5 = b5 * 0.1
+  const p6 = b6m * 0.1
+  const p7 = b7n * 0.05
+  const p8 = b8m * 0.05
+  const p9 = b9m * 0.05
+  const sumP = p1 + p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9
+  const adj = valor - sumP
+  const sf: SubfatorOutput[] = [
+    {
+      nome: 'Fase do processo (B1)',
+      fonte: 'ANM/fase',
+      label: classifyLabelOpp(b1),
+      texto: `Fase declarada ${p.fase ?? '—'}; posição no quadro de fases ${fmtKm(b1)}.`,
+      valor: p1 + adj / 9,
+      peso_pct: 0.2,
+      valor_bruto: b1,
+    },
+    {
+      nome: 'Profundidade do dado geológico (B2)',
+      fonte: 'parâmetros internos de profundidade',
+      label: classifyLabelOpp(b2),
+      texto: 'Profundidade geológica conforme modelagem interna; referência central em 50 na escala adotada.',
+      valor: p2 + adj / 9,
+      peso_pct: 0.15,
+      valor_bruto: b2,
+    },
+    {
+      nome: 'Infraestrutura logística (B3)',
+      fonte: 'IBGE/ports + malha logística',
+      label: classifyLabelOpp(b3m),
+      texto: `${b3InfraText(ls)}; posição infraestrutural ${fmtKm(b3m)} no mesmo quadro.`,
+      valor: p3 + adj / 9,
+      peso_pct: 0.15,
+      valor_bruto: b3m,
+    },
+    {
+      nome: 'Situação atual (B4)',
+      fonte: 'ativo/situação',
+      label: classifyLabelOpp(b4),
+      texto: p.ativo_derivado === false || f === 'encerrado' ? 'Processo inativo ou encerrado.' : 'Processo ativo.',
+      valor: p4 + adj / 9,
+      peso_pct: 0.15,
+      valor_bruto: b4,
+    },
+    {
+      nome: 'CFEM histórica produzida (B5)',
+      fonte: 'ANM/CFEM',
+      label: classifyLabelOpp(b5),
+      texto: `CFEM acumulada ${fmtKm(cf)} → faixa ${fmtKm(b5)}.`,
+      valor: p5 + adj / 9,
+      peso_pct: 0.1,
+      valor_bruto: b5,
+    },
+    {
+      nome: 'Autonomia fiscal do município (B6)',
+      fonte: 'RGF/receitas',
+      label: classifyLabelOpp(b6m),
+      texto: 'Indicadores de autonomia e dívida consolidada.',
+      valor: p6 + adj / 9,
+      peso_pct: 0.1,
+      valor_bruto: b6m,
+    },
+    {
+      nome: 'Incentivos regionais (B7)',
+      fonte: 'config incentivo_b7 + linhas BNDES',
+      label: classifyLabelOpp(b7n),
+      texto: `Incentivo estadual ${fmtKm(b7Base)}${bnd ? ' + bônus BNDES +5' : ''} → ${fmtKm(b7n)}.`,
+      valor: p7 + adj / 9,
+      peso_pct: 0.05,
+      valor_bruto: b7n,
+    },
+    {
+      nome: 'Bioma operacional (B8)',
+      fonte: 'IBGE/bioma',
+      label: classifyLabelOpp(b8m),
+      texto: `Bioma ${p.bioma_territorial ?? '—'} → ${fmtKm(b8m)}.`,
+      valor: p8 + adj / 9,
+      peso_pct: 0.05,
+      valor_bruto: b8m,
+    },
+    {
+      nome: 'Área do processo (B9)',
+      fonte: 'declarada ANM',
+      label: classifyLabelOpp(b9m),
+      texto: `Área ${p.area_ha != null ? fmtKm(p.area_ha) + ' ha' : 'não informada'}.`,
+      valor: p9 + adj / 9,
+      peso_pct: 0.05,
+      valor_bruto: b9m,
+    },
+  ]
+  const out: DimensaoOutput = { valor, subfatores: sf }
+  warnCoerenciaDimensao('Viabilidade', out)
+  return out
 }
 
-function opSeg(risk: number, p: ProcessoMotorRow, aut: { count: number }) {
-  const c1 = 100 - risk, c2 = p.gu_validade ? 75 : 50, c3 = aut.count ? 50 : 75, c4 = 50
-  return Math.round(c1 * 0.5 + c2 * 0.25 + c3 * 0.2 + c4 * 0.05)
+function opSeg(
+  risk: number,
+  p: ProcessoMotorRow,
+  aut: { count: number },
+  options?: { returnSubfatores?: boolean },
+): number | DimensaoOutput {
+  const c1 = 100 - risk,
+    c2 = p.gu_validade ? 75 : 50,
+    c3 = aut.count ? 50 : 75,
+    c4 = 50
+  const valor = Math.round(c1 * 0.5 + c2 * 0.25 + c3 * 0.2 + c4 * 0.05)
+  if (!options?.returnSubfatores) return valor
+  const w1 = c1 * 0.5
+  const w2 = c2 * 0.25
+  const w3 = c3 * 0.2
+  const w4 = c4 * 0.05
+  const sumW = w1 + w2 + w3 + w4
+  const adj = valor - sumW
+  const sf: SubfatorOutput[] = [
+    {
+      nome: 'Solidez geral (100 − Risk)',
+      fonte: 'consolidador risk_score',
+      label: classifyLabelOpp(c1),
+      texto: `Risco consolidado ${fmtKm(risk)} → complemento ${fmtKm(c1)}.`,
+      valor: w1 + adj / 4,
+      peso_pct: 0.5,
+      valor_bruto: c1,
+    },
+    {
+      nome: 'Estabilidade documental',
+      fonte: 'gu_validade',
+      label: classifyLabelOpp(c2),
+      texto: p.gu_validade ? 'GU dentro da validade (75).' : 'GU ausente/expirada (50).',
+      valor: w2 + adj / 4,
+      peso_pct: 0.25,
+      valor_bruto: c2,
+    },
+    {
+      nome: 'Histórico de cumprimento',
+      fonte: 'autuações/aut.count',
+      label: classifyLabelOpp(c3),
+      texto: aut.count ? 'Há autuações registradas (50).' : 'Sem autuações mapeadas (75).',
+      valor: w3 + adj / 4,
+      peso_pct: 0.2,
+      valor_bruto: c3,
+    },
+    {
+      nome: 'Bônus alertas Adoo',
+      fonte: 'Adoo/integration',
+      label: '',
+      texto: 'Integração pendente (placeholder 50).',
+      valor: w4 + adj / 4,
+      peso_pct: 0.05,
+      valor_bruto: c4,
+    },
+  ]
+  const out: DimensaoOutput = { valor, subfatores: sf }
+  warnCoerenciaDimensao('Segurança', out)
+  return out
 }
 
 function pen(v: number, p: ProcessoMotorRow, risk: number, a: number, s: number, g: number, rec: string[], first: boolean) {
@@ -516,12 +1537,13 @@ export async function loadBndes(sub: string | null) {
 
 export async function runS31MotorAndPersist(
   processoId: string,
-  opts: { persist?: boolean; massCaches?: S31MassCaches } = {},
+  opts: { persist?: boolean; massCaches?: S31MassCaches; returnSubfatores?: boolean } = {},
 ): Promise<ScoreResult> {
   const prevSess = sessionMassCaches
   const prevCfg = cfgCache
   sessionMassCaches = opts.massCaches ?? null
-  const persist = opts.persist === true
+  const wantSub = opts.returnSubfatores === true
+  const persist = opts.persist === true && !wantSub
   let p: ProcessoMotorRow | null
   let ls: LayerRow[], sub: SubData | null, cpt: number, cfg: Record<string, unknown>, aut: { count: number; total: number }
   let cfe: number, bnd: boolean
@@ -536,10 +1558,14 @@ export async function runS31MotorAndPersist(
     loadLayers(processoId), loadSub(p.substancia), loadCpt(p.uf), loadConfigScores(),
     loadAutu(p.numero), loadCfem(p.numero), loadBndes(p.substancia),
   ])
-  const dg = dimGeologico(p, cfg)
-  const da = await dimAmbiental(p, ls)
-  const ds = dimSocial(p, ls, cpt)
-  const dr = dimRegul(p, aut)
+  const dgR = dimGeologico(p, cfg, { returnSubfatores: wantSub })
+  const dg = typeof dgR === 'number' ? dgR : dgR.valor
+  const daR = await dimAmbiental(p, ls, { returnSubfatores: wantSub })
+  const da = typeof daR === 'number' ? daR : daR.valor
+  const dsR = dimSocial(p, ls, cpt, { returnSubfatores: wantSub })
+  const ds = typeof dsR === 'number' ? dsR : dsR.valor
+  const drR = dimRegul(p, aut, { returnSubfatores: wantSub })
+  const dr = typeof drR === 'number' ? drR : drR.valor
   let risk = dg * 0.25 + da * 0.3 + ds * 0.25 + dr * 0.2
 
   // PISOs ambientais/sociais (mais restritivos primeiro)
@@ -552,7 +1578,12 @@ export async function runS31MotorAndPersist(
   else if (dr >= 70) risk = Math.max(risk, 55)
 
   risk = Math.min(100, Math.round(risk))
-  const oa = opAtr(p, sub, cfg), ov = opVab(p, ls, cfe, bnd), os0 = opSeg(risk, p, aut)
+  const oaR = opAtr(p, sub, cfg, { returnSubfatores: wantSub })
+  const ovR = opVab(p, ls, cfe, bnd, { returnSubfatores: wantSub })
+  const osR = opSeg(risk, p, aut, { returnSubfatores: wantSub })
+  const oa = typeof oaR === 'number' ? oaR : oaR.valor
+  const ov = typeof ovR === 'number' ? ovR : ovR.valor
+  const os0 = typeof osR === 'number' ? osR : osR.valor
   const pr = 0.2 * oa + 0.3 * ov + 0.5 * os0, pm = 0.4 * oa + 0.3 * ov + 0.3 * os0, pa = 0.55 * oa + 0.25 * ov + 0.2 * os0
   const R: string[] = []
   const at = p.ativo_derivado !== false
@@ -588,6 +1619,22 @@ export async function runS31MotorAndPersist(
   return {
     risk_score: risk, risk_label: rI.l, risk_cor: rI.c,
     risk_breakdown: { geologico: dg, ambiental: da, social: ds, regulatorio: dr },
+    ...(wantSub
+      ? {
+          dimensoes_risco: {
+            geologico: dgR as DimensaoOutput,
+            ambiental: daR as DimensaoOutput,
+            social: dsR as DimensaoOutput,
+            regulatorio: drR as DimensaoOutput,
+          },
+          dimensoes_oportunidade: {
+            atratividade: oaR as DimensaoOutput,
+            viabilidade: ovR as DimensaoOutput,
+            seguranca: osR as DimensaoOutput,
+            penalidades: R,
+          },
+        }
+      : {}),
     os_conservador: ocI, os_moderado: omI, os_arrojado: oa2I,
     os_label_conservador: cL.l, os_label_moderado: mL.l, os_label_arrojado: aL.l,
     os_breakdown: { atratividade: oa, viabilidade: ov, seguranca: os0 },
@@ -602,4 +1649,8 @@ export async function runS31MotorAndPersist(
     sessionMassCaches = prevSess
     cfgCache = prevCfg
   }
+}
+
+export async function computeProcessoComBreakdown(processoId: string): Promise<ScoreResult> {
+  return runS31MotorAndPersist(processoId, { returnSubfatores: true, persist: false })
 }
