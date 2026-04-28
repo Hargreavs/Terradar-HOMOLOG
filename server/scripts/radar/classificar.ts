@@ -24,7 +24,7 @@ const sql = postgres(dbUrl, {
 const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
 const rootDir = fileURLToPath(new URL('../../../', import.meta.url))
-const systemPath = path.join(rootDir, 'docs', 'radar_d1_system.txt')
+const systemPath = path.join(rootDir, 'Docs', 'radar_d1_system.txt')
 const SYSTEM_PROMPT = fs.readFileSync(systemPath, 'utf-8')
 
 const MODEL = 'claude-sonnet-4-5-20250929' as const
