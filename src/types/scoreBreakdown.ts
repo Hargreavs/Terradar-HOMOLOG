@@ -29,7 +29,23 @@ export type S31DimensoesOportunidade = {
   penalidades: string[]
 }
 
+/** Quatro dimensões do risk (card mini-barras + cabeçalho), espelha `ScoreResult` do motor. */
+export type RiskBreakdownQuatro = {
+  geologico: number
+  ambiental: number
+  social: number
+  regulatorio: number
+}
+
+/**
+ * Payload do GET `/api/processos/:id/score-breakdown` (motor S31 on-demand).
+ * Inclui campos de topo do `ScoreResult` além das decomposições.
+ */
 export type ScoreBreakdownPayload = {
   dimensoes_risco?: S31DimensoesRisco
   dimensoes_oportunidade?: S31DimensoesOportunidade
+  risk_score?: number
+  risk_label?: string
+  risk_cor?: string
+  risk_breakdown?: RiskBreakdownQuatro
 }

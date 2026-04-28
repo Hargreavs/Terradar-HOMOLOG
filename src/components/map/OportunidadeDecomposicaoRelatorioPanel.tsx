@@ -19,6 +19,10 @@ import {
   SubfatorBreakdownLoading,
   SubfatorDecomposicaoRows,
 } from './SubfatorDecomposicaoRows'
+import {
+  partitionAtratividadeSubs,
+} from '../../lib/scoreBreakdownDimUi'
+import { formatNumeroPt } from '../../lib/scoreBreakdownFormat'
 
 const FS = {
   sm: 13,
@@ -363,10 +367,17 @@ export function OportunidadeDecomposicaoRelatorioPanel({
                   </p>
                 ) : (
                   (() => {
-                    const subs =
+                    const rawSubs =
                       breakdownData?.dimensoes_oportunidade?.[d.key]?.subfatores ??
                       []
-                    if (!subs.length) {
+                    const { linhasSubfatores, bonusBadge } =
+                      d.key === 'atratividade'
+                        ? partitionAtratividadeSubs(rawSubs)
+                        : { linhasSubfatores: rawSubs, bonusBadge: null }
+                    if (
+                      linhasSubfatores.length === 0 &&
+                      (d.key !== 'atratividade' || !bonusBadge)
+                    ) {
                       return (
                         <p
                           style={{
@@ -380,10 +391,31 @@ export function OportunidadeDecomposicaoRelatorioPanel({
                       )
                     }
                     return (
-                      <SubfatorDecomposicaoRows
-                        variant="oportunidade"
-                        subfatores={subs}
-                      />
+                      <>
+                        {linhasSubfatores.length > 0 ? (
+                          <SubfatorDecomposicaoRows
+                            variant="oportunidade"
+                            subfatores={linhasSubfatores}
+                          />
+                        ) : null}
+                        {d.key === 'atratividade' && bonusBadge ? (
+                          <div
+                            style={{
+                              marginTop:
+                                linhasSubfatores.length > 0 ? 10 : 0,
+                              fontSize: FS.sm,
+                              fontWeight: 600,
+                              color: '#46A672',
+                              textAlign: 'right',
+                              fontVariantNumeric: 'tabular-nums',
+                            }}
+                          >
+                            +
+                            {formatNumeroPt(bonusBadge.valor)} pontos · Mineral
+                            crítico
+                          </div>
+                        ) : null}
+                      </>
                     )
                   })()
                 )

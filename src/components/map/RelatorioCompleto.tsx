@@ -80,9 +80,25 @@ import {
 } from '../../lib/substanceMarketState'
 import { useTerritorialAmbiental } from '../../hooks/useTerritorialAmbiental'
 import { useScoreBreakdown } from '../../hooks/useScoreBreakdown'
+import { formatNumeroPt } from '../../lib/scoreBreakdownFormat'
 import { formatDateBR } from '../../lib/territorialAmbientalDisplay'
 import { type TipoAreaSensivel, textoCorDistS31 } from '../../lib/distanciaCor'
 import { biomaMultiplicadorS31, corMultiplicadorBioma } from '../../lib/biomaS31'
+import {
+  isPlaceholderEstrategiaNacional,
+  msgAmbientalSensivelTipo3,
+  msgCalculoCampoAusenteTipo4,
+  msgCapagIndisponivelMunicipio,
+  msgCfemOperacaoEstimativaIndisponivel,
+  msgPrecoTipo1GemasSemUsd,
+  msgProcessosVizinhosTipo3,
+  msgTipo4BrasilProducaoZeroRef,
+  msgValorInsituTipo1AguasMinerais,
+  msgValorInsituTipo1Gemas,
+  msgValorInsituTipo2SemCubagem,
+  notaUsdNaoCotadoOficialmente,
+} from '../../lib/drawerAusenciaCopy'
+import { ambientalDrawerSensivelAusente } from '../../lib/relatorioAmbientalDrawer'
 
 type AbaId =
   | 'processo'
@@ -140,7 +156,9 @@ function computePrecoBrlDrawer(
         (intel.preco_referencia_usd_oz * liveRate) / GRAMAS_POR_ONCA_TROY
     }
     const brlPorTonelada =
-      intel.preco_medio_usd_t > 0 ? intel.preco_medio_usd_t * liveRate : null
+      intel.preco_medio_usd_t != null && intel.preco_medio_usd_t > 0
+        ? intel.preco_medio_usd_t * liveRate
+        : null
     return { brlPorGrama, brlPorTonelada }
   }
   const legG = intel.preco_brl_por_g_legacy
@@ -359,9 +377,16 @@ function isRotuloScoreTerminado(label: string): boolean {
   return /extinto|N\/A|terminal/i.test(label)
 }
 
+type RiskMotorDrawer = {
+  risk_score: number
+  risk_label?: string
+  risk_cor?: string
+} | null
+
 function montarExibicaoScoresRelatorio(
   processo: Processo,
   scoresApi: RelatorioScoresExibicaoApi | undefined,
+  riskMotor: RiskMotorDrawer,
 ): {
   rsLabel: string
   rsCorNumero: string
@@ -375,19 +400,23 @@ function montarExibicaoScoresRelatorio(
   osCor: (valorPerfil: number | null) => string
 } {
   const se = scoresApi
+  const scoreBase =
+    riskMotor != null ? riskMotor.risk_score : processo.risk_score
+  const rsLabelMotor =
+    riskMotor != null && riskMotor.risk_label?.trim()
+      ? normalizarSeparadoresRotuloDb(riskMotor.risk_label.trim())
+      : ''
   const rsLabel = normalizarSeparadoresRotuloDb(
-    se?.rs_label?.trim() ||
+    rsLabelMotor ||
+      se?.rs_label?.trim() ||
       processo.risk_label_persistido?.trim() ||
-      (processo.risk_score != null
-        ? classificacaoRiscoTotal(processo.risk_score)
-        : ''),
+      (scoreBase != null ? classificacaoRiscoTotal(scoreBase) : ''),
   )
   const rsCorBase =
+    (riskMotor != null ? riskMotor.risk_cor?.trim() : '') ||
     se?.rs_cor?.trim() ||
     processo.risk_cor_persistido?.trim() ||
-    (processo.risk_score != null
-      ? corFaixaRisco(processo.risk_score)
-      : '#888780')
+    (scoreBase != null ? corFaixaRisco(scoreBase) : '#888780')
   const terminadoRisco = isRotuloScoreTerminado(rsLabel)
   const rsCorNumero = terminadoRisco ? '#888780' : rsCorBase
   const rsCorRotulo = terminadoRisco ? COR_BADGE_EXTINTO : rsCorBase
@@ -1257,7 +1286,7 @@ function CfemVsMunicipioBreakdownCard({
       })}%`
 
   const linhaPct =
-    item.municipio_total > 0 ? (
+    item.municipio_total != null && item.municipio_total > 0 ? (
       <p
         style={{
           ...CFEM_CARD_SUBTITLE_STYLE,
@@ -1284,6 +1313,17 @@ function CfemVsMunicipioBreakdownCard({
           </>
         )}
       </p>
+    ) : item.municipio_total === 0 ? (
+      <p
+        style={{
+          fontSize: FS.min,
+          color: '#5F5E5A',
+          margin: '10px 0 0 0',
+          lineHeight: 1.5,
+        }}
+      >
+        Município sem CFEM declarada para esta substância
+      </p>
     ) : (
       <p
         style={{
@@ -1293,7 +1333,7 @@ function CfemVsMunicipioBreakdownCard({
           lineHeight: 1.5,
         }}
       >
-        Dados municipais indisponíveis
+        Histórico CFEM municipal indisponível
       </p>
     )
 
@@ -1602,8 +1642,11 @@ function TextoOportunidadeComDestaqueNumeros({
 
 function OportunidadeAnaliseTerradarCard({
   cruzamento,
+  notaMotorRiskOnDemand,
 }: {
   cruzamento: RelatorioOportunidadeData['cruzamento']
+  /** Quando o drawer consumiu o Risk Score on-demand (motor S31 no endpoint). */
+  notaMotorRiskOnDemand?: boolean
 }) {
   return (
     <div style={analiseTerradarCardStyle}>
@@ -1648,6 +1691,18 @@ function OportunidadeAnaliseTerradarCard({
             />
           </p>
           <p style={analiseTerradarTextoStyle}>{cruzamento.contexto}</p>
+          {notaMotorRiskOnDemand ? (
+            <p
+              style={{
+                ...analiseTerradarTextoStyle,
+                fontSize: FS.sm,
+                color: '#5F5E5A',
+              }}
+            >
+              Risk Score mencionado acima usa o motor TERRADAR S31 atual
+              (cálculo on-demand), não o snapshot persistido na base.
+            </p>
+          ) : null}
         </div>
 
         <div
@@ -1896,14 +1951,9 @@ export function RelatorioCompleto({
   const commodityMarketState = useMemo((): SubstanceMarketState | null => {
     const im = dados?.intel_mineral
     if (!im) return null
-    const r =
-      im.reservas_br_pct_dado !== undefined
-        ? im.reservas_br_pct_dado
-        : im.reservas_brasil_mundial_pct
-    const p =
-      im.producao_br_pct_dado !== undefined
-        ? im.producao_br_pct_dado
-        : im.producao_brasil_mundial_pct
+    /** Apenas percentuais crus da master (`null` = ausente; distinto de 0). */
+    const r = im.reservas_br_pct_dado ?? null
+    const p = im.producao_br_pct_dado ?? null
     return getSubstanceMarketState({
       fonte_preco: im.fonte_preco,
       fonte_res_prod: im.fonte_res_prod,
@@ -1919,6 +1969,57 @@ export function RelatorioCompleto({
         : { brlPorGrama: null, brlPorTonelada: null },
     [dados?.intel_mineral, cambioAoVivo],
   )
+
+  /** Estado C do card Preço: gemas sem série USD/BRL derivável na master. */
+  const gemPrecoCardTipo1 = useMemo(() => {
+    const im = dados?.intel_mineral
+    if (!im || im.familia !== 'gemas_pedras') return false
+    const brl = computePrecoBrlDrawer(im, cambioAoVivo)
+    const temUsd =
+      (im.unidade_preco === 'oz' &&
+        im.preco_referencia_usd_oz != null &&
+        im.preco_referencia_usd_oz > 0) ||
+      (im.preco_medio_usd_t != null && im.preco_medio_usd_t > 0)
+    const temBrMean =
+      im.preco_medio_br_brl_t != null && im.preco_medio_br_brl_t > 0
+    return (
+      !temUsd &&
+      !temBrMean &&
+      brl.brlPorGrama == null &&
+      brl.brlPorTonelada == null
+    )
+  }, [dados?.intel_mineral, cambioAoVivo])
+
+  /** Nota «USD não cotado» quando há BRL via legado/câmbio sem spot USD. */
+  const cfemOperAusenciaInformadaDrawer = useMemo(() => {
+    const im = dados?.intel_mineral
+    const f = dados?.fiscal
+    if (!im || !f) return false
+    const p = im.producao_br_absoluta_t
+    const cf = f.cfem_estimada_ha
+    const cfemZerOuInvalido =
+      cf === 0 || cf == null || (typeof cf === 'number' && !Number.isFinite(cf))
+    return cfemZerOuInvalido && p == null
+  }, [
+    dados?.intel_mineral?.producao_br_absoluta_t,
+    dados?.fiscal?.cfem_estimada_ha,
+  ])
+
+  const precoCardNotaUsdNaoCotado = useMemo(() => {
+    const im = dados?.intel_mineral
+    if (!im || gemPrecoCardTipo1) return false
+    const brl = computePrecoBrlDrawer(im, cambioAoVivo)
+    const temUsd =
+      (im.unidade_preco === 'oz' &&
+        im.preco_referencia_usd_oz != null &&
+        im.preco_referencia_usd_oz > 0) ||
+      (im.preco_medio_usd_t != null && im.preco_medio_usd_t > 0)
+    const temBrl =
+      brl.brlPorGrama != null ||
+      brl.brlPorTonelada != null ||
+      (im.preco_medio_br_brl_t != null && im.preco_medio_br_brl_t > 0)
+    return !temUsd && temBrl
+  }, [dados?.intel_mineral, cambioAoVivo, gemPrecoCardTipo1])
 
   const valorReservaBrlBiPorHaAoVivo = useMemo(() => {
     const im = dados?.intel_mineral
@@ -1987,6 +2088,36 @@ export function RelatorioCompleto({
     )
   }, [processo])
 
+  const riskDecomposicaoMotorAware = useMemo(() => {
+    const base = riskDecomposicaoMemo
+    const d = scoreBreakdown.data
+    const rb = d?.risk_breakdown
+    if (!base || !rb) return base
+    return {
+      ...base,
+      total: d.risk_score ?? base.total,
+      geologico: { ...base.geologico, score: rb.geologico },
+      ambiental: { ...base.ambiental, score: rb.ambiental },
+      social: { ...base.social, score: rb.social },
+      regulatorio: { ...base.regulatorio, score: rb.regulatorio },
+    }
+  }, [riskDecomposicaoMemo, scoreBreakdown.data])
+
+  const motorRiskMotorArg = useMemo((): RiskMotorDrawer => {
+    const d = scoreBreakdown.data
+    if (
+      d?.risk_score == null ||
+      !Number.isFinite(Number(d.risk_score))
+    ) {
+      return null
+    }
+    return {
+      risk_score: Number(d.risk_score),
+      risk_label: d.risk_label,
+      risk_cor: d.risk_cor,
+    }
+  }, [scoreBreakdown.data])
+
   const exibicaoScoresRelatorio = useMemo(() => {
     if (!processo) {
       return {
@@ -2002,8 +2133,9 @@ export function RelatorioCompleto({
     return montarExibicaoScoresRelatorio(
       processo,
       dadosResolved?.scores_exibicao_api,
+      motorRiskMotorArg,
     )
-  }, [processo, dadosResolved])
+  }, [processo, dadosResolved, motorRiskMotorArg])
 
   const regimeDrawerUi = useMemo((): Regime => {
     if (!processo) return 'disponibilidade'
@@ -2205,9 +2337,103 @@ export function RelatorioCompleto({
   // Usa `== null` (pega null e undefined) porque o patch do MapView agora
   // sobrescreve residuais do Zustand com `null` explícito para processos
   // sem score no banco.
+  const riskMotorDisponivel =
+    scoreBreakdown.data?.risk_score != null &&
+    Number.isFinite(Number(scoreBreakdown.data.risk_score))
+
+  const scoreBreakdownCarregando =
+    Boolean(processo.id) && scoreBreakdown.loading && !scoreBreakdown.data
+
   const scoreIndisponivel =
     !processo ||
-    processo.risk_score == null
+    (processo.risk_score == null &&
+      !riskMotorDisponivel &&
+      !scoreBreakdown.loading)
+
+  const rsNumeroCabecalhoRisco: number | null =
+    riskMotorDisponivel && scoreBreakdown.data?.risk_score != null
+      ? Number(scoreBreakdown.data.risk_score)
+      : scoreBreakdownCarregando
+        ? null
+        : (processo.risk_score ?? null)
+
+  /** Mini-barras e card: sempre motor quando disponível; sem placeholder mostrar valores persistidos. */
+  const quadDimBarrasRisk: readonly [label: string, val: number | null][] = (() => {
+    const rb = scoreBreakdown.data?.risk_breakdown
+    if (
+      riskMotorDisponivel &&
+      rb &&
+      !scoreBreakdownCarregando
+    ) {
+      return [
+        ['Geológico', rb.geologico],
+        ['Ambiental', rb.ambiental],
+        ['Social', rb.social],
+        ['Regulatório', rb.regulatorio],
+      ]
+    }
+    if (
+      scoreBreakdownCarregando &&
+      !riskMotorDisponivel
+    ) {
+      return [
+        ['Geológico', null],
+        ['Ambiental', null],
+        ['Social', null],
+        ['Regulatório', null],
+      ]
+    }
+    const de =
+      riskDecomposicaoMotorAware ?? riskDecomposicaoMemo
+    if (de) {
+      return [
+        ['Geológico', de.geologico.score],
+        ['Ambiental', de.ambiental.score],
+        ['Social', de.social.score],
+        ['Regulatório', de.regulatorio.score],
+      ]
+    }
+    const brDb = processo.risk_breakdown
+    return brDb
+      ? ([
+          ['Geológico', brDb.geologico],
+          ['Ambiental', brDb.ambiental],
+          ['Social', brDb.social],
+          ['Regulatório', brDb.regulatorio],
+        ] as const)
+      : ([] as readonly [string, number | null][])
+  })()
+
+  const cruzamentoOportDrawerMotor = (() => {
+    const base = oportunidade.cruzamento
+    if (
+      !riskMotorDisponivel ||
+      motorRiskMotorArg == null ||
+      scoreBreakdownCarregando
+    ) {
+      return base
+    }
+    const rsDb = base.rs
+    const rsM = motorRiskMotorArg.risk_score
+    if (rsDb == null || rsM === rsDb) return base
+    let explicacao = base.explicacao
+    const lbl = exibicaoScoresRelatorio.rsLabel
+    explicacao = explicacao.replace(
+      new RegExp(
+        `Risk Score consolidado ${String(rsDb)} \\([^)]+\\)`,
+      ),
+      `Risk Score consolidado ${String(rsM)} (${lbl})`,
+    )
+    explicacao = explicacao.replace(
+      `Risk Score ${String(rsDb)} (`,
+      `Risk Score ${String(rsM)} (`,
+    )
+    return {
+      ...base,
+      rs: rsM,
+      explicacao,
+    }
+  })()
 
   // Classificação de arquétipo vem do `dados_anm` (já populado no backend
   // via fn_classificacao_zumbi). Null para processos normais.
@@ -2281,9 +2507,12 @@ export function RelatorioCompleto({
     cfemMunicipalMediaAnualBrl > 0 && fiscal.cfem_estimada_ha > 0
       ? fiscal.cfem_estimada_ha / cfemMunicipalMediaAnualBrl
       : null
+  const pibMiFiscalNum = fiscal.pib_municipal_mi
   const cfemPctPib =
-    fiscal.pib_municipal_mi > 0 && fiscal.cfem_estimada_ha > 0
-      ? (fiscal.cfem_estimada_ha / (fiscal.pib_municipal_mi * 1_000_000)) * 100
+    pibMiFiscalNum != null &&
+    pibMiFiscalNum > 0 &&
+    fiscal.cfem_estimada_ha > 0
+      ? (fiscal.cfem_estimada_ha / (pibMiFiscalNum * 1_000_000)) * 100
       : null
   const mostrarCfemLinha1 = cfemHistFiscal.length > 0
   const mostrarCfemLinha2 =
@@ -2295,7 +2524,8 @@ export function RelatorioCompleto({
   const mostrarCfemLinha3 =
     cfemPctPib != null &&
     Number.isFinite(cfemPctPib) &&
-    fiscal.pib_municipal_mi > 0
+    pibMiFiscalNum != null &&
+    pibMiFiscalNum > 0
   const mostrarContextoCfemComparativo =
     fiscal.cfem_estimada_ha > 0 &&
     (mostrarCfemLinha1 || mostrarCfemLinha2 || mostrarCfemLinha3)
@@ -4035,6 +4265,18 @@ export function RelatorioCompleto({
                   {ambientalError.message}
                 </p>
               ) : ambiental ? (
+                ambientalDrawerSensivelAusente(ambiental) ? (
+                  <p
+                    style={{
+                      fontSize: FS.md,
+                      color: '#888780',
+                      margin: 0,
+                      lineHeight: 1.55,
+                    }}
+                  >
+                    {msgAmbientalSensivelTipo3()}
+                  </p>
+                ) : (
                 <>
                   <div
                     style={{
@@ -4278,7 +4520,9 @@ export function RelatorioCompleto({
                     </div>
                   </div>
                 </>
-              ) : null}
+              )
+              )
+              : null}
             </Card>
               </>
             )}
@@ -4345,8 +4589,9 @@ export function RelatorioCompleto({
                           lineHeight: 1.5,
                         }}
                       >
-                        Mineral de consumo majoritariamente doméstico · sem
-                        estatística USGS global
+                        {intel_mineral.familia === 'gemas_pedras'
+                          ? 'Mercado interno. Gemas não cotam em bolsa internacional; preços derivam de declarações ANM/CFEM.'
+                          : 'Mineral de consumo majoritariamente doméstico · sem estatística USGS global'}
                       </p>
                       <div
                         style={{
@@ -4471,7 +4716,8 @@ export function RelatorioCompleto({
                   (intel_mineral.unidade_preco === 'oz' &&
                     intel_mineral.preco_referencia_usd_oz != null &&
                     intel_mineral.preco_referencia_usd_oz > 0) ||
-                  intel_mineral.preco_medio_usd_t > 0
+                  (intel_mineral.preco_medio_usd_t != null &&
+                    intel_mineral.preco_medio_usd_t > 0)
                 const explicaSemFonte =
                   textoExplicativoFonte(intel_mineral.fonte_preco) ||
                   textoExplicativoFonte(intel_mineral.fonte_res_prod) ||
@@ -4682,19 +4928,21 @@ export function RelatorioCompleto({
                             </>
                           ) : (
                             <>
-                              <p
-                                style={{
-                                  fontSize: FS.h2,
-                                  fontWeight: 500,
-                                  color: '#F1EFE8',
-                                  margin: '0 0 6px 0',
-                                }}
-                              >
-                                {intel_mineral.preco_medio_usd_t.toLocaleString(
-                                  'pt-BR',
-                                )}{' '}
-                                USD/t
-                              </p>
+                              {intel_mineral.preco_medio_usd_t != null ? (
+                                <p
+                                  style={{
+                                    fontSize: FS.h2,
+                                    fontWeight: 500,
+                                    color: '#F1EFE8',
+                                    margin: '0 0 6px 0',
+                                  }}
+                                >
+                                  {intel_mineral.preco_medio_usd_t.toLocaleString(
+                                    'pt-BR',
+                                  )}{' '}
+                                  USD/t
+                                </p>
+                              ) : null}
                               {brlPorTonelada != null ? (
                                 <p
                                   style={{
@@ -4785,20 +5033,37 @@ export function RelatorioCompleto({
                       }}
                     >
                       {(() => {
+                        const rDado = intel_mineral.reservas_br_pct_dado
+                        const pDado = intel_mineral.producao_br_pct_dado
                         const pctR = intel_mineral.reservas_brasil_mundial_pct
+                        const pctP = intel_mineral.producao_brasil_mundial_pct
                         const corR =
                           pctR > 20
                             ? '#1D9E75'
                             : pctR >= 5
                               ? '#EF9F27'
                               : '#888780'
-                        const pctP = intel_mineral.producao_brasil_mundial_pct
                         const corP =
                           pctP > 20
                             ? '#1D9E75'
                             : pctP < 5
                               ? '#E24B4A'
                               : '#EF9F27'
+                        const reserveZeroReal = rDado === 0
+                        const producaoZeroReal = pDado === 0
+                        const estMsgRes = reserveZeroReal
+                          ? `Brasil declarou participação nula nas reservas no recorte oficial.`
+                          : null
+                        const estMsgProd = producaoZeroReal
+                          ? msgTipo4BrasilProducaoZeroRef()
+                          : null
+                        const zeroMuted: React.CSSProperties = {
+                          fontSize: FS.sm,
+                          color: '#888780',
+                          margin: 0,
+                          lineHeight: 1.55,
+                          textAlign: 'left',
+                        }
                         return (
                           <>
                             <div>
@@ -4810,41 +5075,49 @@ export function RelatorioCompleto({
                               >
                                 Reservas Brasil
                               </p>
-                              <p
-                                style={{
-                                  fontSize: FS.display,
-                                  fontWeight: 500,
-                                  color: corR,
-                                  margin: '0 0 6px 0',
-                                }}
-                              >
-                                {pctR}%
-                              </p>
-                              <div
-                                style={{
-                                  height: 6,
-                                  borderRadius: 3,
-                                  backgroundColor: '#2C2C2A',
-                                  overflow: 'hidden',
-                                }}
-                              >
-                                <div
-                                  style={{
-                                    width: `${Math.min(100, pctR)}%`,
-                                    height: '100%',
-                                    backgroundColor: corR,
-                                  }}
-                                />
-                              </div>
-                              <p
-                                style={{
-                                  fontSize: FS.md,
-                                  color: SECTION_TITLE,
-                                  margin: '6px 0 0 0',
-                                }}
-                              >
-                                das reservas mundiais
-                              </p>
+                              {reserveZeroReal ? (
+                                <p style={{ ...zeroMuted, margin: '8px 0 0 0' }}>
+                                  {estMsgRes}
+                                </p>
+                              ) : (
+                                <>
+                                  <p
+                                    style={{
+                                      fontSize: FS.display,
+                                      fontWeight: 500,
+                                      color: corR,
+                                      margin: '0 0 6px 0',
+                                    }}
+                                  >
+                                    {pctR}%
+                                  </p>
+                                  <div
+                                    style={{
+                                      height: 6,
+                                      borderRadius: 3,
+                                      backgroundColor: '#2C2C2A',
+                                      overflow: 'hidden',
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        width: `${Math.min(100, pctR)}%`,
+                                        height: '100%',
+                                        backgroundColor: corR,
+                                      }}
+                                    />
+                                  </div>
+                                  <p
+                                    style={{
+                                      fontSize: FS.md,
+                                      color: SECTION_TITLE,
+                                      margin: '6px 0 0 0',
+                                    }}
+                                  >
+                                    das reservas mundiais
+                                  </p>
+                                </>
+                              )}
                             </div>
                             <div>
                               <p
@@ -4855,47 +5128,61 @@ export function RelatorioCompleto({
                               >
                                 Produção Brasil
                               </p>
-                              <p
-                                style={{
-                                  fontSize: FS.display,
-                                  fontWeight: 500,
-                                  color: corP,
-                                  margin: '0 0 6px 0',
-                                }}
-                              >
-                                {pctP}%
-                              </p>
-                              <div
-                                style={{
-                                  height: 6,
-                                  borderRadius: 3,
-                                  backgroundColor: '#2C2C2A',
-                                  overflow: 'hidden',
-                                }}
-                              >
-                                <div
-                                  style={{
-                                    width: `${Math.min(100, pctP)}%`,
-                                    height: '100%',
-                                    backgroundColor: corP,
-                                  }}
-                                />
-                              </div>
-                              <p
-                                style={{
-                                  fontSize: FS.md,
-                                  color: SECTION_TITLE,
-                                  margin: '6px 0 0 0',
-                                }}
-                              >
-                                da produção mundial
-                              </p>
+                              {producaoZeroReal ? (
+                                <p style={{ ...zeroMuted, margin: '8px 0 0 0' }}>
+                                  {estMsgProd}
+                                </p>
+                              ) : (
+                                <>
+                                  <p
+                                    style={{
+                                      fontSize: FS.display,
+                                      fontWeight: 500,
+                                      color: corP,
+                                      margin: '0 0 6px 0',
+                                    }}
+                                  >
+                                    {pctP}%
+                                  </p>
+                                  <div
+                                    style={{
+                                      height: 6,
+                                      borderRadius: 3,
+                                      backgroundColor: '#2C2C2A',
+                                      overflow: 'hidden',
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        width: `${Math.min(100, pctP)}%`,
+                                        height: '100%',
+                                        backgroundColor: corP,
+                                      }}
+                                    />
+                                  </div>
+                                  <p
+                                    style={{
+                                      fontSize: FS.md,
+                                      color: SECTION_TITLE,
+                                      margin: '6px 0 0 0',
+                                    }}
+                                  >
+                                    da produção mundial
+                                  </p>
+                                </>
+                              )}
                             </div>
                           </>
                         )
                       })()}
                     </div>
                     {(() => {
+                      if (
+                        intel_mineral.reservas_br_pct_dado === 0 ||
+                        intel_mineral.producao_br_pct_dado === 0
+                      ) {
+                        return null
+                      }
                       const pctR = intel_mineral.reservas_brasil_mundial_pct
                       const pctP = intel_mineral.producao_brasil_mundial_pct
                       const diff = pctR - pctP
@@ -4970,6 +5257,20 @@ export function RelatorioCompleto({
             {commodityMarketState !== 'PROIBIDO' ? (
             <Card>
               <SecLabel branco>Preço e tendência</SecLabel>
+              {gemPrecoCardTipo1 ? (
+                <p
+                  style={{
+                    fontSize: FS.md,
+                    color: '#888780',
+                    margin: 0,
+                    lineHeight: 1.6,
+                    whiteSpace: 'pre-line',
+                  }}
+                >
+                  {msgPrecoTipo1GemasSemUsd()}
+                </p>
+              ) : (
+              <>
               {(() => {
                 const { brlPorGrama, brlPorTonelada } = drawerPrecoBrl
                 const legendaCambio =
@@ -5041,31 +5342,42 @@ export function RelatorioCompleto({
                         </p>
                       </>
                     ) : null}
-                    <p
-                      style={{
-                        fontSize: FS.sm,
-                        color: 'rgba(241, 239, 232, 0.45)',
-                        margin: '0 0 10px 0',
-                        lineHeight: 1.45,
-                      }}
-                    >
-                      {intel_mineral.preco_medio_usd_t.toLocaleString('pt-BR')} USD/t
-                    </p>
+                    {intel_mineral.preco_medio_usd_t != null ? (
+                      <p
+                        style={{
+                          fontSize: FS.sm,
+                          color: 'rgba(241, 239, 232, 0.45)',
+                          margin: '0 0 10px 0',
+                          lineHeight: 1.45,
+                        }}
+                      >
+                        {intel_mineral.preco_medio_usd_t.toLocaleString(
+                          'pt-BR',
+                        )}{' '}
+                        USD/t
+                      </p>
+                    ) : null}
                   </>
                 ) : (
                   <>
-                    <p
-                      style={{
-                        fontSize: FS.h2,
-                        fontWeight: 500,
-                        color: '#F1EFE8',
-                        margin: '0 0 4px 0',
-                      }}
-                    >
-                      {intel_mineral.preco_medio_usd_t.toLocaleString('pt-BR')} USD/t
-                    </p>
+                    {intel_mineral.preco_medio_usd_t != null ? (
+                      <p
+                        style={{
+                          fontSize: FS.h2,
+                          fontWeight: 500,
+                          color: '#F1EFE8',
+                          margin: '0 0 4px 0',
+                        }}
+                      >
+                        {intel_mineral.preco_medio_usd_t.toLocaleString(
+                          'pt-BR',
+                        )}{' '}
+                        USD/t
+                      </p>
+                    ) : null}
                     {cambioLoading &&
                     brlPorTonelada == null &&
+                    intel_mineral.preco_medio_usd_t != null &&
                     intel_mineral.preco_medio_usd_t > 0 ? (
                       <p
                         style={{
@@ -5111,8 +5423,22 @@ export function RelatorioCompleto({
                   </>
                 )
               })()}
+              {precoCardNotaUsdNaoCotado ? (
+                <p
+                  style={{
+                    fontSize: FS.min,
+                    color: '#888780',
+                    fontStyle: 'italic',
+                    margin: '0 0 12px 0',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {notaUsdNaoCotadoOficialmente()}
+                </p>
+              ) : null}
               {(() => {
                 const t = intel_mineral.tendencia_preco
+                if (t == null) return null
                 const cfg =
                   t === 'alta'
                     ? {
@@ -5155,7 +5481,8 @@ export function RelatorioCompleto({
                   </span>
                 )
               })()}
-              {intel_mineral.var_1a_pct != null ? (
+              {intel_mineral.var_1a_pct != null ||
+              intel_mineral.cagr_5a_pct != null ? (
                 <p
                   style={{
                     fontSize: FS.sm,
@@ -5164,11 +5491,20 @@ export function RelatorioCompleto({
                     lineHeight: 1.45,
                   }}
                 >
-                  Var. 12m:{' '}
-                  {intel_mineral.var_1a_pct > 0 ? '+' : ''}
-                  {intel_mineral.var_1a_pct}%
+                  {intel_mineral.var_1a_pct != null ? (
+                    <>
+                      Var. 12m:{' '}
+                      {intel_mineral.var_1a_pct > 0 ? '+' : ''}
+                      {intel_mineral.var_1a_pct}%
+                    </>
+                  ) : null}
                   {intel_mineral.cagr_5a_pct != null ? (
-                    <span style={{ marginLeft: 16 }}>
+                    <span
+                      style={{
+                        marginLeft:
+                          intel_mineral.var_1a_pct != null ? 16 : undefined,
+                      }}
+                    >
                       CAGR 5a:{' '}
                       {intel_mineral.cagr_5a_pct > 0 ? '+' : ''}
                       {intel_mineral.cagr_5a_pct}%
@@ -5238,9 +5574,14 @@ export function RelatorioCompleto({
                 fonte={fontePrecoTendenciaCard}
                 marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
               />
+              </>
+              )}
             </Card>
             ) : null}
 
+            {intel_mineral.aplicacoes_principais.length > 0 ||
+            (intel_mineral.aplicacoes_texto_bruto != null &&
+              intel_mineral.aplicacoes_texto_bruto.trim() !== '') ? (
             <Card>
               <SecLabel branco>Aplicações</SecLabel>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -5259,18 +5600,20 @@ export function RelatorioCompleto({
                       {a}
                     </span>
                   ))
-                ) : (
+                ) : intel_mineral.aplicacoes_texto_bruto != null &&
+                  intel_mineral.aplicacoes_texto_bruto.trim() !== '' ? (
                   <p
                     style={{
                       fontSize: FS.lg,
-                      color: '#888780',
+                      color: '#D3D1C7',
                       margin: 0,
                       lineHeight: 1.5,
+                      whiteSpace: 'pre-wrap',
                     }}
                   >
-                    Sem aplicações na master de substâncias para este cadastro.
+                    {intel_mineral.aplicacoes_texto_bruto}
                   </p>
-                )}
+                ) : null}
               </div>
               <FonteLabel
                 dataIso={timestamps.usgs}
@@ -5278,7 +5621,10 @@ export function RelatorioCompleto({
                 marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
               />
             </Card>
+            ) : null}
 
+            {(intel_mineral.estrategia_nacional_itens?.length ?? 0) > 0 ||
+            !isPlaceholderEstrategiaNacional(intel_mineral.estrategia_nacional) ? (
             <Card>
               <SecLabel branco>Estratégia nacional</SecLabel>
               <div
@@ -5320,6 +5666,7 @@ export function RelatorioCompleto({
                 marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
               />
             </Card>
+            ) : null}
 
             <div
               style={{
@@ -5339,104 +5686,185 @@ export function RelatorioCompleto({
               >
                 Valor in-situ teórico
               </p>
-              <p
-                style={{
-                  fontSize: FS.highlight,
-                  fontWeight: 500,
-                  color: '#EF9F27',
-                  margin:
-                    valorReservaBrlBiPorHaEfetivo != null
-                      ? '0 0 8px 0'
-                      : '0 0 20px 0',
-                }}
-              >
-                {valorReservaUsdMiPorHa != null
-                  ? `${formatarUsdMiInteligente(valorReservaUsdMiPorHa)}/ha`
-                  : '—'}
-              </p>
-              {valorReservaBrlBiPorHaEfetivo != null ? (
-                <>
-                  <p
-                    style={{
-                      fontSize: FS.display,
-                      fontWeight: 500,
-                      color: 'rgba(232, 168, 48, 0.7)',
-                      margin:
-                        cambioLegendaDrawer != null ? '0 0 4px 0' : '0 0 16px 0',
-                    }}
-                  >
-                    ≈ R${' '}
-                    {valorReservaBrlBiPorHaEfetivo.toLocaleString('pt-BR', {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}{' '}
-                    bi/ha
-                  </p>
-                  {cambioLegendaDrawer != null ? (
+              {(() => {
+                const fam = intel_mineral.familia
+                const areaOk =
+                  processo.area_ha != null &&
+                  Number.isFinite(Number(processo.area_ha)) &&
+                  Number(processo.area_ha) > 0
+                const valUsdHa = intel_mineral.valor_estimado_usd_ha
+                if (!areaOk) {
+                  return (
                     <p
                       style={{
-                        fontSize: FS.min,
-                        color: 'rgba(241, 239, 232, 0.4)',
-                        fontStyle: 'italic',
-                        margin: '0 0 16px 0',
-                        lineHeight: 1.45,
+                        fontSize: FS.md,
+                        color: '#888780',
+                        margin: 0,
+                        lineHeight: 1.55,
+                        whiteSpace: 'pre-line',
                       }}
                     >
-                      (câmbio {cambioLegendaDrawer.toFixed(4)}
-                      {cambioStale ? ' — última cotação disponível' : ''}
-                      {(() => {
-                        const d = formatarDataIsoPtBr(
-                          cambioFetchedAt != null
-                            ? cambioFetchedAt.toISOString().slice(0, 10)
-                            : intel_mineral.cambio_data ?? metadata?.cambio_data,
-                        )
-                        return d ? ` · ${d}` : ''
-                      })()}
-                      )
+                      {msgCalculoCampoAusenteTipo4('área do processo')}
                     </p>
-                  ) : null}
-                </>
-              ) : null}
-              <BlocoParagrafosMultilinha
-                texto={intel_mineral.metodologia_estimativa}
-                styleParagrafo={{
-                  fontSize: FS.sm,
-                  color: '#A3A29A',
-                  fontStyle: 'italic',
-                  margin: 0,
-                  lineHeight: 1.5,
-                }}
-              />
-              <div
-                style={{
-                  marginTop: 8,
-                  textAlign: 'left',
-                }}
-              >
-                <p
-                  style={{
-                    fontSize: FS.min,
-                    color: 'rgba(241, 239, 232, 0.7)',
-                    margin: 0,
-                    lineHeight: 1.55,
-                  }}
-                >
-                  Estimativa teórica padronizada de valor in-situ por hectare,
-                  com premissas fixas de volume e teor.
-                </p>
-                <p
-                  style={{
-                    fontSize: FS.min,
-                    color: 'rgba(239, 159, 39, 0.7)',
-                    margin: '6px 0 0 0',
-                    lineHeight: 1.55,
-                  }}
-                >
-                  Não substitui avaliação de recurso (NI 43-101 / JORC). Valor
-                  realizável depende de cubagem, viabilidade técnica, recuperação
-                  metalúrgica e condições de mercado.
-                </p>
-              </div>
+                  )
+                }
+                if (fam === 'gemas_pedras' && valUsdHa == null) {
+                  return (
+                    <p
+                      style={{
+                        fontSize: FS.md,
+                        color: '#888780',
+                        margin: 0,
+                        lineHeight: 1.55,
+                        whiteSpace: 'pre-line',
+                      }}
+                    >
+                      {msgValorInsituTipo1Gemas()}
+                    </p>
+                  )
+                }
+                if (fam === 'aguas_minerais' && valUsdHa == null) {
+                  return (
+                    <p
+                      style={{
+                        fontSize: FS.md,
+                        color: '#888780',
+                        margin: 0,
+                        lineHeight: 1.55,
+                        whiteSpace: 'pre-line',
+                      }}
+                    >
+                      {msgValorInsituTipo1AguasMinerais()}
+                    </p>
+                  )
+                }
+                if (
+                  valUsdHa == null &&
+                  fam !== 'gemas_pedras' &&
+                  fam !== 'aguas_minerais'
+                ) {
+                  return (
+                    <p
+                      style={{
+                        fontSize: FS.md,
+                        color: '#888780',
+                        margin: 0,
+                        lineHeight: 1.55,
+                        whiteSpace: 'pre-line',
+                      }}
+                    >
+                      {msgValorInsituTipo2SemCubagem(processo.substancia)}
+                    </p>
+                  )
+                }
+                return (
+                  <>
+                    <p
+                      style={{
+                        fontSize: FS.highlight,
+                        fontWeight: 500,
+                        color: '#EF9F27',
+                        margin:
+                          valorReservaBrlBiPorHaEfetivo != null
+                            ? '0 0 8px 0'
+                            : '0 0 20px 0',
+                      }}
+                    >
+                      {valorReservaUsdMiPorHa != null
+                        ? `${formatarUsdMiInteligente(valorReservaUsdMiPorHa)}/ha`
+                        : '—'}
+                    </p>
+                    {valorReservaBrlBiPorHaEfetivo != null ? (
+                      <>
+                        <p
+                          style={{
+                            fontSize: FS.display,
+                            fontWeight: 500,
+                            color: 'rgba(232, 168, 48, 0.7)',
+                            margin:
+                              cambioLegendaDrawer != null
+                                ? '0 0 4px 0'
+                                : '0 0 16px 0',
+                          }}
+                        >
+                          ≈ R${' '}
+                          {valorReservaBrlBiPorHaEfetivo.toLocaleString('pt-BR', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}{' '}
+                          bi/ha
+                        </p>
+                        {cambioLegendaDrawer != null ? (
+                          <p
+                            style={{
+                              fontSize: FS.min,
+                              color: 'rgba(241, 239, 232, 0.4)',
+                              fontStyle: 'italic',
+                              margin: '0 0 16px 0',
+                              lineHeight: 1.45,
+                            }}
+                          >
+                            (câmbio {cambioLegendaDrawer.toFixed(4)}
+                            {cambioStale
+                              ? ' — última cotação disponível'
+                              : ''}
+                            {(() => {
+                              const d = formatarDataIsoPtBr(
+                                cambioFetchedAt != null
+                                  ? cambioFetchedAt.toISOString().slice(0, 10)
+                                  : intel_mineral.cambio_data ??
+                                      metadata?.cambio_data,
+                              )
+                              return d ? ` · ${d}` : ''
+                            })()}
+                            )
+                          </p>
+                        ) : null}
+                      </>
+                    ) : null}
+                    <BlocoParagrafosMultilinha
+                      texto={intel_mineral.metodologia_estimativa}
+                      styleParagrafo={{
+                        fontSize: FS.sm,
+                        color: '#A3A29A',
+                        fontStyle: 'italic',
+                        margin: 0,
+                        lineHeight: 1.5,
+                      }}
+                    />
+                    <div
+                      style={{
+                        marginTop: 8,
+                        textAlign: 'left',
+                      }}
+                    >
+                      <p
+                        style={{
+                          fontSize: FS.min,
+                          color: 'rgba(241, 239, 232, 0.7)',
+                          margin: 0,
+                          lineHeight: 1.55,
+                        }}
+                      >
+                        Estimativa teórica padronizada de valor in-situ por
+                        hectare, com premissas fixas de volume e teor.
+                      </p>
+                      <p
+                        style={{
+                          fontSize: FS.min,
+                          color: 'rgba(239, 159, 39, 0.7)',
+                          margin: '6px 0 0 0',
+                          lineHeight: 1.55,
+                        }}
+                      >
+                        Não substitui avaliação de recurso (NI 43-101 / JORC).
+                        Valor realizável depende de cubagem, viabilidade técnica,
+                        recuperação metalúrgica e condições de mercado.
+                      </p>
+                    </div>
+                  </>
+                )
+              })()}
               <FonteLabel
                 dataIso={timestamps.sigmine}
                 fonte="Estimativa TERRADAR / SIGMINE"
@@ -5465,6 +5893,18 @@ export function RelatorioCompleto({
               >
                 111 processos num raio de 25 km · 5 mais relevantes
               </p>
+              {intel_mineral.processos_vizinhos.length === 0 ? (
+                <p
+                  style={{
+                    fontSize: FS.lg,
+                    color: '#888780',
+                    margin: 0,
+                    lineHeight: 1.55,
+                  }}
+                >
+                  {msgProcessosVizinhosTipo3()}
+                </p>
+              ) : (
               <div style={{ overflowX: 'auto' }}>
                 <table
                   style={{
@@ -5567,7 +6007,7 @@ export function RelatorioCompleto({
                             style={{ padding: '8px 6px 8px 0', color: '#D3D1C7' }}
                           >
                             {v.distancia_km == null
-                              ? 'N/D'
+                              ? '\u2014'
                               : v.distancia_km <= 0
                                 ? 'SOBREPOSTO'
                                 : `${v.distancia_km.toLocaleString('pt-BR', {
@@ -5580,6 +6020,7 @@ export function RelatorioCompleto({
                   </tbody>
                 </table>
               </div>
+              )}
               <FonteLabel
                 dataIso={timestamps.sigmine}
                 fonte="ANM / SIGMINE"
@@ -5638,7 +6079,34 @@ export function RelatorioCompleto({
               >
                 Risk Score
               </p>
-              {processo.risk_score === null ? (
+              {scoreBreakdownCarregando ? (
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    gap: 10,
+                    margin: '0 0 8px 0',
+                  }}
+                  aria-busy="true"
+                >
+                  <Loader2
+                    className="h-9 w-9 shrink-0 animate-spin"
+                    style={{ color: '#EF9F27' }}
+                    aria-hidden
+                  />
+                  <span
+                    style={{
+                      fontSize: FS.hero,
+                      fontWeight: 500,
+                      color: '#888780',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  >
+                    —
+                  </span>
+                </div>
+              ) : rsNumeroCabecalhoRisco == null ? (
                 <p
                   style={{
                     fontSize: FS.jumbo,
@@ -5660,11 +6128,15 @@ export function RelatorioCompleto({
                       margin: '0 0 8px 0',
                     }}
                   >
-                    {riskDecomposicaoMemo ? (
+                    {(riskDecomposicaoMotorAware ??
+                      riskDecomposicaoMemo) ? (
                       <CamadaTooltipHover
                         conteudo={
                           <RiskTotalCalcTooltipContent
-                            decomposicao={riskDecomposicaoMemo}
+                            decomposicao={
+                              riskDecomposicaoMotorAware ??
+                              riskDecomposicaoMemo
+                            }
                           />
                         }
                         maxWidthPx={280}
@@ -5679,7 +6151,7 @@ export function RelatorioCompleto({
                             fontVariantNumeric: 'tabular-nums',
                           }}
                         >
-                          {processo.risk_score}
+                          {rsNumeroCabecalhoRisco}
                         </span>
                       </CamadaTooltipHover>
                     ) : (
@@ -5688,7 +6160,7 @@ export function RelatorioCompleto({
                           color: exibicaoScoresRelatorio.rsCorNumero,
                         }}
                       >
-                        {processo.risk_score}
+                        {rsNumeroCabecalhoRisco}
                       </span>
                     )}
                   </p>
@@ -5701,9 +6173,12 @@ export function RelatorioCompleto({
                       margin: 0,
                     }}
                   >
-                    {exibicaoScoresRelatorio.rsLabel}
+                    {scoreBreakdownCarregando
+                      ? '—'
+                      : exibicaoScoresRelatorio.rsLabel}
                   </p>
-                  {isRotuloScoreTerminado(exibicaoScoresRelatorio.rsLabel) ? (
+                  {!scoreBreakdownCarregando &&
+                  isRotuloScoreTerminado(exibicaoScoresRelatorio.rsLabel) ? (
                     <p
                       style={{
                         fontSize: FS.sm,
@@ -5719,7 +6194,9 @@ export function RelatorioCompleto({
                       risco operacional para processo encerrado ou extinto.
                     </p>
                   ) : null}
-                  {(riskDecomposicaoMemo || processo.risk_breakdown) ? (
+                  {(riskDecomposicaoMemo ||
+                    processo.risk_breakdown ||
+                    quadDimBarrasRisk.length > 0) ? (
                     <div
                       style={{
                         marginTop: 18,
@@ -5731,24 +6208,9 @@ export function RelatorioCompleto({
                         minWidth: 0,
                       }}
                     >
-                      {(
-                        riskDecomposicaoMemo
-                          ? [
-                              ['Geológico', riskDecomposicaoMemo.geologico.score],
-                              ['Ambiental', riskDecomposicaoMemo.ambiental.score],
-                              ['Social', riskDecomposicaoMemo.social.score],
-                              ['Regulatório', riskDecomposicaoMemo.regulatorio.score],
-                            ] as const
-                          : processo.risk_breakdown
-                            ? [
-                                ['Geológico', processo.risk_breakdown.geologico],
-                                ['Ambiental', processo.risk_breakdown.ambiental],
-                                ['Social', processo.risk_breakdown.social],
-                                ['Regulatório', processo.risk_breakdown.regulatorio],
-                              ] as const
-                            : []
-                      ).map(([label, val]) => {
-                        const cor = corFaixaRisco(val)
+                      {quadDimBarrasRisk.map(([label, val]) => {
+                        const cor =
+                          val == null ? '#5F5E5A' : corFaixaRisco(val)
                         return (
                           <div
                             key={label}
@@ -5782,7 +6244,10 @@ export function RelatorioCompleto({
                             >
                               <div
                                 style={{
-                                  width: `${Math.min(100, Math.max(0, val))}%`,
+                                  width: `${Math.min(
+                                    100,
+                                    Math.max(0, val ?? 0),
+                                  )}%`,
                                   height: '100%',
                                   backgroundColor: cor,
                                   borderRadius: 3,
@@ -5794,13 +6259,13 @@ export function RelatorioCompleto({
                                 fontSize: FS.base,
                                 fontWeight: 700,
                                 color: cor,
-                                width: 36,
+                                width: 40,
                                 textAlign: 'right',
                                 flexShrink: 0,
                                 fontVariantNumeric: 'tabular-nums',
                               }}
                             >
-                              {val}
+                              {val == null ? '—' : formatNumeroPt(val)}
                             </span>
                           </div>
                         )
@@ -5811,10 +6276,13 @@ export function RelatorioCompleto({
               )}
             </Card>
 
-            {processo.risk_score !== null && riskDecomposicaoMemo ? (
+            {(riskMotorDisponivel || processo.risk_score !== null) &&
+            riskDecomposicaoMemo ? (
               <Card>
                 <RiskDecomposicaoRelatorioPanel
-                  decomposicao={riskDecomposicaoMemo}
+                  decomposicao={
+                    riskDecomposicaoMotorAware ?? riskDecomposicaoMemo
+                  }
                   scoreBreakdown={scoreBreakdown}
                 />
               </Card>
@@ -6229,7 +6697,8 @@ export function RelatorioCompleto({
                 }}
               >
                 <OportunidadeAnaliseTerradarCard
-                  cruzamento={oportunidade.cruzamento}
+                  cruzamento={cruzamentoOportDrawerMotor}
+                  notaMotorRiskOnDemand={riskMotorDisponivel}
                 />
               </div>
             </>
@@ -6423,7 +6892,8 @@ export function RelatorioCompleto({
                     </p>
                   ) : null}
                 </>
-              ) : (
+              ) : fiscal.capag_descricao != null &&
+                fiscal.capag_descricao.trim() !== '' ? (
                 <BlocoParagrafosMultilinha
                   texto={fiscal.capag_descricao}
                   styleParagrafo={{
@@ -6434,6 +6904,22 @@ export function RelatorioCompleto({
                     lineHeight: 1.5,
                   }}
                 />
+              ) : (
+                <p
+                  style={{
+                    fontSize: FS.lg,
+                    color: '#888780',
+                    textAlign: 'center',
+                    margin: '0 0 8px 0',
+                    lineHeight: 1.55,
+                    whiteSpace: 'pre-line',
+                  }}
+                >
+                  {msgCapagIndisponivelMunicipio(
+                    processo.municipio,
+                    processo.uf,
+                  )}
+                </p>
               )}
               {fiscal.capag_estruturado &&
               normalizeCapagNotaDisplay(fiscal.capag) === 'n.d.' &&
@@ -6489,60 +6975,71 @@ export function RelatorioCompleto({
               />
             </Card>
 
-            <Card>
+            {(() => {
+              const receita = fiscal.receita_propria_mi
+              const dividaMi = fiscal.divida_consolidada_mi
+              const pib = fiscal.pib_municipal_mi
+              if (receita == null && dividaMi == null && pib == null) return null
+              const dividaLbl =
+                fiscal.divida_fonte === 'passivo_nao_circulante'
+                  ? 'Passivo não circulante'
+                  : fiscal.divida_fonte === null
+                    ? 'Endividamento'
+                    : 'Dívida consolidada'
+              const dividaTxt =
+                fiscal.divida_exibicao != null &&
+                fiscal.divida_exibicao.trim() !== ''
+                  ? fiscal.divida_exibicao
+                  : dividaMi != null
+                    ? formatarRealBrlInteligente(dividaMi * 1_000_000)
+                    : '\u2014'
+              const rows: {
+                key: string
+                l: string
+                v: string
+                nota?: string
+              }[] = []
+              if (receita != null) {
+                rows.push({
+                  key: 'rp',
+                  l: 'Receita própria',
+                  v: formatarRealBrlInteligente(receita * 1_000_000),
+                })
+              }
+              if (
+                (fiscal.divida_exibicao != null &&
+                  fiscal.divida_exibicao.trim() !== '') ||
+                dividaMi != null
+              ) {
+                rows.push({
+                  key: 'div',
+                  l: dividaLbl,
+                  v: dividaTxt,
+                  nota:
+                    fiscal.divida_fonte === 'passivo_nao_circulante'
+                      ? 'Proxy de endividamento; dívida consolidada não disponível na série atual'
+                      : undefined,
+                })
+              }
+              if (pib != null) {
+                rows.push({
+                  key: 'pib',
+                  l: 'PIB municipal',
+                  v: formatarRealBrlInteligente(pib * 1_000_000),
+                })
+              }
+              const cols = Math.min(3, Math.max(1, rows.length))
+              return (
+                <Card>
               <div
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                  gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
                   columnGap: 20,
                   rowGap: 12,
                 }}
               >
-                {(() => {
-                  const dividaLbl =
-                    fiscal.divida_fonte === 'passivo_nao_circulante'
-                      ? 'Passivo não circulante'
-                      : fiscal.divida_fonte === null
-                        ? 'Endividamento'
-                        : 'Dívida consolidada'
-                  const dividaTxt =
-                    fiscal.divida_exibicao != null &&
-                    fiscal.divida_exibicao.trim() !== ''
-                      ? fiscal.divida_exibicao
-                      : formatarRealBrlInteligente(
-                          fiscal.divida_consolidada_mi * 1_000_000,
-                        )
-                  const rows: {
-                    key: string
-                    l: string
-                    v: string
-                    nota?: string
-                  }[] = [
-                    {
-                      key: 'rp',
-                      l: 'Receita própria',
-                      v: formatarRealBrlInteligente(
-                        fiscal.receita_propria_mi * 1_000_000,
-                      ),
-                    },
-                    {
-                      key: 'div',
-                      l: dividaLbl,
-                      v: dividaTxt,
-                      nota:
-                        fiscal.divida_fonte === 'passivo_nao_circulante'
-                          ? 'Proxy de endividamento; dívida consolidada não disponível na série atual'
-                          : undefined,
-                    },
-                    {
-                      key: 'pib',
-                      l: 'PIB municipal',
-                      v: formatarRealBrlInteligente(
-                        fiscal.pib_municipal_mi * 1_000_000,
-                      ),
-                    },
-                  ]
-                  return rows.map((m) => (
+                {rows.map((m) => (
                     <div
                       key={m.key}
                       style={{
@@ -6596,8 +7093,7 @@ export function RelatorioCompleto({
                         </p>
                       ) : null}
                     </div>
-                  ))
-                })()}
+                  ))}
               </div>
               <p
                 style={{
@@ -6637,6 +7133,8 @@ export function RelatorioCompleto({
                 marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
               />
             </Card>
+              )
+            })()}
 
             {(fiscal.cfem_num_lancamentos ?? 0) > 0 &&
             fiscal.cfem_por_municipio_tier1 &&
@@ -7200,6 +7698,7 @@ export function RelatorioCompleto({
             </Card>
             )}
 
+            {fiscal.incentivos_estaduais.length > 0 ? (
             <Card>
               <SecLabel branco>Incentivos estaduais</SecLabel>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -7225,7 +7724,9 @@ export function RelatorioCompleto({
                 marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
               />
             </Card>
+            ) : null}
 
+            {fiscal.linhas_bndes.length > 0 ? (
             <Card>
               <SecLabel branco>Linhas BNDES</SecLabel>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -7251,21 +7752,11 @@ export function RelatorioCompleto({
                 marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
               />
             </Card>
+            ) : null}
 
             <Card>
               <SecLabel branco>Estimativa CFEM em operação</SecLabel>
-              {fiscal.cfem_estimada_ha === 0 ? (
-                <p
-                  style={{
-                    fontSize: FS.lg,
-                    color: '#5F5E5A',
-                    margin: 0,
-                    lineHeight: 1.5,
-                  }}
-                >
-                  Sem estimativa disponível
-                </p>
-              ) : processo.regime === 'bloqueio_permanente' ? (
+              {processo.regime === 'bloqueio_permanente' ? (
                 <p
                   style={{
                     fontSize: FS.xxl,
@@ -7275,6 +7766,18 @@ export function RelatorioCompleto({
                   }}
                 >
                   Processo bloqueado permanentemente, sem previsão de operação
+                </p>
+              ) : cfemOperAusenciaInformadaDrawer ? (
+                <p
+                  style={{
+                    fontSize: FS.lg,
+                    color: '#888780',
+                    margin: 0,
+                    lineHeight: 1.55,
+                    whiteSpace: 'pre-line',
+                  }}
+                >
+                  {msgCfemOperacaoEstimativaIndisponivel(processo.substancia)}
                 </p>
               ) : (
                 <>
@@ -7425,7 +7928,7 @@ export function RelatorioCompleto({
                             style={{ color: '#EF9F27', fontWeight: 500 }}
                           >
                             {formatarRealBrlInteligente(
-                              fiscal.pib_municipal_mi * 1_000_000,
+                              (pibMiFiscalNum ?? 0) * 1_000_000,
                             )}
                           </span>
                           )

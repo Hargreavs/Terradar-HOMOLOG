@@ -12,6 +12,18 @@ export type { DimensaoOutput, SubfatorOutput } from './scoringS31BreakdownTypes'
 function fmtKm(n: number): string {
   return n.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 }
+/** Preço em BRL/t (não usar fmtKm para preço). */
+function fmtPrecoBrlPorTon(n: number): string {
+  return (
+    new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(n) + '/t'
+  )
+}
+
 
 function classifyLabelRisk(bruto0_100: number): string {
   if (bruto0_100 < 40) return 'Risco baixo'
@@ -574,7 +586,7 @@ export async function dimAmbiental(
       nome: 'APP hídrica',
       fonte: 'flags processo/motor',
       label: classifyLabelRisk(8),
-      texto: 'Flag de sobreposição com APP.',
+      texto: 'Sobreposição com APP identificada no cadastro.',
       valor: 8,
       peso_pct: 1,
       valor_bruto: 8,
@@ -613,7 +625,7 @@ export async function dimAmbiental(
       nome: 'Piso de proximidade UC Uso Sustentável (5 km)',
       fonte: 'flags territorial',
       label: classifyLabelRisk(10),
-      texto: `Flag amb_uc_us_5km aplica piso mínimo (+${fmtKm(flo)}) sem alteração da soma além da própria regra.`,
+      texto: `Infraestrutura de UC ou US a até 5 km do polígono: piso mínimo (+${fmtKm(flo)}) sem alteração da soma além da própria regra.`,
       valor: flo,
       peso_pct: 1,
       valor_bruto: 10,
@@ -651,7 +663,7 @@ export async function dimAmbiental(
       nome: 'Aquífero subjacente',
       fonte: 'flags territorial',
       label: classifyLabelRisk(5),
-      texto: 'Flag amb_aquifero_5km.',
+      texto: 'Aquífero a até 5 km do polígono.',
       valor: 5,
       peso_pct: 1,
       valor_bruto: 5,
@@ -1170,7 +1182,7 @@ function opAtr(
       label: classifyLabelOpp(a3),
       texto:
         pr != null && pr > 0
-          ? `Preço médio monitorado (${fmtKm(pr)} BRL/t).`
+          ? `Preço médio monitorado (${fmtPrecoBrlPorTon(pr)}).`
           : 'Preço externo não informado; posição econômica marcada aqui como fraca até nova evidência.',
       valor: w3 + adjBase / 5,
       peso_pct: 0.2,

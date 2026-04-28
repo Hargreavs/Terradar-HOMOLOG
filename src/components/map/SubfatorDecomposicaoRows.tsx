@@ -1,11 +1,16 @@
 import { Loader2 } from 'lucide-react'
 
 import type { SubfatorOutput } from '../../types/scoreBreakdown'
-import { formatNumeroPt, formatPesoDimensaoLine } from '../../lib/scoreBreakdownFormat'
-import { corFaixaRiscoValor } from '../../lib/riskScoreDecomposicao'
-import { corFaixaOportunidadeValor } from '../../lib/oportunidadeRelatorioUi'
+import {
+  formatNumeroPt,
+  formatPesoDimensaoLine,
+  sanitizarRuídoDecimalNaProsa,
+} from '../../lib/scoreBreakdownFormat'
 
 const FS = { sm: 13, md: 14 } as const
+
+const COR_BARRA_MAGNITUDE = '#6B7280'
+const COR_TEXTO_VALOR = '#D3D1C7'
 
 export function SubfatorBreakdownLoading() {
   return (
@@ -50,25 +55,19 @@ function PesoOuAjuste({ pesoPct }: { pesoPct: number | null }) {
 }
 
 export function SubfatorDecomposicaoRows({
-  variant,
+  variant: _variant,
   subfatores,
 }: {
   variant: 'risk' | 'oportunidade'
   subfatores: SubfatorOutput[]
 }) {
+  void _variant
   return (
     <>
       {subfatores.map((sf, vi) => {
-        const corV =
-          variant === 'risk'
-            ? corFaixaRiscoValor(sf.valor)
-            : corFaixaOportunidadeValor(
-                sf.valor_bruto != null && Number.isFinite(sf.valor_bruto)
-                  ? sf.valor_bruto
-                  : sf.valor,
-              )
+        const pctMag = Math.min(100, Math.max(0, Number(sf.valor_bruto ?? sf.valor)))
         const fonteHover = sf.fonte?.trim() ? `Fonte: ${sf.fonte}` : undefined
-        const labelTrim = sf.label?.trim()
+        const textoLimpo = sanitizarRuídoDecimalNaProsa(sf.texto ?? '')
         return (
           <div key={`${sf.nome}-${vi}`} style={{ marginTop: vi > 0 ? 12 : 0 }}>
             <div
@@ -94,22 +93,6 @@ export function SubfatorDecomposicaoRows({
                 }}
               >
                 {sf.nome}
-                {labelTrim ? (
-                  <span
-                    style={{
-                      marginLeft: 8,
-                      fontSize: 11,
-                      fontWeight: 600,
-                      padding: '2px 8px',
-                      borderRadius: 999,
-                      background: '#2C2C2A',
-                      color: '#C4B8A8',
-                      verticalAlign: 'middle',
-                    }}
-                  >
-                    {labelTrim}
-                  </span>
-                ) : null}
               </span>
               <span
                 style={{
@@ -124,7 +107,7 @@ export function SubfatorDecomposicaoRows({
                   style={{
                     fontSize: FS.md,
                     fontWeight: 600,
-                    color: corV,
+                    color: COR_TEXTO_VALOR,
                     fontVariantNumeric: 'tabular-nums',
                   }}
                 >
@@ -145,14 +128,14 @@ export function SubfatorDecomposicaoRows({
               <div
                 style={{
                   height: '100%',
-                  width: `${Math.min(100, Math.max(0, sf.valor))}%`,
-                  backgroundColor: corV,
+                  width: `${Math.min(100, Math.max(0, pctMag))}%`,
+                  backgroundColor: COR_BARRA_MAGNITUDE,
                   borderRadius: 2,
-                  opacity: sf.valor > 0 ? 0.85 : 0.35,
+                  opacity: sf.valor > 0 ? 0.92 : 0.45,
                 }}
               />
             </div>
-            {sf.texto?.trim() ? (
+            {textoLimpo.trim() ? (
               <p
                 style={{
                   fontSize: FS.sm,
@@ -162,7 +145,7 @@ export function SubfatorDecomposicaoRows({
                   wordBreak: 'break-word',
                 }}
               >
-                {sf.texto}
+                {textoLimpo}
               </p>
             ) : null}
           </div>

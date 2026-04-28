@@ -19,6 +19,11 @@ import {
   SubfatorBreakdownLoading,
   SubfatorDecomposicaoRows,
 } from './SubfatorDecomposicaoRows'
+import {
+  extrairMultiplicadorBiomaBadge,
+  filtrarSubfatoresDimensaoRisco,
+  notaConsolidadorRisk,
+} from '../../lib/scoreBreakdownDimUi'
 
 /** Escala tipográfica alinhada ao drawer (`RelatorioCompleto` FS). */
 const FS = {
@@ -283,6 +288,50 @@ export function RiskDecomposicaoRelatorioPanel({
                 >
                   {d.label}
                 </span>
+                {d.key === 'ambiental'
+                  ? (() => {
+                      const badgeAmbiental = extrairMultiplicadorBiomaBadge(
+                        breakdownData?.dimensoes_risco?.ambiental?.subfatores ??
+                          [],
+                      )
+                      if (!badgeAmbiental) return null
+                      return (
+                        <CamadaTooltipHover
+                          conteudo={
+                            <span
+                              style={{ fontSize: 12, lineHeight: 1.45, color: '#D3D1C7' }}
+                            >
+                              {badgeAmbiental.title}
+                            </span>
+                          }
+                          maxWidthPx={300}
+                          preferAbove
+                          inlineWrap
+                        >
+                          <span
+                            aria-label="Multiplicador de bioma"
+                            style={{
+                              marginLeft: 4,
+                              fontSize: 11,
+                              fontWeight: 600,
+                              letterSpacing: '0.02em',
+                              padding: '2px 6px',
+                              borderRadius: 4,
+                              background: '#2C2C2A',
+                              color: '#B4B2A9',
+                              borderBottom:
+                                '1px dotted rgba(180,178,169,0.45)',
+                              cursor: 'help',
+                              flexShrink: 0,
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            [{badgeAmbiental.label}]
+                          </span>
+                        </CamadaTooltipHover>
+                      )
+                    })()
+                  : null}
               </div>
               <div
                 style={{
@@ -360,9 +409,16 @@ export function RiskDecomposicaoRelatorioPanel({
                   </p>
                 ) : (
                   (() => {
-                    const subs =
+                    const rawSubs =
                       breakdownData?.dimensoes_risco?.[d.key]?.subfatores ?? []
-                    if (!subs.length) {
+                    const subs = filtrarSubfatoresDimensaoRisco(d.key, rawSubs)
+                    const rodapeDim =
+                      d.key === 'social'
+                        ? notaConsolidadorRisk('social', rawSubs)
+                        : d.key === 'regulatorio'
+                          ? notaConsolidadorRisk('regulatorio', rawSubs)
+                          : null
+                    if (!subs.length && !rodapeDim) {
                       return (
                         <p
                           style={{
@@ -376,10 +432,26 @@ export function RiskDecomposicaoRelatorioPanel({
                       )
                     }
                     return (
-                      <SubfatorDecomposicaoRows
-                        variant="risk"
-                        subfatores={subs}
-                      />
+                      <>
+                        {subs.length > 0 ? (
+                          <SubfatorDecomposicaoRows
+                            variant="risk"
+                            subfatores={subs}
+                          />
+                        ) : null}
+                        {rodapeDim ? (
+                          <p
+                            style={{
+                              fontSize: 11,
+                              lineHeight: 1.45,
+                              color: '#5F5E5A',
+                              margin: subs.length > 0 ? '10px 0 0 0' : '0',
+                            }}
+                          >
+                            {rodapeDim}
+                          </p>
+                        ) : null}
+                      </>
                     )
                   })()
                 )
