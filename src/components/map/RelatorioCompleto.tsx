@@ -79,17 +79,9 @@ import {
   type SubstanceMarketState,
 } from '../../lib/substanceMarketState'
 import { useTerritorialAmbiental } from '../../hooks/useTerritorialAmbiental'
-import {
-  appOverlapTextColor,
-  distanciaTextColor,
-  formatDateBR,
-} from '../../lib/territorialAmbientalDisplay'
-import {
-  CORES_DISTANCIA,
-  type TipoAreaSensivel,
-  corDistancia,
-  textoCorDistS31,
-} from '../../lib/distanciaCor'
+import { useScoreBreakdown } from '../../hooks/useScoreBreakdown'
+import { formatDateBR } from '../../lib/territorialAmbientalDisplay'
+import { type TipoAreaSensivel, textoCorDistS31 } from '../../lib/distanciaCor'
 import { biomaMultiplicadorS31, corMultiplicadorBioma } from '../../lib/biomaS31'
 
 type AbaId =
@@ -238,6 +230,67 @@ function formatarDataIsoPtBr(iso: string | null | undefined): string {
   const [y, m, d] = iso.split('-')
   if (!y || !m || !d) return iso
   return `${d}/${m}/${y}`
+}
+
+/** Cores de distância (card Ambiental — leitura direta, km > 0). */
+function corKmCardAmbiental(km: number): string {
+  if (km <= 5) return '#F87171'
+  if (km <= 20) return '#FBBF24'
+  return '#34D399'
+}
+
+/** Zero explícito, ou valor tão pequeno que com 2 decimais vira “0,00 km” → leitura SOBREPOSTO. */
+function isDistanciaKmSobreposta(km: number): boolean {
+  if (!Number.isFinite(km)) return false
+  if (km <= 0) return true
+  if (Math.abs(km) < 1e-9) return true
+  return Number.parseFloat(Math.abs(km).toFixed(2)) === 0
+}
+
+function estiloBadgeSobrepostoAmbiental(): CSSProperties {
+  return {
+    display: 'inline-block',
+    padding: '4px 8px',
+    borderRadius: 6,
+    fontSize: FS.sm,
+    fontWeight: 600,
+    background: '#3B1212',
+    color: '#F87171',
+  }
+}
+
+function badgeCptFromTierKey(
+  tierKey: string,
+): { label: string; bg: string; fg: string } {
+  const m: Record<string, { label: string; bg: string; fg: string }> = {
+    super_critica: { label: 'Severa', bg: '#3B1212', fg: '#F87171' },
+    critica: { label: 'Alta', bg: '#3B2A12', fg: '#FBBF24' },
+    moderada: { label: 'Moderada', bg: '#3B3512', fg: '#FDE047' },
+    media: { label: 'Moderada', bg: '#3B3512', fg: '#FDE047' },
+    baixa: { label: 'Baixa', bg: '#12321F', fg: '#34D399' },
+    sem_dado: { label: 'Sem registros', bg: '#1F1F1F', fg: '#9CA3AF' },
+    sem_registro: { label: 'Sem registros', bg: '#1F1F1F', fg: '#9CA3AF' },
+  }
+  return (
+    m[tierKey] ?? {
+      label: 'Baixa',
+      bg: '#12321F',
+      fg: '#34D399',
+    }
+  )
+}
+
+function normalizarTierCpt(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/-/g, '_')
+}
+
+function textoTendenciaCptAnualPct(tend: number): string {
+  const s = tend > 0 ? '+' : ''
+  return `${s}${tend}% ao ano`
 }
 
 /** Rótulo da substância com acentuação correta (ex.: NIQUEL → Níquel). */
@@ -1838,6 +1891,8 @@ export function RelatorioCompleto({
     fetchedAt: cambioFetchedAt,
   } = useExchangeRate()
 
+  const scoreBreakdown = useScoreBreakdown(processo?.id ?? null)
+
   const commodityMarketState = useMemo((): SubstanceMarketState | null => {
     const im = dados?.intel_mineral
     if (!im) return null
@@ -2126,6 +2181,15 @@ export function RelatorioCompleto({
     metadata,
     oportunidade,
   } = dados
+
+  const dataRodapeRelatorio = (() => {
+    const raw = metadata?.calculado_em
+    if (raw != null && String(raw).trim() !== '') {
+      const fmt = formatarDataIsoPtBr(String(raw).slice(0, 10))
+      if (fmt !== '') return fmt
+    }
+    return new Date().toLocaleDateString('pt-BR')
+  })()
 
   // `semGeom` e `dadosInsuficientes` + `useTerritorialAmbiental` estão no topo
   // (antes de `if (!processo)` / `if (!dados)`) para respeitar a ordem dos hooks.
@@ -3346,34 +3410,33 @@ export function RelatorioCompleto({
 
             {cptUfData != null && typeof cptUfData.tier === 'string' ? (
               <Card>
-                <SecLabel branco>Pressão social · CPT</SecLabel>
-                <p style={{ fontSize: FS.sm, color: '#888780', margin: '0 0 8px 0' }}>
-                  Conflitos no campo — UF:{' '}
-                  <span style={{ color: '#D3D1C7', fontWeight: 500 }}>
-                    {processo.uf}
-                  </span>
+                <SecLabel branco>Conflitos territoriais no estado</SecLabel>
+                <p
+                  style={{
+                    fontSize: FS.sm,
+                    color: 'rgba(255, 255, 255, 0.6)',
+                    margin: '0 0 12px 0',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  Esta área concentra histórico relevante de conflitos rurais
+                  documentados pela Comissão Pastoral da Terra (CPT) — referência
+                  nacional em pressão social sobre projetos de mineração.
                 </p>
                 {(() => {
                   const mult = Number(cptUfData.multiplicador)
-                  const tier = String(cptUfData.tier)
-                  const tierMap: Record<
-                    string,
-                    { label: string; cor: string; emoji: string }
-                  > = {
-                    super_critica: {
-                      label: 'SUPER CRÍTICA',
-                      cor: '#E24B4A',
-                      emoji: '🔴',
-                    },
-                    critica: { label: 'CRÍTICA', cor: '#EF9F27', emoji: '🟠' },
-                    media: { label: 'MÉDIA', cor: '#E8A830', emoji: '🟡' },
-                    baixa: { label: 'BAIXA', cor: '#1D9E75', emoji: '🟢' },
-                  }
-                  const t = tierMap[tier] ?? tierMap.baixa
+                  const tierNorm = normalizarTierCpt(String(cptUfData.tier))
+                  const badge = badgeCptFromTierKey(tierNorm)
                   const f20 = Number(cptUfData.familias_2020) || 0
                   const f24 = Number(cptUfData.familias_2024) || 0
                   const tend =
                     f20 > 0 ? Math.round(((f24 - f20) / f20) * 100) : null
+                  const multFmt = Number.isFinite(mult)
+                    ? mult.toLocaleString('pt-BR', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })
+                    : '—'
                   return (
                     <>
                       <div
@@ -3386,7 +3449,7 @@ export function RelatorioCompleto({
                       >
                         <div>
                           <div style={{ fontSize: FS.sm, color: '#888780' }}>
-                            Ocorrências (5 anos)
+                            Ocorrências (últimos 5 anos)
                           </div>
                           <div style={{ fontSize: FS.lg, color: '#D3D1C7' }}>
                             {cptUfData.total_ocorrencias_5anos != null
@@ -3398,7 +3461,7 @@ export function RelatorioCompleto({
                         </div>
                         <div>
                           <div style={{ fontSize: FS.sm, color: '#888780' }}>
-                            Famílias afetadas
+                            Famílias atingidas
                           </div>
                           <div style={{ fontSize: FS.lg, color: '#D3D1C7' }}>
                             {cptUfData.total_familias_5anos != null
@@ -3408,21 +3471,25 @@ export function RelatorioCompleto({
                               : '—'}
                           </div>
                         </div>
-                        <div>
-                          <div style={{ fontSize: FS.sm, color: '#888780' }}>
-                            Tier
-                          </div>
-                          <div style={{ fontSize: FS.lg, color: t.cor }}>
-                            {t.emoji} {t.label}
-                          </div>
+                      </div>
+                      <div style={{ marginBottom: 10 }}>
+                        <div style={{ fontSize: FS.sm, color: '#888780' }}>
+                          Classificação
                         </div>
-                        <div>
-                          <div style={{ fontSize: FS.sm, color: '#888780' }}>
-                            Mult. risco social
-                          </div>
-                          <div style={{ fontSize: FS.lg, color: t.cor }}>
-                            ×{Number.isFinite(mult) ? mult.toFixed(2) : '—'}
-                          </div>
+                        <div style={{ marginTop: 4 }}>
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              padding: '2px 8px',
+                              borderRadius: 999,
+                              fontSize: FS.sm,
+                              fontWeight: 600,
+                              background: badge.bg,
+                              color: badge.fg,
+                            }}
+                          >
+                            {badge.label}
+                          </span>
                         </div>
                       </div>
                       {tend != null ? (
@@ -3435,16 +3502,42 @@ export function RelatorioCompleto({
                             margin: 0,
                           }}
                         >
-                          Tendência famílias 2020 → 2024:{' '}
+                          Tendência 2020-2024:{' '}
                           <span
                             style={{
                               color: tend > 0 ? '#E8A830' : '#1D9E75',
                             }}
                           >
-                            {tend > 0 ? '↗' : '↘'} {Math.abs(tend)}%
+                            {textoTendenciaCptAnualPct(tend)}
                           </span>
                         </p>
                       ) : null}
+                      <div
+                        style={{
+                          marginTop: 16,
+                          paddingTop: 12,
+                          borderTop: '1px solid rgba(255, 255, 255, 0.1)',
+                        }}
+                      >
+                        <p
+                          style={{
+                            fontSize: FS.sm,
+                            color: 'rgba(255, 255, 255, 0.7)',
+                            lineHeight: 1.45,
+                            margin: 0,
+                          }}
+                        >
+                          <strong style={{ color: '#F1EFE8' }}>
+                            Impacto no Risk Social:
+                          </strong>{' '}
+                          este histórico aplica multiplicador de{' '}
+                          <strong style={{ color: '#F1EFE8' }}>
+                            {multFmt}×{' '}
+                          </strong>
+                          sobre a dimensão Social. Áreas sem registros recebem
+                          multiplicador 1,00×.
+                        </p>
+                      </div>
                       <p
                         style={{
                           fontSize: 11,
@@ -3452,7 +3545,7 @@ export function RelatorioCompleto({
                           margin: '10px 0 0 0',
                         }}
                       >
-                        Fonte: Atlas CPT (Cedoc/CPT)
+                        Fonte: Atlas CPT — Comissão Pastoral da Terra
                       </p>
                     </>
                   )
@@ -3980,14 +4073,19 @@ export function RelatorioCompleto({
                       style={{
                         fontSize: FS.md,
                         fontWeight: 500,
-                        color: appOverlapTextColor(ambiental.app_hidrica.overlap_pct),
+                        color:
+                          ambiental.app_hidrica.overlap_pct > 0
+                            ? '#E8A830'
+                            : '#1D9E75',
                         flexShrink: 0,
                         textAlign: 'right',
                       }}
                     >
-                      {ambiental.app_hidrica.overlap_pct > 0
-                        ? `${ambiental.app_hidrica.overlap_pct.toFixed(2)}% sobreposto`
-                        : 'Não verificada'}
+                      {ambiental.app_hidrica.overlap_pct.toLocaleString('pt-BR', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                      % sobreposto
                     </span>
                   </div>
                   {ambiental.sitios_arqueologicos
@@ -4037,17 +4135,26 @@ export function RelatorioCompleto({
                           `Arqueologia: ${nomeSitio}`
                         )}
                       </span>
-                      <span
-                        style={{
-                          fontSize: FS.md,
-                          fontWeight: 500,
-                          color: CORES_DISTANCIA[corDistancia('SITIO_ARQ', s.distancia_km)]
-                            .texto,
-                          flexShrink: 0,
-                        }}
-                      >
-                        {s.distancia_km.toFixed(2).replace('.', ',')} km
-                      </span>
+                      {isDistanciaKmSobreposta(s.distancia_km) ? (
+                        <span style={estiloBadgeSobrepostoAmbiental()}>
+                          SOBREPOSTO
+                        </span>
+                      ) : (
+                        <span
+                          style={{
+                            fontSize: FS.md,
+                            fontWeight: 500,
+                            color: corKmCardAmbiental(s.distancia_km),
+                            flexShrink: 0,
+                          }}
+                        >
+                          {s.distancia_km.toLocaleString('pt-BR', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}{' '}
+                          km
+                        </span>
+                      )}
                     </div>
                       )
                     })}
@@ -4098,10 +4205,16 @@ export function RelatorioCompleto({
                                         {`Corpo d'água`}
                                       </span>
                                     </CamadaTooltipHover>
-                                    {` (${m.area_ha.toFixed(1)} ha)`}
+                                    {` (${m.area_ha.toLocaleString('pt-BR', {
+                                      minimumFractionDigits: 1,
+                                      maximumFractionDigits: 1,
+                                    })} ha)`}
                                   </>
                                 )
-                              : `Corpo d'água (${m.area_ha.toFixed(1)} ha)`
+                              : `Corpo d'água (${m.area_ha.toLocaleString('pt-BR', {
+                                  minimumFractionDigits: 1,
+                                  maximumFractionDigits: 1,
+                                })} ha)`
                             : "Corpo d'água"
                       return (
                     <div
@@ -4124,33 +4237,46 @@ export function RelatorioCompleto({
                       >
                         {corpoStr(massaIdx === 0)}
                       </span>
-                      <span
-                        style={{
-                          fontSize: FS.md,
-                          fontWeight: 500,
-                          color: distanciaTextColor(m.distancia_km),
-                          flexShrink: 0,
-                        }}
-                      >
-                        {m.distancia_km.toFixed(2).replace('.', ',')} km
-                      </span>
+                      {isDistanciaKmSobreposta(m.distancia_km) ? (
+                        <span style={estiloBadgeSobrepostoAmbiental()}>
+                          SOBREPOSTO
+                        </span>
+                      ) : (
+                        <span
+                          style={{
+                            fontSize: FS.md,
+                            fontWeight: 500,
+                            color: corKmCardAmbiental(m.distancia_km),
+                            flexShrink: 0,
+                          }}
+                        >
+                          {m.distancia_km.toLocaleString('pt-BR', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}{' '}
+                          km
+                        </span>
+                      )}
                     </div>
                       )
                     })}
-                  <span
+                  <div
                     style={{
-                      display: 'block',
-                      textAlign: 'right',
-                      marginTop: FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX,
-                      fontSize: 11,
+                      marginTop: 16,
+                      paddingTop: 12,
+                      borderTop: '1px solid rgba(255, 255, 255, 0.1)',
+                      fontSize: FS.min,
+                      color: 'rgba(255, 255, 255, 0.5)',
                       lineHeight: 1.45,
-                      color: '#5F5E5A',
                     }}
                   >
-                    Atualizado em{' '}
-                    {formatDateBR(ambiental.calculado_em)} · Fontes: IPHAN ·
-                    SNIRH-ANA · TERRADAR
-                  </span>
+                    <div>
+                      Atualizado em {formatDateBR(ambiental.calculado_em)}
+                    </div>
+                    <div style={{ marginTop: 4 }}>
+                      Fontes: IPHAN, SNIRH-ANA
+                    </div>
+                  </div>
                 </>
               ) : null}
             </Card>
@@ -5683,21 +5809,13 @@ export function RelatorioCompleto({
                   ) : null}
                 </>
               )}
-              <FonteLabel
-                dataIso={timestamps.cadastro_mineiro}
-                fonte="TERRADAR, com dados ANM, FUNAI, ICMBio e IBGE"
-                marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
-              />
             </Card>
 
             {processo.risk_score !== null && riskDecomposicaoMemo ? (
               <Card>
                 <RiskDecomposicaoRelatorioPanel
                   decomposicao={riskDecomposicaoMemo}
-                  processo={processo}
-                  territorial={territorial}
-                  fiscalRico={fiscal}
-                  dadosAnm={dados_anm}
+                  scoreBreakdown={scoreBreakdown}
                 />
               </Card>
             ) : null}
@@ -6080,12 +6198,6 @@ export function RelatorioCompleto({
                       operacional não se aplica a processo extinto ou terminal.
                     </p>
                   ) : null}
-                  <FonteLabel
-                    dataIso={timestamps.cadastro_mineiro}
-                    fonte="TERRADAR, com dados ANM, IBGE, Tesouro e USGS"
-                    marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
-                    noWrap
-                  />
                 </Card>
               </div>
 
@@ -6103,6 +6215,7 @@ export function RelatorioCompleto({
                     pesosPerfil={
                       PESOS_OS_POR_PERFIL[perfilOportunidadeAtivo]
                     }
+                    scoreBreakdown={scoreBreakdown}
                   />
                 </Card>
               </div>
@@ -7356,6 +7469,20 @@ export function RelatorioCompleto({
           </>
           )
         ) : null}
+        <div
+          style={{
+            marginTop: 8,
+            paddingTop: 16,
+            borderTop: '1px solid #2C2C2A',
+            fontSize: FS.sm,
+            color: '#888780',
+            lineHeight: 1.45,
+            flexShrink: 0,
+          }}
+        >
+          Fontes consolidadas: ANM, FUNAI, ICMBio, IBGE, Tesouro Nacional, USGS ·
+          Última atualização: {dataRodapeRelatorio}
+        </div>
         </div>
       </div>
     </div>

@@ -11,10 +11,14 @@ import { CamadaTooltipHover } from '../filters/CamadaTooltipHover'
 import {
   CORES_DIMENSAO_OS,
   corFaixaOS,
-  corFaixaOportunidadeValor,
   type DimensaoOSKey,
 } from '../../lib/oportunidadeRelatorioUi'
 import { OportunidadeDimensionCalcTooltipContent } from './OportunidadeDimensionCalcTooltipContent'
+import type { ScoreBreakdownView } from '../../hooks/useScoreBreakdown'
+import {
+  SubfatorBreakdownLoading,
+  SubfatorDecomposicaoRows,
+} from './SubfatorDecomposicaoRows'
 
 const FS = {
   sm: 13,
@@ -39,6 +43,7 @@ function PainelDetalheDimensaoAnimado({
     if (!el) return
 
     if (!isExp) {
+      /* eslint-disable-next-line react-hooks/set-state-in-effect -- reset da animacao ao recolher */
       setMaxPx(0)
       return
     }
@@ -137,10 +142,18 @@ const DIM_CONFIG: {
 export function OportunidadeDecomposicaoRelatorioPanel({
   oportunidade,
   pesosPerfil,
+  scoreBreakdown,
 }: {
   oportunidade: RelatorioOportunidadeData
   pesosPerfil: { atratividade: number; viabilidade: number; seguranca: number }
+  scoreBreakdown: ScoreBreakdownView
 }) {
+  const {
+    data: breakdownData,
+    loading: breakdownLoading,
+    error: breakdownError,
+  } = scoreBreakdown
+
   const [expandido, setExpandido] = useState<Record<DimensaoOSKey, boolean>>(
     () => ({
       atratividade: false,
@@ -160,7 +173,6 @@ export function OportunidadeDecomposicaoRelatorioPanel({
             ? pesos.viabilidade
             : pesos.seguranca,
       valorDim: oportunidade.dimensoes[c.key].valor,
-      variaveis: oportunidade.decomposicao[c.key],
     }))
   }, [oportunidade, pesosPerfil])
 
@@ -342,97 +354,40 @@ export function OportunidadeDecomposicaoRelatorioPanel({
             </button>
 
             <PainelDetalheDimensaoAnimado isExp={isExp} corBar={corDim}>
-              {d.variaveis.map((vrow, vi) => {
-                const impactoNeutro = vrow.impacto_neutro === true
-                const brutoParaCor =
-                  vrow.valor_bruto != null && Number.isFinite(vrow.valor_bruto)
-                    ? vrow.valor_bruto
-                    : vrow.valor
-                const corV = impactoNeutro
-                  ? '#888780'
-                  : corFaixaOportunidadeValor(brutoParaCor)
-                const corBarra = corV
-                const opacidadeBarra = impactoNeutro ? 0.5 : 0.85
-                const tituloLinha = vrow.nome
-                return (
-                  <div key={`${vrow.nome}-${vi}`} style={{ marginTop: vi > 0 ? 12 : 0 }}>
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'flex-start',
-                        gap: 8,
-                        flexWrap: 'wrap',
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: FS.md,
-                          color: '#D3D1C7',
-                          lineHeight: 1.35,
-                          minWidth: 0,
-                          flexGrow: 1,
-                          flexShrink: 1,
-                          flexBasis: 120,
-                          cursor: 'default',
-                        }}
-                      >
-                        {tituloLinha}
-                      </span>
-                      <span
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          flexShrink: 0,
-                          gap: 6,
-                        }}
-                      >
-                        <span
+              {isExp ? (
+                breakdownLoading ? (
+                  <SubfatorBreakdownLoading />
+                ) : breakdownError ? (
+                  <p style={{ fontSize: FS.sm, color: '#E24B4A', margin: 0 }}>
+                    {breakdownError}
+                  </p>
+                ) : (
+                  (() => {
+                    const subs =
+                      breakdownData?.dimensoes_oportunidade?.[d.key]?.subfatores ??
+                      []
+                    if (!subs.length) {
+                      return (
+                        <p
                           style={{
-                            fontSize: FS.md,
-                            fontWeight: 600,
-                            color: corV,
-                            fontVariantNumeric: 'tabular-nums',
+                            fontSize: FS.sm,
+                            color: '#888780',
+                            margin: 0,
                           }}
                         >
-                          {vrow.valor}
-                        </span>
-                      </span>
-                    </div>
-                    <div
-                      style={{
-                        height: 4,
-                        backgroundColor: '#2C2C2A',
-                        borderRadius: 2,
-                        overflow: 'hidden',
-                        marginTop: 6,
-                      }}
-                    >
-                      <div
-                        style={{
-                          height: '100%',
-                          width: `${Math.min(100, Math.max(0, vrow.valor))}%`,
-                          backgroundColor: corBarra,
-                          borderRadius: 2,
-                          opacity:
-                            vrow.valor > 0 ? opacidadeBarra : 0.35,
-                        }}
+                          Nenhum subfator disponível para esta dimensão.
+                        </p>
+                      )
+                    }
+                    return (
+                      <SubfatorDecomposicaoRows
+                        variant="oportunidade"
+                        subfatores={subs}
                       />
-                    </div>
-                    <p
-                      style={{
-                        fontSize: FS.sm,
-                        color: '#888780',
-                        margin: '6px 0 0 0',
-                        lineHeight: 1.4,
-                        wordBreak: 'break-word',
-                      }}
-                    >
-                      {vrow.texto}
-                    </p>
-                  </div>
+                    )
+                  })()
                 )
-              })}
+              ) : null}
             </PainelDetalheDimensaoAnimado>
           </div>
         )
