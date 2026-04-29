@@ -162,9 +162,8 @@ export interface ReportData {
   /** Preço spot master (USD/t), `master_substancias.preco_usd` — não confundir com valor in-situ /ha. */
   preco_spot_usd_t: number
   /**
-   * Preço canônico USD/t vindo de `master_substancias.preco_usd`, preservando
-   * `null` quando a substância não tem série publicada. Usado pelo helper
-   * `exibirPreco` para conversão de unidades em tempo de renderização.
+   * `master_substancias.preco_usd` na mesma unidade física que `preco_unidade_label`
+   * (ex.: USD/kg quando `unidade_preco` = kg; USD/t quando = t). Não assumir sempre tonelada.
    */
   preco_usd_por_t: number | null
   /**
@@ -211,8 +210,16 @@ export interface ReportData {
   /** Lista ou texto da master_substâncias (separadores `;` ou quebra de linha). */
   aplicacoes_substancia?: string | null
   cfem_aliquota_pct: number
-  valor_insitu_usd_ha: number
+  /**
+   * Valor in-situ estimado USD/ha (motor TERRADAR) ou `null` quando inexequível /
+   * sem teor (ex.: gemas sem cubagem no master — não usar 0).
+   */
+  valor_insitu_usd_ha: number | null
   cfem_estimada_ha: number
+  /** `master_substancias.família` — ex.: `gemas_pedras` para disclaimers específicos. */
+  substancia_familia: string | null
+  /** `master_substancias.gap_pp`, quando disponível (evita cálculo reserva−produção com reserva ausente). */
+  gap_pp_master: number | null
 
   // Territorial
   mapa_base64: string
@@ -298,6 +305,40 @@ export interface ReportData {
 
   /** Idioma do PDF exportado (template + LLM). */
   lang: ReportLang
+
+  /**
+   * Contexto qualitativo do motor S31 (subfatores + dicas territoriais) para prompts LLM.
+   * Não inclui pesos nem valores ponderados por subfator — nunca renderizar no HTML do PDF.
+   */
+  subfatores_contexto?: ReportSubfatoresContexto | null
+}
+
+/** Item de subfator sem campos de ponderação (apenas narrativa segura para LLM / PDF externo). */
+export interface ReportSubfatorContextItem {
+  nome: string
+  fonte?: string
+  label: string
+  texto: string
+}
+
+export interface ReportSubfatoresContexto {
+  riscoPorDim?: {
+    geologico?: ReportSubfatorContextItem[]
+    ambiental?: ReportSubfatorContextItem[]
+    social?: ReportSubfatorContextItem[]
+    regulatorio?: ReportSubfatorContextItem[]
+  }
+  oportunidadePorDim?: {
+    atratividade?: ReportSubfatorContextItem[]
+    viabilidade?: ReportSubfatorContextItem[]
+    seguranca?: ReportSubfatorContextItem[]
+  }
+  penalidades_oportunidade?: string[]
+  /** Trecho descritivo (ex. multiplicador de bioma) extraído da prosa do motor, sem fórmulas. */
+  multiplicador_bioma_hint?: string | null
+  /** Trecho sobre conflitos CPT / multiplicador social, se presente na prosa. */
+  conflitos_cpt_hint?: string | null
+  sitios_arqueologicos?: string[]
 }
 
 // Tipos de resposta do LLM

@@ -1,20 +1,18 @@
 import { useCallback, useMemo, useState, type CSSProperties } from 'react'
-import { BarChart3, MapPin, Scale, Shield, TrendingUp } from 'lucide-react'
+import { Scale, Shield, TrendingUp } from 'lucide-react'
 import { UFS_BRASIL } from '../../lib/radar/ufs'
 import { ProspeccaoAnimations } from './ProspeccaoAnimations'
-import { ObjetivoCard, RiscoCard } from './ProspeccaoCards'
-import type { ObjetivoProspeccao, PerfilRisco } from '../../lib/opportunityScore'
+import { RiscoCard } from './ProspeccaoCards'
+import type { PerfilRisco } from '../../lib/opportunityScore'
 
-const STEP_TITLES: Record<1 | 2 | 3, string> = {
-  1: 'Qual seu objetivo com esta prospecção?',
-  2: 'Qual seu apetite de risco?',
-  3: 'Preferência geográfica',
+const STEP_TITLES: Record<1 | 2, string> = {
+  1: 'Qual seu apetite de risco?',
+  2: 'Preferência geográfica',
 }
 
-const STEP_SUBTEXTS: Record<1 | 2 | 3, string> = {
-  1: 'Escolha o que melhor descreve sua busca.',
-  2: 'Isso ajusta os pesos da Pontuação de Oportunidade.',
-  3: 'Opcional. Deixe em branco para analisar todo o Brasil.',
+const STEP_SUBTEXTS: Record<1 | 2, string> = {
+  1: 'Isso ajusta os pesos da Pontuação de Oportunidade.',
+  2: 'Opcional. Deixe em branco para analisar todo o Brasil.',
 }
 
 const navGhostButtonStyle: CSSProperties = {
@@ -29,8 +27,6 @@ const navGhostButtonStyle: CSSProperties = {
 
 export function ProspeccaoWizard({
   reducedMotion,
-  proObjetivo,
-  setProObjetivo,
   proRisco,
   setProRisco,
   proUfs,
@@ -41,8 +37,6 @@ export function ProspeccaoWizard({
   initialStep,
 }: {
   reducedMotion: boolean
-  proObjetivo: ObjetivoProspeccao | null
-  setProObjetivo: (o: ObjetivoProspeccao | null) => void
   proRisco: PerfilRisco | null
   setProRisco: (r: PerfilRisco | null) => void
   proUfs: string[]
@@ -50,29 +44,27 @@ export function ProspeccaoWizard({
   onCancel: () => void
   onAnalisar: () => void
   exiting?: boolean
-  initialStep?: 1 | 2 | 3
+  initialStep?: 1 | 2
 }) {
-  const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(() => initialStep ?? 1)
+  const [currentStep, setCurrentStep] = useState<1 | 2>(() => initialStep ?? 1)
   const [stepContentVisible, setStepContentVisible] = useState(true)
   const [animationVisible, setAnimationVisible] = useState(true)
-  const [animationStep, setAnimationStep] = useState<1 | 2 | 3>(() => initialStep ?? 1)
+  const [animationStep, setAnimationStep] = useState<1 | 2>(() => initialStep ?? 1)
 
   const stepValido = useMemo(() => {
     switch (currentStep) {
       case 1:
-        return proObjetivo != null
-      case 2:
         return proRisco != null
-      case 3:
+      case 2:
         return true
       default:
         return false
     }
-  }, [currentStep, proObjetivo, proRisco])
+  }, [currentStep, proRisco])
 
   const changeStep = useCallback(
     (newStep: number) => {
-      const ns = newStep as 1 | 2 | 3
+      const ns = newStep as 1 | 2
       if (reducedMotion) {
         setCurrentStep(ns)
         setAnimationStep(ns)
@@ -93,7 +85,7 @@ export function ProspeccaoWizard({
   )
 
   const handleNextStep = () => {
-    if (currentStep < 3) changeStep(currentStep + 1)
+    if (currentStep < 2) changeStep(currentStep + 1)
   }
 
   const handlePrevStep = () => {
@@ -181,7 +173,7 @@ export function ProspeccaoWizard({
                 marginBottom: 12,
               }}
             >
-              Etapa {currentStep} de 3
+              Etapa {currentStep} de 2
             </div>
             <div
               style={{
@@ -191,7 +183,7 @@ export function ProspeccaoWizard({
                 maxWidth: 280,
               }}
             >
-              {([1, 2, 3] as const).map((step) => (
+              {([1, 2] as const).map((step) => (
                 <div
                   key={step}
                   style={{
@@ -229,43 +221,6 @@ export function ProspeccaoWizard({
                   flexShrink: 0,
                 }}
               >
-                <ObjetivoCard
-                  selected={proObjetivo === 'investir'}
-                  onClick={() => setProObjetivo('investir')}
-                  icon={<TrendingUp size={20} />}
-                  iconSelectedColor="#E8A830"
-                  label="Investir em processo existente"
-                  desc="Parceria ou aquisição em ativos já titulados"
-                />
-                <ObjetivoCard
-                  selected={proObjetivo === 'novo_requerimento'}
-                  onClick={() => setProObjetivo('novo_requerimento')}
-                  icon={<MapPin size={20} />}
-                  iconSelectedColor="#22C55E"
-                  label="Identificar áreas para novo requerimento"
-                  desc="Áreas com potencial para novo requerimento ou título"
-                />
-                <ObjetivoCard
-                  selected={proObjetivo === 'avaliar_portfolio'}
-                  onClick={() => setProObjetivo('avaliar_portfolio')}
-                  icon={<BarChart3 size={20} />}
-                  iconSelectedColor="#3B82F6"
-                  label="Avaliar portfólio atual"
-                  desc="Desempenho e risco da carteira que você acompanha"
-                />
-              </div>
-            ) : null}
-
-            {currentStep === 2 ? (
-              <div
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 12,
-                  width: '100%',
-                  flexShrink: 0,
-                }}
-              >
                 <RiscoCard
                   selected={proRisco === 'conservador'}
                   onClick={() => setProRisco('conservador')}
@@ -293,7 +248,7 @@ export function ProspeccaoWizard({
               </div>
             ) : null}
 
-            {currentStep === 3 ? (
+            {currentStep === 2 ? (
               <div style={{ flexShrink: 0, width: '100%' }}>
                 <div
                   style={{
@@ -384,7 +339,7 @@ export function ProspeccaoWizard({
             <button
               type="button"
               disabled={!stepValido}
-              onClick={currentStep < 3 ? handleNextStep : onAnalisar}
+              onClick={currentStep < 2 ? handleNextStep : onAnalisar}
               style={{
                 backgroundColor: '#EF9F27',
                 color: '#0D0D0C',
@@ -407,7 +362,7 @@ export function ProspeccaoWizard({
                 e.currentTarget.style.boxShadow = 'none'
               }}
             >
-              {currentStep < 3 ? 'Próximo' : 'Analisar oportunidades'}
+              {currentStep < 2 ? 'Próximo' : 'Analisar oportunidades'}
             </button>
           </div>
         </div>

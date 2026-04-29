@@ -5,10 +5,19 @@ export interface RadarFiltros {
   perfil: PerfilRisco
   substancias: string[] | null
   ufs: string[] | null
+  /** Filtro granular de fases processuais; null ou omitido = sem filtro na RPC */
+  fases?: string[] | null
 }
 
 /** Default page size for `listarOportunidades` and Radar results UI (see Fix D1). */
 export const RADAR_OPORTUNIDADES_PAGE_SIZE = 20
+
+/** Opportunity Score máximo aplicado pela RPC conforme perfil (prospecção Radar). */
+export const SCORE_MINIMO_POR_PERFIL: Record<PerfilRisco, number> = {
+  conservador: 60,
+  moderado: 50,
+  arrojado: 35,
+}
 
 export interface RadarPagina {
   resultados: OpportunityResult[]
@@ -107,7 +116,9 @@ export async function listarOportunidades(
         ? filtros.substancias.map((s) => s.toUpperCase())
         : null,
     p_ufs: filtros.ufs,
-    p_score_minimo: 25,
+    p_score_minimo: SCORE_MINIMO_POR_PERFIL[filtros.perfil],
+    p_fases:
+      filtros.fases && filtros.fases.length > 0 ? filtros.fases.map((x) => x.trim()).filter(Boolean) : null,
     p_limit: limit,
     p_offset: offset,
   })
@@ -129,10 +140,42 @@ export async function contarOportunidades(filtros: RadarFiltros): Promise<number
         ? filtros.substancias.map((s) => s.toUpperCase())
         : null,
     p_ufs: filtros.ufs,
-    p_score_minimo: 25,
+    p_score_minimo: SCORE_MINIMO_POR_PERFIL[filtros.perfil],
+    p_fases:
+      filtros.fases && filtros.fases.length > 0 ? filtros.fases.map((x) => x.trim()).filter(Boolean) : null,
   })
   if (error) throw error
   return Number(data ?? 0)
+}
+
+/** Linha típica de `fn_radar_contar_por_fase`. */
+export interface ContagemPorFaseRow {
+  fase: string
+  total: number
+}
+
+/**
+ * Distribuição de contagens por fase (sem filtro de fase aplicado nos demais filtros).
+ */
+export async function contarPorFase(filtros: RadarFiltros): Promise<Map<string, number>> {
+  const { perfil, substancias, ufs } = filtros
+  const map = new Map<string, number>()
+  const { data, error } = await supabase.rpc('fn_radar_contar_por_fase', {
+    p_perfil: perfil,
+    p_substancias:
+      substancias && substancias.length > 0 ? substancias.map((s) => s.toUpperCase()) : null,
+    p_ufs: ufs,
+    p_score_minimo: SCORE_MINIMO_POR_PERFIL[perfil],
+  })
+  if (error) throw error
+  const rows = (data ?? []) as Array<{ fase?: unknown; total?: unknown }>
+  for (const row of rows) {
+    const f = typeof row.fase === 'string' ? row.fase : ''
+    const tRaw = row.total
+    const n = typeof tRaw === 'number' ? tRaw : Number(tRaw ?? 0)
+    if (f) map.set(f, Number.isFinite(n) ? n : 0)
+  }
+  return map
 }
 
 export interface SubstanciaItem {

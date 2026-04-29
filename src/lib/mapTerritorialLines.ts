@@ -16,6 +16,7 @@ export const TERRITORIAL_LINES_LAYERS = {
   uc_pi: 'territorial-lines-uc-pi',
   uc_us: 'territorial-lines-uc-us',
   quilombola: 'territorial-lines-quilombola',
+  assentamento: 'territorial-lines-assentamento',
   ferrovia: 'territorial-lines-ferrovia',
   rodovia: 'territorial-lines-rodovia',
   porto: 'territorial-lines-porto',
@@ -33,6 +34,7 @@ const CATEGORIAS: { id: TerritorialLineCategoria; cor: string }[] = [
   { id: 'uc_pi', cor: '#2F7A3E' },
   { id: 'uc_us', cor: '#5FAE6C' },
   { id: 'quilombola', cor: '#C4915A' },
+  { id: 'assentamento', cor: '#A78BFA' },
   { id: 'ferrovia', cor: '#B8B8B8' },
   { id: 'rodovia', cor: '#D9A55B' },
   { id: 'porto', cor: '#7EADD4' },
@@ -60,7 +62,7 @@ export async function fetchTerritorialLines(
 }
 
 /**
- * Registra source + 8 layers de linha + 1 de labels. Idempotente.
+ * Registra source + 9 layers de linha + 1 de labels. Idempotente.
  * Todos começam com visibility none e opacity 0 (fade-in depois).
  */
 export function addTerritorialLinesLayers(
@@ -90,7 +92,11 @@ export function addTerritorialLinesLayers(
           visibility: 'none',
         },
         paint: {
-          'line-color': cor,
+          'line-color': [
+            'coalesce',
+            ['get', 'cor_hex'],
+            cor,
+          ] as unknown as string,
           'line-width': 2.5,
           'line-opacity': 0,
           'line-dasharray': [3, 2],
@@ -142,45 +148,74 @@ export function updateTerritorialLinesData(
   src.setData(fc)
 }
 
+/** Evita ler style já destruído no teardown sem bloquear visibilidade durante flyTo (`isStyleLoaded` pode ficar brevemente falso na animação). */
+function mapStyleSafelyReady(map: mapboxgl.Map): boolean {
+  try {
+    return !!map.getStyle()
+  } catch {
+    return false
+  }
+}
+
 export function setTerritorialLinesVisibility(
   map: mapboxgl.Map,
   visible: boolean,
 ): void {
+  if (!mapStyleSafelyReady(map)) return
+
   const layerIds = [
     ...Object.values(TERRITORIAL_LINES_LAYERS),
     TERRITORIAL_LINES_LABEL_LAYER,
   ]
 
   if (visible) {
-    for (const layerId of layerIds) {
-      if (map.getLayer(layerId)) {
-        map.setLayoutProperty(layerId, 'visibility', 'visible')
-      }
-    }
-    requestAnimationFrame(() => {
-      for (const layerId of Object.values(TERRITORIAL_LINES_LAYERS)) {
+    try {
+      for (const layerId of layerIds) {
         if (map.getLayer(layerId)) {
-          map.setPaintProperty(layerId, 'line-opacity', 1.0)
+          map.setLayoutProperty(layerId, 'visibility', 'visible')
         }
       }
-      if (map.getLayer(TERRITORIAL_LINES_LABEL_LAYER)) {
-        map.setPaintProperty(TERRITORIAL_LINES_LABEL_LAYER, 'text-opacity', 1)
+    } catch {
+      return
+    }
+    requestAnimationFrame(() => {
+      if (!mapStyleSafelyReady(map)) return
+      try {
+        for (const layerId of Object.values(TERRITORIAL_LINES_LAYERS)) {
+          if (map.getLayer(layerId)) {
+            map.setPaintProperty(layerId, 'line-opacity', 1.0)
+          }
+        }
+        if (map.getLayer(TERRITORIAL_LINES_LABEL_LAYER)) {
+          map.setPaintProperty(TERRITORIAL_LINES_LABEL_LAYER, 'text-opacity', 1)
+        }
+      } catch {
+        /* style removido entre frames */
       }
     })
   } else {
-    for (const layerId of Object.values(TERRITORIAL_LINES_LAYERS)) {
-      if (map.getLayer(layerId)) {
-        map.setPaintProperty(layerId, 'line-opacity', 0)
+    try {
+      for (const layerId of Object.values(TERRITORIAL_LINES_LAYERS)) {
+        if (map.getLayer(layerId)) {
+          map.setPaintProperty(layerId, 'line-opacity', 0)
+        }
       }
-    }
-    if (map.getLayer(TERRITORIAL_LINES_LABEL_LAYER)) {
-      map.setPaintProperty(TERRITORIAL_LINES_LABEL_LAYER, 'text-opacity', 0)
+      if (map.getLayer(TERRITORIAL_LINES_LABEL_LAYER)) {
+        map.setPaintProperty(TERRITORIAL_LINES_LABEL_LAYER, 'text-opacity', 0)
+      }
+    } catch {
+      return
     }
     setTimeout(() => {
-      for (const layerId of layerIds) {
-        if (map.getLayer(layerId)) {
-          map.setLayoutProperty(layerId, 'visibility', 'none')
+      if (!mapStyleSafelyReady(map)) return
+      try {
+        for (const layerId of layerIds) {
+          if (map.getLayer(layerId)) {
+            map.setLayoutProperty(layerId, 'visibility', 'none')
+          }
         }
+      } catch {
+        /* style removido */
       }
     }, 350)
   }
@@ -192,6 +227,7 @@ const CATEGORIA_TO_CAMADA_GEO: Record<TerritorialLineCategoria, CamadaGeoId | nu
     uc_pi: 'unidades_conservacao',
     uc_us: 'unidades_conservacao',
     quilombola: 'quilombolas',
+    assentamento: 'assentamentos',
     ferrovia: 'ferrovias',
     rodovia: 'rodovias',
     porto: 'portos',
@@ -221,6 +257,7 @@ const CATEGORIA_TO_SOURCE_ID: Record<TerritorialLineCategoria, string | null> =
     uc_pi: 'api-uc-pi-src',
     uc_us: 'api-uc-us-src',
     quilombola: 'api-quilombola-src',
+    assentamento: 'api-assentamento-src',
     ferrovia: 'api-ferrovia-src',
     rodovia: 'api-rodovias-src',
     porto: 'api-porto-src',
@@ -276,6 +313,8 @@ export function applyFeatureHighlights(
   map: mapboxgl.Map,
   highlights: Map<string, Set<string>>,
 ): void {
+  if (!mapStyleSafelyReady(map)) return
+
   for (const [sourceId, idsToHighlight] of highlights.entries()) {
     if (!map.getSource(sourceId) || idsToHighlight.size === 0) continue
 
@@ -313,15 +352,21 @@ export function applyFeatureHighlights(
 }
 
 export function clearFeatureHighlights(map: mapboxgl.Map): void {
+  if (!mapStyleSafelyReady(map)) return
+
   const sourceIds = Object.values(CATEGORIA_TO_SOURCE_ID).filter(
     (s): s is string => s !== null,
   )
-  for (const sourceId of sourceIds) {
-    if (!map.getSource(sourceId)) continue
-    try {
-      map.removeFeatureState({ source: sourceId })
-    } catch {
-      /* silencioso */
+  try {
+    for (const sourceId of sourceIds) {
+      if (!map.getSource(sourceId)) continue
+      try {
+        map.removeFeatureState({ source: sourceId })
+      } catch {
+        /* silencioso */
+      }
     }
+  } catch {
+    /* teardown / mapbox interno incompleto */
   }
 }

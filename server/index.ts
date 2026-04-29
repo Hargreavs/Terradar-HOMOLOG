@@ -6,6 +6,7 @@ import express from 'express'
 import mapRouter from './routes/map'
 import processosViewportRouter from './routes/processos-viewport'
 import radarRouter from './routes/radar'
+import { scoreBreakdownRouter } from './routes/scoreBreakdown'
 import { POST } from '../app/api/generate-report/route'
 import { supabase } from './supabase'
 import { pool } from './pool'
@@ -33,6 +34,7 @@ app.use(express.json({ limit: '50mb' }))
 app.use(mapRouter)
 app.use(processosViewportRouter)
 app.use(radarRouter)
+app.use(scoreBreakdownRouter)
 
 function hasManualRiskScore(
   scores: Record<string, unknown> | null,
@@ -541,6 +543,37 @@ app.get('/api/cpt/uf/:uf', async (req, res) => {
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[/api/cpt/uf]', err)
     res.status(500).json({ error: msg })
+  }
+})
+
+const UUID_PROCESSO_PATH =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Alertas Radar IA por processo (RPC `fn_radar_alertas_processo`).
+ * GET /api/processos/:id/alertas — `id` = UUID (`processos.id`).
+ */
+app.get('/api/processos/:id/alertas', async (req, res) => {
+  const rawId = String(req.params.id ?? '').trim()
+  if (!UUID_PROCESSO_PATH.test(rawId)) {
+    return res.status(400).json({ error: 'UUID de processo inválido.' })
+  }
+  res.setHeader('Cache-Control', 'public, max-age=60')
+  try {
+    const { data, error } = await supabase.rpc('fn_radar_alertas_processo', {
+      p_processo_id: rawId,
+    })
+    if (error) {
+      console.error('[/api/processos/:id/alertas] Supabase:', error)
+      return res.status(500).json({ error: 'Não foi possível carregar os alertas.' })
+    }
+    if (data === null || data === undefined) {
+      return res.json({ total: 0, diretos: [], setoriais: [] })
+    }
+    return res.json(data as Record<string, unknown>)
+  } catch (err: unknown) {
+    console.error('[/api/processos/:id/alertas]', err)
+    return res.status(500).json({ error: 'Não foi possível carregar os alertas.' })
   }
 })
 

@@ -120,6 +120,7 @@ export function MapSearchBar({
   onAbrirRelatorio,
 }: MapSearchBarProps) {
   const searchQuery = useMapStore((s) => s.filtros.searchQuery)
+  const processoSeleccionadoNoMapa = useMapStore((s) => s.processoSelecionado)
   const [local, setLocal] = useState(searchQuery)
   const [inputFocado, setInputFocado] = useState(false)
   const [badgePulse, setBadgePulse] = useState(false)
@@ -152,11 +153,30 @@ export function MapSearchBar({
   const adicionarProcesso = useMapStore((s) => s.adicionarProcesso)
   const requestFlyTo = useMapStore((s) => s.requestFlyTo)
   const selecionarProcesso = useMapStore((s) => s.selecionarProcesso)
+  const limparSelecaoMapa = useMapStore((s) => s.limparSelecaoMapa)
 
+  /**
+   * Expande filtros conflitantes para o processo buscado caber em
+   * `applyFilters`. Sem isto, o polígono pode sumir após o `X` (a seleção
+   * é a única coisa que o mantinha visível via RAMO MERGE busca, mas
+   * desaparece quando `processoSelecionado` volta a `null`). Mesma filosofia
+   * do auto-toggle de inativos. Não toca em UF/substancia/risk/titular —
+   * são filtros intencionais que o usuário pode ter aplicado deliberadamente.
+   */
   const aplicarSelecaoNaBusca = useCallback((p: Processo) => {
     const st = useMapStore.getState()
     if (processoEhInativoParaCamadaMapa(p) && !st.filtros.exibirProcessosInativos) {
       st.setFiltro('exibirProcessosInativos', true)
+    }
+    if (st.filtros.camadas[p.regime] === false) {
+      st.toggleCamada(p.regime)
+    }
+    const ano = p.ano_protocolo
+    if (Number.isFinite(ano)) {
+      const [y0, y1] = st.filtros.periodo
+      if (ano < y0 || ano > y1) {
+        st.setFiltro('periodo', [Math.min(y0, ano), Math.max(y1, ano)])
+      }
     }
     st.selecionarProcesso(p, 'busca')
   }, [])
@@ -206,9 +226,16 @@ export function MapSearchBar({
     }, 3000)
   }, [])
 
+  // Sincroniza searchQuery → local APENAS quando não há chip de processo
+  // selecionado. Com chip ativo, input fica vazio (placeholder "Buscar
+  // outro processo..."), evitando duplicação visual chip + texto.
   useEffect(() => {
-    setLocal(searchQuery)
-  }, [searchQuery])
+    if (processoSeleccionadoNoMapa) {
+      setLocal('')
+    } else {
+      setLocal(searchQuery)
+    }
+  }, [searchQuery, processoSeleccionadoNoMapa])
 
   useEffect(() => {
     if (listaItemsCount === 0) {
@@ -353,19 +380,20 @@ export function MapSearchBar({
         // Fly-to apenas quando há geom real (permitirSemGeom produz NaN
         // como sentinel). Guard com Number.isFinite para não crashar o
         // Mapbox.
-        if (Number.isFinite(alvo.lat) && Number.isFinite(alvo.lng)) {
+        const temGeomNaMapa =
+          Number.isFinite(alvo.lat) && Number.isFinite(alvo.lng)
+        if (temGeomNaMapa) {
           requestFlyTo(alvo.lat, alvo.lng, 10, alvo.id)
-        }
-        // Abre drawer com enrichment via callback do MapView (paridade com
-        // `escolherResultadoRemoto`). Fallback defensivo: se callback não foi
-        // injetada, abre só o drawer (sem enrichment).
-        if (onAbrirRelatorio) {
-          void onAbrirRelatorio(alvo, 'processo')
         } else {
-          useMapStore.getState().setRelatorioDrawerAberto(true)
+          // Sem polígono: popover não existe; relatório pré-enriquecido só via drawer.
+          if (onAbrirRelatorio) {
+            void onAbrirRelatorio(alvo, 'processo')
+          } else {
+            useMapStore.getState().setRelatorioDrawerAberto(true)
+          }
         }
         recordSearch(alvo.numero)
-        setFiltro('searchQuery', alvo.numero)
+        setLocal('')
         setInputFocado(false)
         inputRef.current?.blur()
       } catch (err) {
@@ -416,6 +444,7 @@ export function MapSearchBar({
       }
       recordSearch(alvo.numero)
       setFiltro('searchQuery', alvo.numero)
+      setLocal('')
       return
     }
     void buscarRemoto(local)
@@ -433,7 +462,7 @@ export function MapSearchBar({
   const escolherProcesso = useCallback(
     (p: Processo) => {
       const texto = p.numero
-      setLocal(texto)
+      setLocal('')
       setFiltro('searchQuery', texto)
       aplicarSelecaoNaBusca(p)
       requestFlyTo(p.lat, p.lng, 10, p.id)
@@ -493,23 +522,22 @@ export function MapSearchBar({
         adicionarProcesso(p)
       }
       aplicarSelecaoNaBusca(p)
-      // Fly-to apenas se há geometria. Sem geom: drawer abre, mapa não move.
-      // Guard com `Number.isFinite` porque `permitirSemGeom` produz NaN
-      // como sentinel em lat/lng (compat com type `Processo.lat: number`).
       if (item.tem_geom && Number.isFinite(p.lat) && Number.isFinite(p.lng)) {
         requestFlyTo(p.lat, p.lng, 10, p.id)
       }
-      // Abre drawer com enrichment via callback do MapView (paridade com
-      // caminho popup→"Ver relatório completo"). Fallback defensivo: se
-      // callback não foi injetada, abre só o drawer (sem enrichment).
-      if (onAbrirRelatorio) {
-        void onAbrirRelatorio(p, 'processo')
-      } else {
-        useMapStore.getState().setRelatorioDrawerAberto(true)
+      const somenteCadastroSemMapa =
+        !item.tem_geom ||
+        !Number.isFinite(p.lat) ||
+        !Number.isFinite(p.lng)
+      if (somenteCadastroSemMapa) {
+        if (onAbrirRelatorio) {
+          void onAbrirRelatorio(p, 'processo')
+        } else {
+          useMapStore.getState().setRelatorioDrawerAberto(true)
+        }
       }
       recordSearch(p.numero)
-      setFiltro('searchQuery', p.numero)
-      setLocal(p.numero)
+      setLocal('')
       setRemoteResultados([])
       setRemoteTotal(0)
       setRemoteTipo('vazio')
@@ -565,14 +593,18 @@ export function MapSearchBar({
 
   const limparBusca = useCallback(() => {
     setLocal('')
-    setFiltro('searchQuery', '')
-    selecionarProcesso(null)
     setHighlightIdx(-1)
     setFeedbackErro(null)
+    limparSelecaoMapa()
     inputRef.current?.focus()
-  }, [setFiltro, selecionarProcesso])
+  }, [limparSelecaoMapa])
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      limparBusca()
+      return
+    }
     if (!listaVisivel) {
       if (e.key === 'Enter') tryFlyToNumero()
       return
@@ -635,11 +667,6 @@ export function MapSearchBar({
         return
       }
     }
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      setHighlightIdx(-1)
-      inputRef.current?.blur()
-    }
   }
 
   return (
@@ -690,6 +717,16 @@ export function MapSearchBar({
             className="ml-3 shrink-0 text-[#888780]"
             aria-hidden
           />
+          {processoSeleccionadoNoMapa ? (
+            <div
+              className="ml-2 flex max-w-[min(220px,42%)] shrink-0 items-center rounded-md border border-solid border-amber-500/40 bg-amber-500/15 py-1 px-2"
+              title={processoSeleccionadoNoMapa.numero}
+            >
+              <span className="truncate font-semibold tabular-nums text-[15px] text-amber-100">
+                {processoSeleccionadoNoMapa.numero}
+              </span>
+            </div>
+          ) : null}
           <input
             ref={inputRef}
             type="text"
@@ -724,12 +761,16 @@ export function MapSearchBar({
               window.setTimeout(() => setInputFocado(false), 180)
             }}
             onKeyDown={onKeyDown}
-            placeholder="Buscar endereço, cidade, estado ou número do processo..."
+            placeholder={
+              processoSeleccionadoNoMapa
+                ? 'Buscar outro processo, endereço ou cidade...'
+                : 'Buscar endereço, cidade, estado ou número do processo...'
+            }
             autoComplete="off"
             spellCheck={false}
             className="min-w-0 flex-1 border-0 bg-transparent pl-3 text-[15px] text-[#F1EFE8] outline-none placeholder:text-[15px] placeholder:text-[#5F5E5A]"
           />
-          {local.trim().length > 0 ? (
+          {local.trim().length > 0 || processoSeleccionadoNoMapa ? (
             <button
               type="button"
               aria-label="Limpar busca"

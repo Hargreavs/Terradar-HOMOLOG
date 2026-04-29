@@ -77,7 +77,7 @@ export const CAMADAS_GEO_COLOR: Record<CamadaGeoId, string> = {
   terras_indigenas: '#E07A5F',
   unidades_conservacao: '#4A9E4A',
   quilombolas: '#C4915A',
-  assentamentos: '#7B8B3D',
+  assentamentos: '#A78BFA',
   sitios_arqueologicos: '#8B5A3C',
   aquiferos: '#4A90B8',
   massas_agua: '#4DA6D9',
@@ -528,6 +528,7 @@ export function camadaGeoIdFromLayerId(layerId: string): CamadaGeoId | null {
   if (layerId.startsWith('api-')) {
     if (layerId.startsWith('api-ti-')) return 'terras_indigenas'
     if (layerId.startsWith('api-quilombola-')) return 'quilombolas'
+    if (layerId.startsWith('api-assentamento-')) return 'assentamentos'
     if (layerId.startsWith('api-uc-pi-') || layerId.startsWith('api-uc-us-'))
       return 'unidades_conservacao'
     if (layerId.startsWith('api-aquifero-')) return 'aquiferos'

@@ -5,7 +5,7 @@ import type { CfemBreakdownMunicipio } from '../src/types/index'
 
 // ── Territorial Analysis (PostGIS automático) ──────────────────
 export interface AreaProtegida {
-  tipo: 'TI' | 'UC' | 'QUILOMBOLA'
+  tipo: 'TI' | 'UC' | 'QUILOMBOLA' | 'ASSENTAMENTO_INCRA'
   nome: string
   categoria: string | null
   orgao: string | null
@@ -163,10 +163,10 @@ export async function getCfemBreakdownPorMunicipio(
       unknown
     >[]
 
-    const municipio_total = histRows.reduce(
-      (s, row) => s + cfemMunicipioRowValor(row),
-      0,
-    )
+    const municipioHistDisponivel = !histRpc.error
+    const municipio_total = municipioHistDisponivel
+      ? histRows.reduce((s, row) => s + cfemMunicipioRowValor(row), 0)
+      : null
     const mapaMuni = new Map<number, number>()
     for (const row of histRows) {
       const a = cfemMunicipioRowAno(row)
@@ -190,7 +190,9 @@ export async function getCfemBreakdownPorMunicipio(
       (ufRow?.uf != null ? String(ufRow.uf).trim() : '') || ufFallback
 
     const pct =
-      municipio_total > 0 ? (bucket.processo_total / municipio_total) * 100 : 0
+      municipio_total != null && municipio_total > 0
+        ? (bucket.processo_total / municipio_total) * 100
+        : 0
 
     breakdown.push({
       municipio_nome: bucket.municipio_nome,

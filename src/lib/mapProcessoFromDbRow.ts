@@ -7,6 +7,7 @@ import type {
   Regime,
   RiskBreakdown,
 } from '../types'
+import { parseProcessoUuid } from './processoUuid'
 import { isProcessoTerminal, parseAtivoDerivado } from './processoStatus'
 
 const EMPTY_FISCAL: DadosFiscais = {
@@ -205,9 +206,17 @@ export function mapDbRowToMapProcesso(
   row: Record<string, unknown>,
   opts?: { permitirSemGeom?: boolean },
 ): Processo | null {
-  const id = String(row.id ?? row.numero ?? '')
   const numero = String(row.numero ?? '').trim()
   if (!numero) return null
+
+  const idResolved = parseProcessoUuid(row.id)
+  if (!idResolved) {
+    console.warn('[mapDbRowToMapProcesso] id ausente ou invalido para UUID;', {
+      numero,
+      rawId: row.id,
+    })
+    return null
+  }
 
   const permitirSemGeom = opts?.permitirSemGeom === true
   const geom = extractGeom(row.geom)
@@ -223,11 +232,11 @@ export function mapDbRowToMapProcesso(
   if (temPoligono) {
     const outer = polyCoords[0]!
     ;[lng, lat] = ringCentroidLngLat(outer)
-    geojson = buildGeojson(id, polyCoords)
+    geojson = buildGeojson(idResolved, polyCoords)
   } else {
     lat = Number.NaN
     lng = Number.NaN
-    geojson = buildGeojson(id, [[]])
+    geojson = buildGeojson(idResolved, [[]])
   }
 
   const regimeStr = String(row.regime ?? '')
@@ -340,11 +349,13 @@ export function mapDbRowToMapProcesso(
     risk_score === null ? 'bloqueado' : terminal ? 'inativo' : 'ativo'
 
   return {
-    id,
+    id: idResolved,
     numero,
     regime,
     fase,
     substancia,
+    substancia_familia:
+      optStr(row.substancia_familia as string | null | undefined) ?? null,
     is_mineral_estrategico: false,
     titular,
     cnpj_titular: optStr(row.cnpj_titular),
@@ -410,11 +421,13 @@ export function mapDbRowToMapProcesso(
  * Adaptador: converte uma feature do GeoJSON retornado por
  * /api/processos/viewport em Processo, reusando mapDbRowToMapProcesso.
  *
- * Features da viewport têm shape:
- *   { type: 'Feature', geometry: {...}, properties: { numero, titular, ... } }
+ * O RPC expoe o UUID principal em `properties.processoId` (camelCase), nao
+ * sempre como `properties.id`; o mapper aceita apenas `row.id`, por isso
+ * normalizamos para `id` aqui antes de delegar (evita `id` falsy + fallback
+ * erroneo sobre `numero` em mapDbRowToMapProcesso).
  *
- * O SQL expõe scores como campos planos em `properties`; convertemos para
- * `scores_persistido` aninhado antes de delegar a `mapDbRowToMapProcesso`.
+ * O SQL também expõe scores como campos planos em `properties`;
+ * convertermos para `scores_persistido` aninhado antes de delegar.
  */
 export function mapViewportFeatureToProcesso(
   feature: unknown,
@@ -453,11 +466,15 @@ export function mapViewportFeatureToProcesso(
       }
     : null
 
+  const normalizedId =
+    parseProcessoUuid(properties.id ?? properties.processo_id ?? properties.processoId)
+
   return mapDbRowToMapProcesso({
     ...properties,
     geom: geometry,
     scores_persistido: scoresPersistido,
     ativo_derivado: parseAtivoDerivado(properties.ativo_derivado),
+    ...(normalizedId ? { id: normalizedId } : {}),
   })
 }
 

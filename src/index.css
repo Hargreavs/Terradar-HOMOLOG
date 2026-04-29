@@ -404,6 +404,26 @@ input[type='range']::-moz-range-track {
     }
   }
 
+  .terraeRadarIndeterminateBar {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 38%;
+    border-radius: 2px;
+    background: linear-gradient(90deg, rgba(239, 159, 39, 0.15), #ef9f27, rgba(239, 159, 39, 0.15));
+    animation: terraeRadarIndeterminateShift 1.15s linear infinite;
+  }
+
+  @keyframes terraeRadarIndeterminateShift {
+    0% {
+      transform: translateX(-120%);
+    }
+    100% {
+      transform: translateX(320%);
+    }
+  }
+
   @keyframes terrae-radar-kpi-impacto-opacity {
     0%,
     100% {
@@ -534,6 +554,41 @@ input[type='range']::-moz-range-track {
 
 .terrae-intel-busca-processos::-ms-clear {
   display: none;
+}
+
+/* Radar IA — strip de loading no topo do feed (refetch sem esvaziar lista) */
+.terrae-radar-feed-loading-strip {
+  height: 2px;
+  background-color: rgba(239, 159, 39, 0.16);
+  position: relative;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .terrae-radar-feed-loading-strip::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+    width: 40%;
+    border-radius: 1px;
+    background: linear-gradient(
+      90deg,
+      rgba(245, 158, 11, 0),
+      #ef9f27,
+      rgba(245, 158, 11, 0)
+    );
+    animation: terrae-radar-feed-loading-shift 1.05s linear infinite;
+  }
+}
+
+@keyframes terrae-radar-feed-loading-shift {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
 }
 
 /* Scrollbar customizada para dark theme */

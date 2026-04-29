@@ -8,6 +8,22 @@ export interface DimensaoOportunidadeJsonb {
   subfatores?: unknown[]
 }
 
+/** Item da decomposição interna Opportunity (valor = valor_bruto × peso_pct, arred./1 casa). Cam. A2. */
+export type OppSubfatorBrutoItem = {
+  codigo: string
+  valor_bruto: number
+  peso_pct: number
+  valor: number
+}
+
+export type BreakdownA = OppSubfatorBrutoItem[]
+export type BreakdownB = OppSubfatorBrutoItem[]
+export type BreakdownC = OppSubfatorBrutoItem[]
+
+function oppWeightedPart(bruto: number, pesoInternoDaDimensao: number): number {
+  return Math.round(bruto * pesoInternoDaDimensao * 10) / 10
+}
+
 export interface OpportunityResult {
   processoId: string
   scoreTotal: number
@@ -41,6 +57,10 @@ export interface OpportunityResult {
   /** Extraído de `dimensoes_oportunidade.penalidades` (S31) quando a RPC devolve o JSON. */
   penalidades?: string[]
   calculatedAt?: string | null
+
+  breakdownA?: BreakdownA
+  breakdownB?: BreakdownB
+  breakdownC?: BreakdownC
 }
 
 /** @deprecated S31 Fase 3: tabelas substituídas por scores no banco (RPC). */
@@ -487,6 +507,123 @@ export function computeOpportunityForProcesso(
   const C6 = normalizeAlertasFavoraveis(processo.alertas)
   const scoreC = C1 * 0.35 + C2 * 0.2 + C3 * 0.15 + C4 * 0.15 + C5 * 0.1 + C6 * 0.05
 
+  const breakdownA: BreakdownA = [
+    {
+      codigo: 'A1',
+      valor_bruto: A1,
+      peso_pct: 0.25,
+      valor: oppWeightedPart(A1, 0.25),
+    },
+    {
+      codigo: 'A2',
+      valor_bruto: A2,
+      peso_pct: 0.25,
+      valor: oppWeightedPart(A2, 0.25),
+    },
+    {
+      codigo: 'A3',
+      valor_bruto: A3,
+      peso_pct: 0.2,
+      valor: oppWeightedPart(A3, 0.2),
+    },
+    {
+      codigo: 'A4',
+      valor_bruto: A4,
+      peso_pct: 0.15,
+      valor: oppWeightedPart(A4, 0.15),
+    },
+    {
+      codigo: 'A5',
+      valor_bruto: A5,
+      peso_pct: 0.15,
+      valor: oppWeightedPart(A5, 0.15),
+    },
+  ]
+
+  const breakdownB: BreakdownB = [
+    {
+      codigo: 'B1',
+      valor_bruto: B1,
+      peso_pct: 0.2,
+      valor: oppWeightedPart(B1, 0.2),
+    },
+    {
+      codigo: 'B2',
+      valor_bruto: B2,
+      peso_pct: 0.2,
+      valor: oppWeightedPart(B2, 0.2),
+    },
+    {
+      codigo: 'B3',
+      valor_bruto: B3,
+      peso_pct: 0.15,
+      valor: oppWeightedPart(B3, 0.15),
+    },
+    {
+      codigo: 'B4',
+      valor_bruto: B4,
+      peso_pct: 0.1,
+      valor: oppWeightedPart(B4, 0.1),
+    },
+    {
+      codigo: 'B5',
+      valor_bruto: B5,
+      peso_pct: 0.1,
+      valor: oppWeightedPart(B5, 0.1),
+    },
+    {
+      codigo: 'B6',
+      valor_bruto: B6,
+      peso_pct: 0.15,
+      valor: oppWeightedPart(B6, 0.15),
+    },
+    {
+      codigo: 'B7',
+      valor_bruto: B7,
+      peso_pct: 0.1,
+      valor: oppWeightedPart(B7, 0.1),
+    },
+  ]
+
+  const breakdownC: BreakdownC = [
+    {
+      codigo: 'C1',
+      valor_bruto: C1,
+      peso_pct: 0.35,
+      valor: oppWeightedPart(C1, 0.35),
+    },
+    {
+      codigo: 'C2',
+      valor_bruto: C2,
+      peso_pct: 0.2,
+      valor: oppWeightedPart(C2, 0.2),
+    },
+    {
+      codigo: 'C3',
+      valor_bruto: C3,
+      peso_pct: 0.15,
+      valor: oppWeightedPart(C3, 0.15),
+    },
+    {
+      codigo: 'C4',
+      valor_bruto: C4,
+      peso_pct: 0.15,
+      valor: oppWeightedPart(C4, 0.15),
+    },
+    {
+      codigo: 'C5',
+      valor_bruto: C5,
+      peso_pct: 0.1,
+      valor: oppWeightedPart(C5, 0.1),
+    },
+    {
+      codigo: 'C6',
+      valor_bruto: C6,
+      peso_pct: 0.05,
+      valor: oppWeightedPart(C6, 0.05),
+    },
+  ]
+
   const pesos = PESOS_PERFIL[perfilRisco]
   let score = Math.round(scoreA * pesos.a + scoreB * pesos.b + scoreC * pesos.c)
 
@@ -584,6 +721,9 @@ export function computeOpportunityForProcesso(
     faixa,
     fatoresPositivos: fatoresPositivos.slice(0, 3),
     fatoresAtencao: fatoresAtencao.slice(0, 2),
+    breakdownA,
+    breakdownB,
+    breakdownC,
   }
 }
 

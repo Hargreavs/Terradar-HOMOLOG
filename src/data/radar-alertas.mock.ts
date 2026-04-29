@@ -11,6 +11,8 @@ export interface RadarAlerta {
   hora: string
   substancias_afetadas: string[]
   processos_afetados_ids: string[]
+  /** Contagem do servidor (quando disponível); senão usar `processos_afetados_ids.length`. */
+  total_processos_afetados?: number
   /** Texto da seção Análise Terrae (fallback: ementa). */
   analise?: string
   urgencia: 'imediata' | 'medio_prazo' | 'longo_prazo'

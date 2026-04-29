@@ -11,10 +11,19 @@ import { CamadaTooltipHover } from '../filters/CamadaTooltipHover'
 import {
   CORES_DIMENSAO_OS,
   corFaixaOS,
-  corFaixaOportunidadeValor,
   type DimensaoOSKey,
 } from '../../lib/oportunidadeRelatorioUi'
 import { OportunidadeDimensionCalcTooltipContent } from './OportunidadeDimensionCalcTooltipContent'
+import type { ScoreBreakdownView } from '../../hooks/useScoreBreakdown'
+import {
+  SubfatorBreakdownLoading,
+  SubfatorDecomposicaoRows,
+} from './SubfatorDecomposicaoRows'
+import {
+  partitionAtratividadeSubs,
+} from '../../lib/scoreBreakdownDimUi'
+import { formatNumeroPt } from '../../lib/scoreBreakdownFormat'
+import { resolverPenalidadeDisclaimer } from '../../lib/oportunidadePenalidadesDisclaimer'
 
 const FS = {
   sm: 13,
@@ -39,6 +48,7 @@ function PainelDetalheDimensaoAnimado({
     if (!el) return
 
     if (!isExp) {
+      /* eslint-disable-next-line react-hooks/set-state-in-effect -- reset da animacao ao recolher */
       setMaxPx(0)
       return
     }
@@ -137,10 +147,18 @@ const DIM_CONFIG: {
 export function OportunidadeDecomposicaoRelatorioPanel({
   oportunidade,
   pesosPerfil,
+  scoreBreakdown,
 }: {
   oportunidade: RelatorioOportunidadeData
   pesosPerfil: { atratividade: number; viabilidade: number; seguranca: number }
+  scoreBreakdown: ScoreBreakdownView
 }) {
+  const {
+    data: breakdownData,
+    loading: breakdownLoading,
+    error: breakdownError,
+  } = scoreBreakdown
+
   const [expandido, setExpandido] = useState<Record<DimensaoOSKey, boolean>>(
     () => ({
       atratividade: false,
@@ -160,7 +178,6 @@ export function OportunidadeDecomposicaoRelatorioPanel({
             ? pesos.viabilidade
             : pesos.seguranca,
       valorDim: oportunidade.dimensoes[c.key].valor,
-      variaveis: oportunidade.decomposicao[c.key],
     }))
   }, [oportunidade, pesosPerfil])
 
@@ -342,133 +359,122 @@ export function OportunidadeDecomposicaoRelatorioPanel({
             </button>
 
             <PainelDetalheDimensaoAnimado isExp={isExp} corBar={corDim}>
-              {d.variaveis.map((vrow, vi) => {
-                const impactoNeutro = vrow.impacto_neutro === true
-                const brutoParaCor =
-                  vrow.valor_bruto != null && Number.isFinite(vrow.valor_bruto)
-                    ? vrow.valor_bruto
-                    : vrow.valor
-                const corV = impactoNeutro
-                  ? '#888780'
-                  : corFaixaOportunidadeValor(brutoParaCor)
-                const corBarra = corV
-                const opacidadeBarra = impactoNeutro ? 0.5 : 0.85
-                const tituloLinha = vrow.nome
-                return (
-                  <div key={`${vrow.nome}-${vi}`} style={{ marginTop: vi > 0 ? 12 : 0 }}>
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'flex-start',
-                        gap: 8,
-                        flexWrap: 'wrap',
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: FS.md,
-                          color: '#D3D1C7',
-                          lineHeight: 1.35,
-                          minWidth: 0,
-                          flexGrow: 1,
-                          flexShrink: 1,
-                          flexBasis: 120,
-                          cursor: 'default',
-                        }}
-                      >
-                        {tituloLinha}
-                      </span>
-                      <span
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          flexShrink: 0,
-                          gap: 6,
-                        }}
-                      >
-                        <span
+              {isExp ? (
+                breakdownLoading ? (
+                  <SubfatorBreakdownLoading />
+                ) : breakdownError ? (
+                  <p style={{ fontSize: FS.sm, color: '#E24B4A', margin: 0 }}>
+                    {breakdownError}
+                  </p>
+                ) : (
+                  (() => {
+                    const rawSubs =
+                      breakdownData?.dimensoes_oportunidade?.[d.key]?.subfatores ??
+                      []
+                    const { linhasSubfatores, bonusBadge } =
+                      d.key === 'atratividade'
+                        ? partitionAtratividadeSubs(rawSubs)
+                        : { linhasSubfatores: rawSubs, bonusBadge: null }
+                    if (
+                      linhasSubfatores.length === 0 &&
+                      (d.key !== 'atratividade' || !bonusBadge)
+                    ) {
+                      return (
+                        <p
                           style={{
-                            fontSize: FS.md,
-                            fontWeight: 600,
-                            color: corV,
-                            fontVariantNumeric: 'tabular-nums',
+                            fontSize: FS.sm,
+                            color: '#888780',
+                            margin: 0,
                           }}
                         >
-                          {vrow.valor}
-                        </span>
-                      </span>
-                    </div>
-                    <div
-                      style={{
-                        height: 4,
-                        backgroundColor: '#2C2C2A',
-                        borderRadius: 2,
-                        overflow: 'hidden',
-                        marginTop: 6,
-                      }}
-                    >
-                      <div
-                        style={{
-                          height: '100%',
-                          width: `${Math.min(100, Math.max(0, vrow.valor))}%`,
-                          backgroundColor: corBarra,
-                          borderRadius: 2,
-                          opacity:
-                            vrow.valor > 0 ? opacidadeBarra : 0.35,
-                        }}
-                      />
-                    </div>
-                    <p
-                      style={{
-                        fontSize: FS.sm,
-                        color: '#888780',
-                        margin: '6px 0 0 0',
-                        lineHeight: 1.4,
-                        wordBreak: 'break-word',
-                      }}
-                    >
-                      {vrow.texto}
-                    </p>
-                  </div>
+                          Decomposição não disponível para este processo no fluxo atual.
+                        </p>
+                      )
+                    }
+                    return (
+                      <>
+                        {linhasSubfatores.length > 0 ? (
+                          <SubfatorDecomposicaoRows
+                            variant="oportunidade"
+                            subfatores={linhasSubfatores}
+                          />
+                        ) : null}
+                        {d.key === 'atratividade' && bonusBadge ? (
+                          <div
+                            style={{
+                              marginTop:
+                                linhasSubfatores.length > 0 ? 10 : 0,
+                              fontSize: FS.sm,
+                              fontWeight: 600,
+                              color: '#46A672',
+                              textAlign: 'right',
+                              fontVariantNumeric: 'tabular-nums',
+                            }}
+                          >
+                            +
+                            {formatNumeroPt(bonusBadge.valor)} pontos · Mineral
+                            crítico
+                          </div>
+                        ) : null}
+                      </>
+                    )
+                  })()
                 )
-              })}
+              ) : null}
             </PainelDetalheDimensaoAnimado>
           </div>
         )
       })}
 
-      {oportunidade.penalidades && oportunidade.penalidades.length > 0 ? (
-        <div
-          style={{
-            marginTop: 20,
-            borderRadius: 6,
-            border: '1px solid rgba(248, 113, 113, 0.4)',
-            background: 'rgba(248, 113, 113, 0.07)',
-            padding: 10,
-            boxSizing: 'border-box',
-          }}
-        >
+      {(() => {
+        const disc = resolverPenalidadeDisclaimer(oportunidade.penalidades)
+        if (!disc) return null
+        return (
           <div
             style={{
-              fontSize: FS.sm,
-              fontWeight: 700,
-              color: '#F87171',
-              marginBottom: 6,
+              marginTop: 20,
+              borderRadius: 6,
+              border: '1px solid rgba(248, 113, 113, 0.4)',
+              background: 'rgba(248, 113, 113, 0.07)',
+              padding: 10,
+              boxSizing: 'border-box',
             }}
           >
-            Penalidades aplicadas (motor S31)
-          </div>
-          {oportunidade.penalidades.map((p, i) => (
             <div
-              key={`${i}-${p.slice(0, 20)}`}
-              style={{ fontSize: FS.md, color: '#D3D1C7', lineHeight: 1.45, marginTop: i > 0 ? 4 : 0 }}
+              style={{
+                fontSize: FS.sm,
+                fontWeight: 700,
+                color: '#F87171',
+                marginBottom: 8,
+              }}
             >
-              {p}
+              {disc.titulo}
             </div>
-          ))}
-        </div>
-      ) : null}
+            <p
+              style={{
+                fontSize: FS.md,
+                color: '#D3D1C7',
+                lineHeight: 1.45,
+                margin: 0,
+              }}
+            >
+              {disc.corpo}
+            </p>
+            <p
+              style={{
+                fontSize: FS.sm,
+                fontStyle: 'italic',
+                color: '#888780',
+                marginTop: 12,
+                marginBottom: 0,
+                lineHeight: 1.45,
+              }}
+            >
+              {disc.rodape}
+            </p>
+          </div>
+        )
+      })()}
     </div>
   )
 }

@@ -5,10 +5,10 @@ import {
 } from '../../lib/reportFonteResProd'
 import type { ReportL10n } from './reportL10n'
 import {
-  exibirPreco,
   fmtNum,
   fmtPct,
   fmtValorInsituUsdMiPerHa,
+  formatUsdSpotDeclaradoMaster,
   nzFmt,
   paragraphsFromLLM,
   sanitizeReportText,
@@ -19,6 +19,90 @@ import {
 } from './reportHtmlUtils'
 
 const TOTAL = 8
+
+/** Linhas da tabela CFEM na página 5: últimos N anos civis (evita overflow com o callout). */
+const CFEM_TABLE_CALENDAR_YEARS = 5
+
+function potencialValorInSituKpiPdf(
+  data: ReportData,
+  t: ReportL10n,
+): { valorInner: string; subHtml: string } {
+  const v = data.valor_insitu_usd_ha
+  if (v != null && Number.isFinite(v) && v > 0) {
+    return {
+      valorInner: `US$ ${fmtValorInsituUsdMiPerHa(v)}<span class="card-unit">/ha</span>`,
+      subHtml: sanitizeReportText(t.potencialTeoricoBrutoSub),
+    }
+  }
+  if (data.substancia_familia === 'gemas_pedras') {
+    return {
+      valorInner: sanitizeReportText(t.potencialGemasNaoAplicavelValor),
+      subHtml: sanitizeReportText(t.potencialGemasNaoAplicavelSub),
+    }
+  }
+  return {
+    valorInner: sanitizeReportText(t.nd),
+    subHtml: sanitizeReportText(t.potencialInsituAusenteCubagemSub),
+  }
+}
+
+function blocoPosicaoBrasilGemas(data: ReportData, t: ReportL10n): string {
+  const prodStr =
+    data.producao_br_pct_raw != null
+      ? fmtPct(data.producao_br_pct_raw, t.locale)
+      : sanitizeReportText(t.nd)
+  const uf = String(data.top_uf_produtora ?? '').trim()
+  const topPct =
+    data.top_uf_pct != null &&
+    typeof data.top_uf_pct === 'number' &&
+    Number.isFinite(data.top_uf_pct)
+      ? fmtPct(data.top_uf_pct, t.locale)
+      : null
+  const linhaTopo =
+    uf !== '' && topPct !== null
+      ? `<p style="font-size:9pt;line-height:1.45;margin:10px 0 0;">${sanitizeReportText(t.gemasTopProdutorLinha(uf, topPct))}</p>`
+      : ''
+
+  const tblAplic = `<table class="dsm" style="margin-top:10px;"><tr><td>${sanitizeReportText(t.tblAplicacoes)}</td><td>${sanitizeReportText(t.tblAplicacoesVal)}</td></tr></table>`
+
+  return `<h2 style="margin-top:0;">${sanitizeReportText(t.posicaoBrasil)}</h2>
+  <p style="font-size:9pt;line-height:1.45;">${sanitizeReportText(t.gemasProducaoDeclaradaLinha(prodStr))}</p>
+  <p style="font-size:9pt;line-height:1.45;margin:8px 0 0;">${sanitizeReportText(t.gemasReservasNdParagrafo)}</p>
+  ${linhaTopo}
+  ${tblAplic}`
+}
+
+function pctReservaBrTd(data: ReportData, t: ReportL10n): string {
+  if (data.reservas_br_pct_raw == null) {
+    return `${sanitizeReportText(t.nd)} &nbsp;<span style="font-size:8pt;color:var(--text-muted);">${sanitizeReportText(t.reservasMundiaisNdNota)}</span>`
+  }
+  return `${fmtPct(data.reservas_mundiais_pct, t.locale)} ${sanitizeReportText(t.doTotalGlobal)}`
+}
+
+type RowComAno = { ano: number }
+
+/**
+ * Filtra para os últimos `windowSize` anos civis até `yearRef` (inclusivo); se vazio, usa os
+ * `windowSize` anos mais recentes com dado.
+ */
+function sliceCfemRowsLastCalendarYears<T extends RowComAno>(
+  rows: T[],
+  yearRef: number,
+  windowSize: number,
+): T[] {
+  const yFloor = yearRef - (windowSize - 1)
+  const inWindow = rows.filter(
+    (r) => r.ano > 0 && r.ano >= yFloor && r.ano <= yearRef,
+  )
+  if (inWindow.length > 0) {
+    return [...inWindow].sort((a, b) => a.ano - b.ano)
+  }
+  return [...rows]
+    .filter((r) => r.ano > 0)
+    .sort((a, b) => b.ano - a.ano)
+    .slice(0, windowSize)
+    .sort((a, b) => a.ano - b.ano)
+}
 
 /**
  * Converte estagio_index (1-5) em índice do array `maturidade` (0-4).
@@ -177,6 +261,8 @@ export function buildPage2_SumarioVital(
     </div>`
       : ''
 
+  const potencialP2 = potencialValorInSituKpiPdf(data, t)
+
   const htmlResult = `<div class="page content breathe">
   <div class="ptag">TERRADAR ${sanitizeReportText(data.processo)}</div>
   <h1>${sanitizeReportText(t.p2Tag)}</h1>
@@ -196,8 +282,8 @@ export function buildPage2_SumarioVital(
     </div>
     <div class="card">
       <div class="card-lbl">${sanitizeReportText(t.potencialTeoricoBrutoLabel)}</div>
-      <div class="card-val gold card-insitu-mi" style="font-size:13pt;">US$ ${fmtValorInsituUsdMiPerHa(data.valor_insitu_usd_ha)}<span class="card-unit">/ha</span></div>
-      <div class="card-sub">${sanitizeReportText(t.potencialTeoricoBrutoSub)}</div>
+      <div class="card-val gold card-insitu-mi" style="font-size:13pt;">${potencialP2.valorInner}</div>
+      <div class="card-sub">${potencialP2.subHtml}</div>
     </div>
     <div class="card">
       <div class="card-lbl">${sanitizeReportText(t.tendenciaPreco)}</div>
@@ -298,7 +384,7 @@ export function buildPage3_Territorio(
     })
     .join('')
 
-  return `<div class="page content compact">
+  return `<div class="page content compact page-p3-terr">
   <div class="ptag">TERRADAR ${sanitizeReportText(data.processo)}</div>
   <h1>${sanitizeReportText(t.p3Tag)}</h1>
   <div class="hl">${sanitizeReportText(llm.headline)}</div>
@@ -338,17 +424,36 @@ export function buildPage4_Mercado(
       ? textoAposSemFonteOficial(data.fonte_res_prod)
       : ''
 
+  const langSpot = t.locale.startsWith('en') ? 'en' : 'pt'
+
   let gapStr = ''
   if (!semFonteResProd) {
-    const gapPp = data.reservas_mundiais_pct - data.producao_mundial_pct
-    gapStr =
-      gapPp >= 0
-        ? `<strong class="green">+${gapPp.toLocaleString(t.locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} p.p.</strong> ${sanitizeReportText(t.tblGapPotencial)}`
-        : `<strong>${gapPp.toLocaleString(t.locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} p.p.</strong>`
+    const gapMaster =
+      data.gap_pp_master != null && Number.isFinite(data.gap_pp_master)
+        ? Number(data.gap_pp_master)
+        : null
+    const rr = data.reservas_br_pct_raw
+    const prod = data.producao_br_pct_raw
+
+    if (gapMaster != null) {
+      gapStr =
+        gapMaster >= 0
+          ? `<strong class="green">+${gapMaster.toLocaleString(t.locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} p.p.</strong> ${sanitizeReportText(t.tblGapPotencial)}`
+          : `<strong>${gapMaster.toLocaleString(t.locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} p.p.</strong>`
+    } else if (rr != null && prod != null) {
+      const gapPp = rr - prod
+      gapStr =
+        gapPp >= 0
+          ? `<strong class="green">+${gapPp.toLocaleString(t.locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} p.p.</strong> ${sanitizeReportText(t.tblGapPotencial)}`
+          : `<strong>${gapPp.toLocaleString(t.locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} p.p.</strong>`
+    } else {
+      gapStr = sanitizeReportText(t.nd)
+    }
   }
 
-  const blocoPosicaoBrasil = semFonteResProd
-    ? `<h2 style="margin-top:0;">${sanitizeReportText(t.contextoGlobalTitulo)} &mdash; ${sanitizeReportText(data.substancia_anm)}</h2>
+  const blocoPosicaoBrasil =
+    semFonteResProd
+      ? `<h2 style="margin-top:0;">${sanitizeReportText(t.contextoGlobalTitulo)} &mdash; ${sanitizeReportText(data.substancia_anm)}</h2>
   <p style="text-align:center;font-size:10.5pt;line-height:1.45;color:#4a4a48;margin:0 0 10px 0;">${sanitizeReportText(t.disclaimerSemFonteResProd)}</p>
   ${
     complementoSemFonte !== ''
@@ -358,9 +463,11 @@ export function buildPage4_Mercado(
   <table class="dsm">
         <tr><td>${sanitizeReportText(t.tblAplicacoes)}</td><td>${sanitizeReportText(t.tblAplicacoesVal)}</td></tr>
       </table>`
-    : `<h2 style="margin-top:0;">${sanitizeReportText(t.posicaoBrasil)}</h2>
+      : data.substancia_familia === 'gemas_pedras'
+        ? blocoPosicaoBrasilGemas(data, t)
+        : `<h2 style="margin-top:0;">${sanitizeReportText(t.posicaoBrasil)}</h2>
       <table class="dsm">
-        <tr><td>${sanitizeReportText(t.tblReservasMundiais)}</td><td>${fmtPct(data.reservas_mundiais_pct, t.locale)} ${sanitizeReportText(t.doTotalGlobal)}</td></tr>
+        <tr><td>${sanitizeReportText(t.tblReservasMundiais)}</td><td>${pctReservaBrTd(data, t)}</td></tr>
         <tr><td>${sanitizeReportText(t.tblProducaoMundial)}</td><td>${fmtPct(data.producao_mundial_pct, t.locale)} ${sanitizeReportText(t.doTotalGlobal)}</td></tr>
         <tr><td>${sanitizeReportText(t.tblGap)}</td><td>${gapStr}</td></tr>
         <tr><td>${sanitizeReportText(t.tblAplicacoes)}</td><td>${sanitizeReportText(t.tblAplicacoesVal)}</td></tr>
@@ -369,6 +476,8 @@ export function buildPage4_Mercado(
   const rodapeP4 = semFonteResProd
     ? sanitizeReportText(t.contextoGlobalIndisponivelRodape)
     : sanitizeReportText(t.fontesP4)
+
+  const potencialP4 = potencialValorInSituKpiPdf(data, t)
 
   return `<div class="page content">
   <div class="ptag">TERRADAR ${sanitizeReportText(data.processo)}</div>
@@ -380,10 +489,14 @@ export function buildPage4_Mercado(
     <div class="kpi">
       <div class="kpi-lbl">${sanitizeReportText(t.precoSpot)}</div>
       <div class="kpi-val gold">${sanitizeReportText(
-        exibirPreco(
-          data.preco_usd_por_t,
-          data.unidade_mercado,
-          t.locale.startsWith('en') ? 'en' : 'pt',
+        formatUsdSpotDeclaradoMaster(
+          {
+            preco_usd_por_t: data.preco_usd_por_t,
+            preco_brl_por_t: data.preco_brl_por_t,
+            ptax: data.ptax,
+            preco_unidade_label: data.preco_unidade_label,
+          },
+          langSpot,
         ),
       )}</div>
       <div class="kpi-sub">${data.preco_sub_label != null ? sanitizeReportText(data.preco_sub_label) : sanitizeReportText(t.refSpot)}</div>
@@ -428,8 +541,8 @@ export function buildPage4_Mercado(
   <div class="kpis">
     <div class="kpi">
       <div class="kpi-lbl">${sanitizeReportText(t.potencialTeoricoBrutoLabel)}</div>
-      <div class="kpi-val gold kpi-val-mi">US$ ${fmtValorInsituUsdMiPerHa(data.valor_insitu_usd_ha)}<span class="card-unit">/ha</span></div>
-      <div class="kpi-sub">${sanitizeReportText(t.potencialTeoricoBrutoSub)}</div>
+      <div class="kpi-val gold kpi-val-mi">${potencialP4.valorInner}</div>
+      <div class="kpi-sub">${potencialP4.subHtml}</div>
     </div>
   </div>
 
@@ -488,19 +601,36 @@ export function buildPage5_Fiscal(
   </div>`
 
   let cfemBlocoHistorico = cfemBlocoHistoricoLegacy
+  const cfemAnoReferencia =
+    data.cfem_ultimo_ano != null &&
+    String(data.cfem_ultimo_ano).trim() !== '' &&
+    Number.isFinite(Number(data.cfem_ultimo_ano))
+      ? Number(data.cfem_ultimo_ano)
+      : new Date().getFullYear()
+
   if (tier1Num > 0 && tier1PorMun.length > 0) {
-    const anos = tier1PorMun.map((r) => r.ano).filter((a) => a > 0)
-    const anoMin = anos.length ? Math.min(...anos) : 0
-    const anoMax = anos.length ? Math.max(...anos) : 0
+    const anosReg = tier1PorMun.map((r) => r.ano).filter((a) => a > 0)
+    const anoMinReg = anosReg.length ? Math.min(...anosReg) : 0
+    const anoMaxReg = anosReg.length ? Math.max(...anosReg) : 0
+    const rowsTierLimited = sliceCfemRowsLastCalendarYears(
+      tier1PorMun,
+      cfemAnoReferencia,
+      CFEM_TABLE_CALENDAR_YEARS,
+    )
     const totalHist =
       data.cfem_total_historico != null &&
       Number.isFinite(Number(data.cfem_total_historico))
         ? Number(data.cfem_total_historico)
         : tier1PorMun.reduce((s, r) => s + r.total_anual, 0)
+    const somaQuadro = rowsTierLimited.reduce((s, r) => s + r.total_anual, 0)
+    const anosTab = rowsTierLimited.map((r) => r.ano).filter((a) => a > 0)
+    const anoMinTab = anosTab.length ? Math.min(...anosTab) : 0
+    const anoMaxTab = anosTab.length ? Math.max(...anosTab) : 0
+
     const headline = isEnP5
-      ? `The process generated R$ ${fmtNum(totalHist, t.locale)} in CFEM between ${anoMin} and ${anoMax}.`
-      : `O processo gerou R$ ${fmtNum(totalHist, t.locale)} em CFEM entre ${anoMin} e ${anoMax}.`
-    const rowsTier = tier1PorMun
+      ? `Cumulative process CFEM (all available years in the dataset): R$ ${fmtNum(totalHist, t.locale)} (${anoMinReg}–${anoMaxReg}). Table — last ${CFEM_TABLE_CALENDAR_YEARS} calendar years (${anoMinTab}–${anoMaxTab}), totaling R$ ${fmtNum(somaQuadro, t.locale)}.`
+      : `CFEM acumulada do processo (todos os anos com registro nos dados): R$ ${fmtNum(totalHist, t.locale)} (${anoMinReg}–${anoMaxReg}). Quadro seguinte: últimos ${CFEM_TABLE_CALENDAR_YEARS} anos civis (${anoMinTab}–${anoMaxTab}), somando R$ ${fmtNum(somaQuadro, t.locale)}.`
+    const rowsTier = rowsTierLimited
       .map(
         (r) =>
           `<tr>
@@ -527,12 +657,23 @@ export function buildPage5_Fiscal(
     tier1Num <= 0 &&
     tier1MunHist.length > 0
   ) {
-    const sumMun = tier1MunHist.reduce((s, r) => s + r.valor_brl, 0)
-    const nAnos = tier1MunHist.length
+    const anosAllM = tier1MunHist.map((r) => r.ano).filter((a) => a > 0)
+    const anoMinAllM = anosAllM.length ? Math.min(...anosAllM) : 0
+    const anoMaxAllM = anosAllM.length ? Math.max(...anosAllM) : 0
+    const sumMunTotalReg = tier1MunHist.reduce((s, r) => s + r.valor_brl, 0)
+    const rowsMunLimited = sliceCfemRowsLastCalendarYears(
+      tier1MunHist,
+      cfemAnoReferencia,
+      CFEM_TABLE_CALENDAR_YEARS,
+    )
+    const somaQuadroMun = rowsMunLimited.reduce((s, r) => s + r.valor_brl, 0)
+    const anosTabM = rowsMunLimited.map((r) => r.ano).filter((a) => a > 0)
+    const anoMinTabM = anosTabM.length ? Math.min(...anosTabM) : 0
+    const anoMaxTabM = anosTabM.length ? Math.max(...anosTabM) : 0
     const headline = isEnP5
-      ? `No process-level CFEM in the database; the municipality collected R$ ${fmtNum(sumMun, t.locale)} across ${nAnos} years on record (last 10 years window).`
-      : `Processo sem CFEM individualizada; o município arrecadou R$ ${fmtNum(sumMun, t.locale)} em ${nAnos} ano(s) com registro (janela de 10 anos).`
-    const rowsMun = tier1MunHist
+      ? `No process-level CFEM in the dataset. Municipal aggregate on record over ${anoMinAllM}–${anoMaxAllM}: R$ ${fmtNum(sumMunTotalReg, t.locale)}. Table — last ${CFEM_TABLE_CALENDAR_YEARS} calendar years (${anoMinTabM}–${anoMaxTabM}), totaling R$ ${fmtNum(somaQuadroMun, t.locale)}.`
+      : `Sem CFEM individualizada na base; total municipal registrado (${anoMinAllM}–${anoMaxAllM}): R$ ${fmtNum(sumMunTotalReg, t.locale)}. Quadro: últimos ${CFEM_TABLE_CALENDAR_YEARS} anos civis (${anoMinTabM}–${anoMaxTabM}), somando R$ ${fmtNum(somaQuadroMun, t.locale)}.`
+    const rowsMun = rowsMunLimited
       .map(
         (r) =>
           `<tr>

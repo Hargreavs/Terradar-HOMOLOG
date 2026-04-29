@@ -22,7 +22,7 @@ const baseLayout: CSSProperties = {
   borderStyle: 'solid',
 }
 
-/** Superfície comum: passo 1 (objetivo) e passo 3 (risco) do wizard TERRADAR. */
+/** Superfície comum: cartões de escolha (ex.: apetite de risco no wizard Radar). */
 function cardSurface(selected: boolean, isHovered: boolean): Pick<
   CSSProperties,
   'borderColor' | 'backgroundColor' | 'boxShadow'
@@ -46,119 +46,6 @@ function cardSurface(selected: boolean, isHovered: boolean): Pick<
     backgroundColor: '#111110',
     boxShadow: 'none',
   }
-}
-
-export function ObjetivoCard({
-  selected,
-  onClick,
-  icon,
-  iconSelectedColor,
-  label,
-  desc,
-}: {
-  selected: boolean
-  onClick: () => void
-  icon: ReactNode
-  iconSelectedColor: string
-  label: string
-  desc: string
-}) {
-  const [hover, setHover] = useState(false)
-  const isHovered = hover && !selected
-  const surface = cardSurface(selected, isHovered)
-
-  const iconColor = selected ? iconSelectedColor : isHovered ? '#B4B2A9' : '#888780'
-  const iconEl =
-    isValidElement(icon) && icon != null
-      ? cloneElement(icon as ReactElement<{ size?: number; color?: string }>, {
-          size: 18,
-          color: iconColor,
-        })
-      : icon
-
-  const iconContainerBg = selected
-    ? 'rgba(245, 158, 11, 0.12)'
-    : isHovered
-      ? '#2C2C2A'
-      : '#1A1A18'
-
-  const descColor = selected ? '#B4B2A9' : isHovered ? '#B4B2A9' : '#888780'
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        ...baseLayout,
-        ...surface,
-      }}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-    >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 14,
-        }}
-      >
-        <div
-          style={{
-            width: 36,
-            height: 36,
-            borderRadius: 8,
-            backgroundColor: iconContainerBg,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0,
-            transition: 'background-color 0.15s ease',
-          }}
-        >
-          {iconEl}
-        </div>
-        <div style={{ minWidth: 0 }}>
-          <div
-            style={{
-              fontSize: 15,
-              fontWeight: 500,
-              color: selected || isHovered ? '#F1EFE8' : '#D3D1C7',
-            }}
-          >
-            {label}
-          </div>
-          <div
-            style={{
-              fontSize: 13,
-              color: descColor,
-              marginTop: 2,
-            }}
-          >
-            {desc}
-          </div>
-        </div>
-      </div>
-      {selected ? (
-        <div
-          style={{
-            position: 'absolute',
-            top: '50%',
-            right: 12,
-            transform: 'translateY(-50%)',
-            width: 20,
-            height: 20,
-            borderRadius: '50%',
-            backgroundColor: 'rgb(245, 158, 11)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <Check size={12} color="#0D0D0C" strokeWidth={3} />
-        </div>
-      ) : null}
-    </button>
-  )
 }
 
 export function RiscoCard({

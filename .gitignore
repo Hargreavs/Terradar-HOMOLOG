@@ -30,7 +30,11 @@ Docs/export-pdf/
 tmp/
 data/
 node_modules/
+s31_assentamentos/
 .env
 .env.local
 # Notas do Cursor (efemeras)
 CURSOR_*.md
+
+__pycache__/
+*.py[cod]

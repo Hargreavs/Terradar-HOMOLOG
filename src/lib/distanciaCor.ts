@@ -45,7 +45,6 @@ export function corDistancia(
   if (sobrepoe === true) {
     if (tipo === 'UC_US') return 'yellow'
     if (
-      tipo === 'ASSENTAMENTO' ||
       tipo === 'AQUIFERO' ||
       tipo === 'CORPO_AGUA' ||
       tipo === 'APP' ||
@@ -72,8 +71,10 @@ export function corDistancia(
       return 'green'
 
     case 'ASSENTAMENTO':
-      if (d <= 0.001) return 'red'
-      if (d <= 2) return 'yellow'
+      // Proximidade a comunidades de assentamento: faixas ESG (ruído, pó, tráfego, água).
+      // ≤5 km crítico; 5–20 km atenção; >20 km sem impacto direto nesta régua.
+      if (d <= 5) return 'red'
+      if (d <= 20) return 'yellow'
       return 'green'
 
     case 'SITIO_ARQ':

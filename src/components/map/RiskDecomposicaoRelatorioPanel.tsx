@@ -6,8 +6,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import type { DadosANM, DadosFiscaisRicos, DadosTerritoriais } from '../../data/relatorio.mock'
-import type { Processo, RiskScoreDecomposicao } from '../../types'
+import type { RiskScoreDecomposicao } from '../../types'
 import {
   CORES_DIMENSAO_RISK,
   PESOS_RISK_DIMENSAO,
@@ -15,7 +14,16 @@ import {
 } from '../../lib/riskScoreDecomposicao'
 import { CamadaTooltipHover } from '../filters/CamadaTooltipHover'
 import { RiskDimensionCalcTooltipContent } from './RiskScoreCalcTooltipContent'
-import { RiskDimensaoSubfatorLazy } from './riskDimensaoSubfatorLazy'
+import type { ScoreBreakdownView } from '../../hooks/useScoreBreakdown'
+import {
+  SubfatorBreakdownLoading,
+  SubfatorDecomposicaoRows,
+} from './SubfatorDecomposicaoRows'
+import {
+  extrairMultiplicadorBiomaBadge,
+  filtrarSubfatoresDimensaoRisco,
+  notaConsolidadorRisk,
+} from '../../lib/scoreBreakdownDimUi'
 
 /** Escala tipográfica alinhada ao drawer (`RelatorioCompleto` FS). */
 const FS = {
@@ -45,6 +53,7 @@ function PainelDetalheDimensaoAnimado({
     if (!el) return
 
     if (!isExp) {
+      /* eslint-disable-next-line react-hooks/set-state-in-effect -- reset da animacao ao recolher */
       setMaxPx(0)
       return
     }
@@ -135,18 +144,18 @@ function RiskPesosBarraQuatro() {
 
 export function RiskDecomposicaoRelatorioPanel({
   decomposicao,
-  processo,
-  territorial,
-  fiscalRico,
-  dadosAnm,
+  scoreBreakdown,
 }: {
   decomposicao: RiskScoreDecomposicao
-  processo: Processo
-  territorial?: DadosTerritoriais
-  fiscalRico?: DadosFiscaisRicos
-  dadosAnm?: DadosANM
+  scoreBreakdown: ScoreBreakdownView
 }) {
   const [aberto, setAberto] = useState<DimKey | null>(null)
+
+  const {
+    data: breakdownData,
+    loading: breakdownLoading,
+    error: breakdownError,
+  } = scoreBreakdown
 
   const dims = useMemo(
     () =>
@@ -209,10 +218,6 @@ export function RiskDecomposicaoRelatorioPanel({
       {dims.map((d, di) => {
         const isExp = aberto === d.key
         const corBar = corFaixaRiscoValor(d.det.score)
-        const varsMostrar =
-          d.key === 'ambiental'
-            ? d.det.variaveis.filter((v) => v.valor !== 0)
-            : d.det.variaveis
 
         return (
           <div
@@ -283,6 +288,50 @@ export function RiskDecomposicaoRelatorioPanel({
                 >
                   {d.label}
                 </span>
+                {d.key === 'ambiental'
+                  ? (() => {
+                      const badgeAmbiental = extrairMultiplicadorBiomaBadge(
+                        breakdownData?.dimensoes_risco?.ambiental?.subfatores ??
+                          [],
+                      )
+                      if (!badgeAmbiental) return null
+                      return (
+                        <CamadaTooltipHover
+                          conteudo={
+                            <span
+                              style={{ fontSize: 12, lineHeight: 1.45, color: '#D3D1C7' }}
+                            >
+                              {badgeAmbiental.title}
+                            </span>
+                          }
+                          maxWidthPx={300}
+                          preferAbove
+                          inlineWrap
+                        >
+                          <span
+                            aria-label="Multiplicador de bioma"
+                            style={{
+                              marginLeft: 4,
+                              fontSize: 11,
+                              fontWeight: 600,
+                              letterSpacing: '0.02em',
+                              padding: '2px 6px',
+                              borderRadius: 4,
+                              background: '#2C2C2A',
+                              color: '#B4B2A9',
+                              borderBottom:
+                                '1px dotted rgba(180,178,169,0.45)',
+                              cursor: 'help',
+                              flexShrink: 0,
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            [{badgeAmbiental.label}]
+                          </span>
+                        </CamadaTooltipHover>
+                      )
+                    })()
+                  : null}
               </div>
               <div
                 style={{
@@ -351,106 +400,61 @@ export function RiskDecomposicaoRelatorioPanel({
             </button>
 
             <PainelDetalheDimensaoAnimado isExp={isExp} corBar={corBar}>
-              {varsMostrar.map((vrow, vi) => {
-                const corV = corFaixaRiscoValor(vrow.valor)
-                const fonteTitle = `Fonte: ${vrow.fonte}`
-                return (
-                  <div key={`${vrow.nome}-${vi}`} style={{ marginTop: vi > 0 ? 12 : 0 }}>
-                    <div
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'flex-start',
-                        gap: 8,
-                        flexWrap: 'wrap',
-                      }}
-                    >
-                      <span
-                        title={fonteTitle}
-                        style={{
-                          fontSize: FS.md,
-                          color: '#D3D1C7',
-                          lineHeight: 1.35,
-                          minWidth: 0,
-                          flexGrow: 1,
-                          flexShrink: 1,
-                          flexBasis: 120,
-                          cursor: 'default',
-                        }}
-                      >
-                        {vrow.nome}
-                      </span>
-                      <span
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          flexShrink: 0,
-                          gap: 6,
-                        }}
-                      >
-                        <span
+              {isExp ? (
+                breakdownLoading ? (
+                  <SubfatorBreakdownLoading />
+                ) : breakdownError ? (
+                  <p style={{ fontSize: FS.sm, color: '#E24B4A', margin: 0 }}>
+                    {breakdownError}
+                  </p>
+                ) : (
+                  (() => {
+                    const rawSubs =
+                      breakdownData?.dimensoes_risco?.[d.key]?.subfatores ?? []
+                    const subs = filtrarSubfatoresDimensaoRisco(d.key, rawSubs)
+                    const rodapeDim =
+                      d.key === 'social'
+                        ? notaConsolidadorRisk('social', rawSubs)
+                        : d.key === 'regulatorio'
+                          ? notaConsolidadorRisk('regulatorio', rawSubs)
+                          : null
+                    if (!subs.length && !rodapeDim) {
+                      return (
+                        <p
                           style={{
-                            fontSize: FS.md,
-                            fontWeight: 600,
-                            color: corV,
-                            fontVariantNumeric: 'tabular-nums',
+                            fontSize: FS.sm,
+                            color: '#888780',
+                            margin: 0,
                           }}
                         >
-                          {vrow.valor}
-                        </span>
-                      </span>
-                    </div>
-                    <div
-                      style={{
-                        height: 4,
-                        backgroundColor: '#2C2C2A',
-                        borderRadius: 2,
-                        overflow: 'hidden',
-                        marginTop: 6,
-                      }}
-                    >
-                      <div
-                        style={{
-                          height: '100%',
-                          width: `${Math.min(100, Math.max(0, vrow.valor))}%`,
-                          backgroundColor: corV,
-                          borderRadius: 2,
-                          opacity: vrow.valor > 0 ? 0.85 : 0.35,
-                        }}
-                      />
-                    </div>
-                    <p
-                      style={{
-                        fontSize: FS.sm,
-                        color: '#888780',
-                        margin: '6px 0 0 0',
-                        lineHeight: 1.4,
-                        wordBreak: 'break-word',
-                      }}
-                    >
-                      {vrow.texto}
-                    </p>
-                  </div>
+                          Decomposição não disponível para este processo no fluxo atual.
+                        </p>
+                      )
+                    }
+                    return (
+                      <>
+                        {subs.length > 0 ? (
+                          <SubfatorDecomposicaoRows
+                            variant="risk"
+                            subfatores={subs}
+                          />
+                        ) : null}
+                        {rodapeDim ? (
+                          <p
+                            style={{
+                              fontSize: 11,
+                              lineHeight: 1.45,
+                              color: '#5F5E5A',
+                              margin: subs.length > 0 ? '10px 0 0 0' : '0',
+                            }}
+                          >
+                            {rodapeDim}
+                          </p>
+                        ) : null}
+                      </>
+                    )
+                  })()
                 )
-              })}
-              {isExp &&
-                (d.det.variaveis.length === 0 || d.key === 'ambiental') ? (
-                <div
-                  style={{
-                    marginTop: varsMostrar.length > 0 ? 16 : 0,
-                    paddingTop: varsMostrar.length > 0 ? 12 : 0,
-                    borderTop: varsMostrar.length > 0 ? '1px solid #2C2C2A' : undefined,
-                  }}
-                >
-                  <RiskDimensaoSubfatorLazy
-                    dim={d.key}
-                    habilitar={isExp}
-                    processo={processo}
-                    territorial={territorial}
-                    fiscalRico={fiscalRico}
-                    dadosAnm={dadosAnm}
-                  />
-                </div>
               ) : null}
             </PainelDetalheDimensaoAnimado>
           </div>

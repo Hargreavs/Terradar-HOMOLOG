@@ -29,10 +29,10 @@ import {
 import {
   capagBadgeLetra,
   normalizeCapagNotaDisplay,
-  parseDividaMiFromTexto,
+  parseDividaMiFromTextoNullable,
   parsePercentFromDependencia,
-  parsePibMunicipalMiFromTexto,
-  parseReceitaPropriaMiFromTexto,
+  parsePibMunicipalMiFromTextoNullable,
+  parseReceitaPropriaMiFromTextoNullable,
 } from './fiscalDisplay'
 import { piorIndicadorCapag } from './capagPiorIndicador'
 import { haversineKm } from './geoHaversine'
@@ -105,6 +105,9 @@ function territorialFromReport(
   let tipo_uc_us: string | null = null
   let distancia_quilombola_km: number | null = null
   let nome_quilombola_proximo: string | null = null
+  let distancia_assentamento_km: number | null = null
+  let nome_assentamento_proximo: string | null = null
+  let fase_assentamento_incr: string | null = null
 
   const considerPi = (tipo: string) =>
     /\bPI\b|PARNA|ESEC|REBIO|MONA|REVIS|Proteção integral/i.test(tipo)
@@ -128,6 +131,16 @@ function territorialFromReport(
       ) {
         distancia_quilombola_km = L.distancia_km
         nome_quilombola_proximo = L.nome
+      }
+    } else if (t === 'Assentamento INCRA') {
+      if (
+        distancia_assentamento_km == null ||
+        L.distancia_km < (distancia_assentamento_km ?? 1e9)
+      ) {
+        distancia_assentamento_km = L.distancia_km
+        nome_assentamento_proximo = L.nome
+        const ph = L.detalhes?.trim()
+        fase_assentamento_incr = ph && ph !== '' ? ph : null
       }
     } else if (t.startsWith('UC') || t.includes('UC ')) {
       if (considerPi(t)) {
@@ -352,26 +365,113 @@ function territorialFromReport(
     responsavel_quilombola: null,
     esfera_quilombola: null,
     distancia_quilombola_km,
+    nome_assentamento_proximo,
+    fase_assentamento_incr,
+    distancia_assentamento_km,
   }
 }
 
-function intelFromReport(rd: ReportData, _processo: Processo): IntelMineral {
+function unidadePrecoIntelDrawer(
+  rd: ReportData,
+  nomeSubstancia: string,
+): IntelMineral['unidade_preco'] {
+  const isOuro =
+    nomeSubstancia.length > 0 && nomeSubstancia.toUpperCase().includes('OURO')
+  if (isOuro) return 'oz'
+  const u = String(rd.preco_unidade_label ?? 't').trim().toLowerCase()
+  if (u === 'oz') return 'oz'
+  if (u === 'lb') return 'lb'
+  if (u === 'ct') return 'ct'
+  if (u === 'l' || u.startsWith('litro')) return 'L'
+  return 't'
+}
+
+/** Chip de tendência: sem `null` falsos — ausência real ⇒ `null` (UI omite chip). */
+function tendenciaPrecoIntelFromReport(
+  rd: ReportData,
+): IntelMineral['tendencia_preco'] | null {
+  const raw = String(rd.mercado_tendencia ?? '').trim()
+  const rl = raw.toLowerCase()
+  const isNd =
+    raw === '' ||
+    rl === 'n/d' ||
+    rl === 'n/a' ||
+    raw === '\u2014' ||
+    raw === '-' ||
+    rl === 'not available'
+  if (!isNd) {
+    if (rl.includes('alta') || rl.includes('high') || rl.includes('rise'))
+      return 'alta'
+    if (
+      rl.includes('queda') ||
+      rl.includes('baixa') ||
+      rl.includes('fall') ||
+      rl.includes('declin')
+    )
+      return 'queda'
+    if (
+      rl.includes('estável') ||
+      rl.includes('estavel') ||
+      rl.includes('stable') ||
+      rl.includes('flat')
+    )
+      return 'estavel'
+  }
   const v12 = rd.var_12m_pct
-  const tendencia: IntelMineral['tendencia_preco'] =
-    v12 == null
-      ? 'estavel'
-      : v12 > 0.5
-        ? 'alta'
-        : v12 < -0.5
-          ? 'queda'
-          : 'estavel'
+  if (v12 == null) return null
+  return v12 > 0.5 ? 'alta' : v12 < -0.5 ? 'queda' : 'estavel'
+}
+
+function intelFromReport(rd: ReportData, processo: Processo): IntelMineral {
+  const tendenciaPrecoUi = tendenciaPrecoIntelFromReport(rd)
+
+  const nomeSub = rd.substancia_anm.trim()
+  const isOuro =
+    nomeSub.length > 0 && nomeSub.toUpperCase().includes('OURO')
+
+  /** Sem spot/cotação válida ⇒ `null`, nunca `0` enganoso. */
+  let preco_medio_usd_t: number | null = null
+  if (isOuro && rd.preco_oz_usd > 0) {
+    preco_medio_usd_t = rd.preco_oz_usd * 32_151
+  } else if (!isOuro && rd.preco_spot_usd_t > 0) {
+    preco_medio_usd_t = rd.preco_spot_usd_t
+  }
+
+  /** USD/oz apenas quando preço em onça é válido; evita 0 como “ausência”. */
+  const preco_referencia_usd_oz: number | null =
+    rd.preco_oz_usd > 0 ? rd.preco_oz_usd : null
+
+  /** In-situ positivo publicado; caso contrário `null` (ausente), nunca 0 forçado aqui. */
+  let valor_estimado_usd_ha: number | null = null
+  let valor_estimado_brl_ha: number | null = null
+  const insitu = rd.valor_insitu_usd_ha
+  if (insitu != null && Number.isFinite(insitu) && insitu > 0) {
+    valor_estimado_usd_ha = insitu
+    valor_estimado_brl_ha = rd.ptax > 0 ? insitu * rd.ptax : null
+  }
+
+  const familiaIntel =
+    typeof processo.substancia_familia === 'string' &&
+    processo.substancia_familia.trim() !== ''
+      ? processo.substancia_familia.trim()
+      : null
+
+  const rawAplicacoesSubst =
+    rd.aplicacoes_substancia != null &&
+    String(rd.aplicacoes_substancia).trim() !== ''
+      ? String(rd.aplicacoes_substancia).trim()
+      : null
+  const aplicacoesPars = parseAplicacoesSubstancia(
+    rd.aplicacoes_substancia ?? null,
+  )
 
   return {
     substancia_contexto: rd.substancia_anm,
+    familia: familiaIntel,
     fonte_preco: rd.fonte_preco,
     fonte_res_prod: rd.fonte_res_prod,
-    reservas_br_pct_dado: rd.reservas_br_pct_raw,
-    producao_br_pct_dado: rd.producao_br_pct_raw,
+    reservas_br_pct_dado: rd.reservas_br_pct_raw ?? null,
+    producao_br_pct_dado: rd.producao_br_pct_raw ?? null,
     preco_brl_por_t_legacy: rd.preco_brl_por_t,
     preco_brl_por_g_legacy:
       rd.preco_g_brl > 0 && Number.isFinite(rd.preco_g_brl)
@@ -388,31 +488,26 @@ function intelFromReport(rd: ReportData, _processo: Processo): IntelMineral {
     producao_brasil_mundial_pct: rd.producao_mundial_pct,
     demanda_projetada_2030:
       'Projeção elaborada com base em fontes oficiais de mercado e referências setoriais',
-    preco_medio_usd_t:
-      rd.preco_oz_usd > 0 && rd.substancia_anm.toUpperCase().includes('OURO')
-        ? rd.preco_oz_usd * 32_151
-        : rd.preco_spot_usd_t > 0
-          ? rd.preco_spot_usd_t
-          : 0,
-    unidade_preco:
-      rd.substancia_anm.toUpperCase().includes('OURO') ? 'oz' : 't',
-    preco_referencia_usd_oz: rd.preco_oz_usd,
-    tendencia_preco: tendencia,
-    aplicacoes_principais: parseAplicacoesSubstancia(
-      rd.aplicacoes_substancia ?? null,
-    ),
+    preco_medio_usd_t,
+    unidade_preco: unidadePrecoIntelDrawer(rd, nomeSub),
+    preco_referencia_usd_oz,
+    tendencia_preco: tendenciaPrecoUi,
+    aplicacoes_principais: aplicacoesPars,
+    aplicacoes_texto_bruto:
+      aplicacoesPars.length === 0 && rawAplicacoesSubst != null
+        ? rawAplicacoesSubst
+        : null,
     paises_concorrentes: [],
     estrategia_nacional:
       rd.estrategia_nacional &&
       String(rd.estrategia_nacional).trim() !== '' &&
       rd.estrategia_nacional !== 'Não disponível'
         ? rd.estrategia_nacional
-        : 'Ver fontes do master de substâncias.',
+        : '',
     potencial_reserva_estimado_t: null,
-    valor_estimado_usd_mi: 0,
-    valor_estimado_usd_ha: rd.valor_insitu_usd_ha,
-    valor_estimado_brl_ha:
-      rd.ptax > 0 ? rd.valor_insitu_usd_ha * rd.ptax : 0,
+    valor_estimado_usd_mi: null,
+    valor_estimado_usd_ha,
+    valor_estimado_brl_ha,
     metodologia_estimativa:
       'Valores derivados do motor de scores e master de substâncias.',
     processos_vizinhos: [],
@@ -468,7 +563,7 @@ function fiscalFromReport(rd: ReportData, processo: Processo): DadosFiscaisRicos
           valor_total_municipio_brl: h.valor_brl,
           substancias: h.substancias ?? '',
         }))
-  const pibMi = parsePibMunicipalMiFromTexto(rd.pib_municipal)
+  const pibMi = parsePibMunicipalMiFromTextoNullable(rd.pib_municipal)
 
   const programaInc = rd.incentivos.programa_estadual
   const incentivosLista =
@@ -486,8 +581,8 @@ function fiscalFromReport(rd: ReportData, processo: Processo): DadosFiscaisRicos
       ? idhTxt
       : undefined
 
-  const receitaMi = parseReceitaPropriaMiFromTexto(rd.receita_propria)
-  const dividaMi = parseDividaMiFromTexto(rd.divida)
+  const receitaMi = parseReceitaPropriaMiFromTextoNullable(rd.receita_propria)
+  const dividaMi = parseDividaMiFromTextoNullable(rd.divida)
   const depPct = parsePercentFromDependencia(rd.dependencia_transf)
 
   const capag_estruturado: CapagEstruturado = {
@@ -709,7 +804,7 @@ function oportunidadeFromReport(
           nome: 'Bônus mineral crítico 2025',
           valor: 10,
           peso: 0,
-          texto: 'Condicionado ao consolidado do motor S31.',
+          texto: 'Condicionado ao consolidado da análise.',
           impacto_neutro: true,
         })
       }
@@ -720,7 +815,7 @@ function oportunidadeFromReport(
         nome: labelMap[dimKey],
         valor: dimValOf(dimKey),
         peso: 100,
-        texto: 'Dimensão calculada automaticamente (motor S31).',
+        texto: 'Dimensão calculada automaticamente.',
         impacto_neutro: false,
       },
     ]
