@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import Anthropic from '@anthropic-ai/sdk'
 import postgres from 'postgres'
+import pLimit from 'p-limit'
 import '../../env'
 
 const dbUrl = process.env.DATABASE_URL ?? process.env.VITE_DATABASE_URL
@@ -17,7 +18,7 @@ if (!process.env.ANTHROPIC_API_KEY) {
 
 const sql = postgres(dbUrl, {
   ssl: { rejectUnauthorized: false },
-  max: 2,
+  max: 16,
   idle_timeout: 0,
   prepare: false,
 })
@@ -201,38 +202,47 @@ export async function classificarPendentes(limite = 50) {
   const pendentes = await sql`
     SELECT id FROM radar_publicacoes_brutas
     WHERE status = 'PENDENTE'
-    ORDER BY data_publicacao DESC, id ASC
+    ORDER BY data_publicacao ASC, id ASC
     LIMIT ${limite}
   `
 
-  console.log(`Classificando ${pendentes.length} pendentes...`)
-  let custoTotal = 0
+  console.log(
+    `Classificando ${pendentes.length} pendentes em paralelo (concurrency=8)...`,
+  )
 
-  for (const p of pendentes) {
-    const id = Number((p as { id: string | number }).id)
-    try {
-      const r = await classificarAto(id)
-      if (r.skipped) {
-        console.log(`[${id}] pulado (nao PENDENTE ou nao encontrado)`)
-        continue
-      }
-      custoTotal += r.custo
-      const nproc =
-        r.aplicacao != null && typeof r.aplicacao === 'object' && r.aplicacao !== null
-          ? (r.aplicacao as { total_aplicados?: number }).total_aplicados
-          : r.aplicacao
-      console.log(
-        `[${id}] ${r.categoria} (${r.confianca}) — ${r.titulo.slice(0, 80)} -> ${nproc ?? JSON.stringify(r.aplicacao)} processos`,
-      )
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e)
-      console.error(`[${id}] ERRO`, msg)
-      await sql`UPDATE radar_publicacoes_brutas SET status = 'ERRO' WHERE id = ${id}`
-    }
-  }
+  let custoTotal = 0
+  const limit = pLimit(8)
+
+  await Promise.all(
+    pendentes.map((p) =>
+      limit(async () => {
+        const id = Number((p as { id: string | number }).id)
+        try {
+          const r = await classificarAto(id)
+          if (r.skipped) {
+            console.log(`[${id}] pulado (nao PENDENTE ou nao encontrado)`)
+            return
+          }
+          custoTotal += r.custo ?? 0
+          const apl = r.aplicacao
+          const nproc =
+            apl != null && typeof apl === 'object' && apl !== null
+              ? (apl as { total_aplicados?: number }).total_aplicados
+              : apl
+          console.log(
+            `[${id}] ${r.categoria} (${r.confianca}) — ${r.titulo.slice(0, 80)} -> ${nproc ?? JSON.stringify(r.aplicacao)} processos`,
+          )
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e)
+          console.error(`[${id}] ❌`, msg)
+          await sql`UPDATE radar_publicacoes_brutas SET status = 'ERRO' WHERE id = ${id}`
+        }
+      }),
+    ),
+  )
 
   await sql`SELECT radar_refresh_resumo()`
-  console.log(`\nClassificacoes concluidas. Custo total: USD ${custoTotal.toFixed(4)}`)
+  console.log(`\nConcluido. Custo total: USD ${custoTotal.toFixed(4)}`)
   return custoTotal
 }
 
@@ -244,7 +254,7 @@ function isEntrypoint(): boolean {
 }
 
 if (isEntrypoint()) {
-  const limite = Math.min(200, Math.max(1, parseInt(process.argv[2] || '50', 10) || 50))
+  const limite = Math.min(10000, Math.max(1, parseInt(process.argv[2] || '50', 10) || 50))
   classificarPendentes(limite)
     .then(() => sql.end({ timeout: 10 }))
     .then(() => process.exit(0))

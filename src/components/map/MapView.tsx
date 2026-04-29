@@ -709,7 +709,7 @@ function addProcessosLayers(
 /**
  * Com processo selecionado no mapa (clique no polígono), reduz opacidade dos demais.
  * Vindo da busca/Intel, `aplicarFocoEntreProcessos` fica falso: todos os processos
- * com a mesma opacidade base (sólida no selecionado, sem efeito de “foco”).
+ * com a mesma opacidade base (sólida no selecionado, sem efeito de "foco").
  */
 const PROCESSO_FOCUS_OP = {
   fillSel: 0.45,
@@ -792,14 +792,11 @@ type MapDragClickGuard = {
   resetTimeoutId: ReturnType<typeof setTimeout> | null
 }
 
-/** Igual à transição do drawer (`RelatorioCompleto` transform 300ms) + margem. */
-const DRAWER_CLOSE_ANIM_MS = 320
-
 /**
  * Ignora o próximo `click` do Mapbox (mesma lógica do fim do pan).
  * Ao abrir o relatório a partir do popover, o teardown remove o popup; o mesmo gesto
  * pode ainda disparar `click` no mapa sobre o polígono já selecionado, o que
- * executaria o ramo “segundo clique no mesmo processo” e fecharia o drawer.
+ * executaria o ramo "segundo clique no mesmo processo" e fecharia o drawer.
  */
 function armarConsumoProximoCliqueMapa(
   ref: MutableRefObject<MapDragClickGuard>,
@@ -816,27 +813,18 @@ function armarConsumoProximoCliqueMapa(
   }, 500)
 }
 
-/** Mesma sequência que o ✕ do popover: teardown + drawer / seleção. */
-function fecharProcessoPopupComoBotaoFechar(
+/** Remove só o popover no mapa; mantém seleção, chip na busca e linhas até limpar pelo fluxo oficial. */
+function removerSomentePopoverProcessoDOM(
   tearDownProcessoPopupDom: () => void,
-  pendingFecharProcessoTimeoutRef: MutableRefObject<ReturnType<
+  pendingFecharProcessoTimeoutRef?: MutableRefObject<ReturnType<
     typeof setTimeout
   > | null>,
 ) {
-  tearDownProcessoPopupDom()
-  const st = useMapStore.getState()
-  if (st.relatorioDrawerAberto) {
-    if (pendingFecharProcessoTimeoutRef.current) {
-      clearTimeout(pendingFecharProcessoTimeoutRef.current)
-    }
-    st.setRelatorioDrawerAberto(false)
-    pendingFecharProcessoTimeoutRef.current = setTimeout(() => {
-      pendingFecharProcessoTimeoutRef.current = null
-      useMapStore.getState().selecionarProcesso(null)
-    }, DRAWER_CLOSE_ANIM_MS)
-  } else {
-    st.selecionarProcesso(null)
+  if (pendingFecharProcessoTimeoutRef?.current) {
+    clearTimeout(pendingFecharProcessoTimeoutRef.current)
+    pendingFecharProcessoTimeoutRef.current = null
   }
+  tearDownProcessoPopupDom()
 }
 
 const PROCESSO_POPUP_OFFSET_PX = 10
@@ -1079,28 +1067,38 @@ function openProcessoPopupOnMap(
 
   processoPopupRef.current = popup
 
-  const closePopup = () =>
-    fecharProcessoPopupComoBotaoFechar(
+  const closePopoverOnly = () => {
+    removerSomentePopoverProcessoDOM(
       tearDownProcessoPopupDom,
       pendingFecharProcessoTimeoutRef,
     )
+    useMapStore.getState().limparSelecaoMapa()
+  }
 
   root.render(
     <ProcessoPopupContent
       processo={proc}
-      onClose={closePopup}
+      onClose={closePopoverOnly}
       onToggleRelatorioCompleto={onToggleRelatorioCompleto}
       onAbrirRelatorioAbaRisco={onAbrirRelatorioAbaRisco}
       onIrParaRadarAlerta={(al: AlertaLegislativo) => {
         const rid = radarFeedIdParaAlertaProcesso(proc.id, al)
         if (rid) useAppStore.getState().setPendingRadarAlertaId(rid)
+        removerSomentePopoverProcessoDOM(
+          tearDownProcessoPopupDom,
+          pendingFecharProcessoTimeoutRef,
+        )
+        useMapStore.getState().limparSelecaoMapa()
         useAppStore.getState().setTelaAtiva('radar')
-        closePopup()
       }}
       onVerTodosAlertasRadar={() => {
         useAppStore.getState().setPendingRadarAlertaId(null)
         useAppStore.getState().setRadarAbrirHomeIntent(true)
-        closePopup()
+        removerSomentePopoverProcessoDOM(
+          tearDownProcessoPopupDom,
+          pendingFecharProcessoTimeoutRef,
+        )
+        useMapStore.getState().limparSelecaoMapa()
         useAppStore.getState().setTelaAtiva('radar')
       }}
     />,
@@ -1146,10 +1144,11 @@ function attachProcessosLayerHandlers(
     map.getCanvas().style.cursor = ''
   }
 
-  /**
-   * Um único `click` no mapa: hit em polígono abre ou troca o popup; segundo clique no mesmo
-   * polígono (processo já selecionado) fecha como o ✕; clique no vazio não fecha.
-   */
+/**
+ * Clique único no mapa: polígono seleciona (fonte igual à busca); mesmo polígono com popover já
+ * aberto é idempotente; com popover fechado reabre; com drawer do relatório aberto o clique não
+ * altera estado; área sem processo limpa seleção se o drawer estiver fechado.
+ */
   const onDragStart = () => {
     dispatchTerraeMapClearFloatingUi()
   }
@@ -1202,11 +1201,25 @@ function attachProcessosLayerHandlers(
         const proc = useMapStore.getState().processos.find((x) => x.id === idStr)
         if (!proc) continue
 
-        const sel = useMapStore.getState().processoSelecionado
+        const stSel = useMapStore.getState()
+        const sel = stSel.processoSelecionado
         if (sel?.id === proc.id) {
-          fecharProcessoPopupComoBotaoFechar(
+          if (stSel.relatorioDrawerAberto) return
+          const popAtual = processoPopupRef.current
+          if (popAtual?.isOpen()) return
+          if (pendingFecharProcessoTimeoutRef.current) {
+            clearTimeout(pendingFecharProcessoTimeoutRef.current)
+            pendingFecharProcessoTimeoutRef.current = null
+          }
+          openProcessoPopupOnMap(
+            map,
+            proc,
             tearDownProcessoPopupDom,
+            popupRootRef,
+            processoPopupRef,
             pendingFecharProcessoTimeoutRef,
+            onToggleRelatorioCompleto ?? (() => {}),
+            onAbrirRelatorioAbaRisco ?? (() => {}),
           )
           return
         }
@@ -1231,8 +1244,10 @@ function attachProcessosLayerHandlers(
       }
     }
 
-    /* Mapa vazio: não teardown, não limpar seleção, não fechar drawer; pan/zoom/click fora do polígono mantêm o popover. */
-    return
+    const stMapa = useMapStore.getState()
+    if (!stMapa.relatorioDrawerAberto) {
+      stMapa.limparSelecaoMapa()
+    }
   }
 
   handlersRef.current = {
@@ -1604,7 +1619,11 @@ export function MapView() {
   }
 
   useEffect(() => {
-    if (!processoSelecionado) setRelatorioDrawerAberto(false)
+    if (!processoSelecionado) {
+      setRelatorioDrawerAberto(false)
+      const td = tearDownProcessoPopupRef.current
+      if (td) queueMicrotask(td)
+    }
   }, [processoSelecionado, setRelatorioDrawerAberto])
 
   useEffect(() => {
@@ -1724,7 +1743,6 @@ export function MapView() {
 
           const runProcessoNavigation = (p: Processo) => {
             useMapStore.getState().selecionarProcesso(p, 'busca')
-            openIntelSidebarForPendingNavigation()
 
             afterFilterSidebarLayout(() => {
               ensureIntelSnap()
@@ -2130,14 +2148,22 @@ export function MapView() {
      * lote, e o efeito antigo limpava `selecionarProcesso(null)` — isso
      * fechava o drawer de relatório no fim da animação. Manter a seleção e
      * incluir o processo no GeoJSON para o polígono continuar coerente.
+     *
+     * `queueMicrotask` no teardown do popup: chamar `root.unmount()` síncrono
+     * dentro de um useEffect dispara o warning "Attempted to synchronously
+     * unmount a root while React was already rendering" em React 18+.
+     * Adiar 1 microtask sai do ciclo de render mantendo a mesma fase
+     * lógica.
      */
     if (sel && !filtrados.some((p) => p.id === sel.id)) {
       if (st.selecaoOrigemProcesso === 'busca') {
-        tearDownProcessoPopupRef.current?.()
+        const td = tearDownProcessoPopupRef.current
+        if (td) queueMicrotask(td)
         src.setData(buildGeoJSON([...filtrados, sel], modoVisualizacao))
         return
       }
-      tearDownProcessoPopupRef.current?.()
+      const td = tearDownProcessoPopupRef.current
+      if (td) queueMicrotask(td)
       useMapStore.getState().selecionarProcesso(null)
     }
 
@@ -2149,6 +2175,8 @@ export function MapView() {
    * Subscrição Zustand corre síncrono quando `flyTo` muda; garante `fitBounds` / `flyTo` no Mapbox.
    */
   const prevFlyToRef = useRef<MapStore['flyTo']>(null)
+  /** Evita que `idle` de um fly anterior abra popover quando um fly novo já correu (buscas rápidas). */
+  const flyToPopoverGenerationRef = useRef(0)
 
   useEffect(() => {
     if (!mapLoaded) return
@@ -2156,12 +2184,22 @@ export function MapView() {
     if (!map) return
 
     const applyCamera = (ft: NonNullable<MapStore['flyTo']>) => {
-      const st = useMapStore.getState()
+      const stSnap = useMapStore.getState()
       const proc =
-        (ft.processoId && st.processos.find((x) => x.id === ft.processoId)) ||
-        st.processoSelecionado
+        (ft.processoId &&
+          stSnap.processos.find((x) => x.id === ft.processoId)) ||
+        stSnap.processoSelecionado
 
       const bounds = proc ? boundsFromSingleProcesso(proc) : null
+      const deveAbrirPopoverAposBusca =
+        stSnap.selecaoOrigemProcesso === 'busca' &&
+        !stSnap.relatorioDrawerAberto &&
+        !!proc &&
+        !!bounds &&
+        !bounds.isEmpty() &&
+        Number.isFinite(proc.lat) &&
+        Number.isFinite(proc.lng)
+      const procIdPopover = proc?.id ?? ''
 
       try {
         if (bounds && !bounds.isEmpty()) {
@@ -2207,6 +2245,31 @@ export function MapView() {
         }
       } finally {
         useMapStore.getState().clearFlyTo()
+        if (deveAbrirPopoverAposBusca && procIdPopover) {
+          flyToPopoverGenerationRef.current += 1
+          const geracaoDoFly = flyToPopoverGenerationRef.current
+          map.once('idle', () => {
+            if (geracaoDoFly !== flyToPopoverGenerationRef.current) return
+            if (!map.isStyleLoaded()) return
+            const sn = useMapStore.getState()
+            if (sn.relatorioDrawerAberto) return
+            if (sn.selecaoOrigemProcesso !== 'busca') return
+            const p = sn.processoSelecionado
+            if (!p || p.id !== procIdPopover) return
+            const td = tearDownProcessoPopupRef.current
+            if (!td) return
+            openProcessoPopupOnMap(
+              map,
+              p,
+              td,
+              processoPopupRootRef,
+              processoPopupRef,
+              pendingFecharProcessoTimeoutRef,
+              () => verRelatorioRef.current(),
+              () => abrirRelatorioAbaRiscoRef.current(),
+            )
+          })
+        }
       }
     }
 
@@ -2228,7 +2291,7 @@ export function MapView() {
   // Timing: flyTo termina → 200ms pausa → fetch RPC → ativa camadas necessárias
   // → setData → fade-in 300ms.
   // Fonte: RPC `fn_territorial_lines` (proxy `/api/map/territorial-lines`).
-  // Camadas auto-ativadas: TI/UC/Quilombola/Ferrovia/Rodovia/Porto (snapshot + restore).
+  // Camadas auto-ativadas: TI/UC/Quilombola/Assentamentos INCRA/Ferrovia/Rodovia/Porto (snapshot + restore).
   // ============================================================================
   useEffect(() => {
     if (!mapLoaded) return
@@ -2469,7 +2532,7 @@ export function MapView() {
     enabled: !!camadasGeo.assentamentos && mapLoaded,
     bbox: viewportBbox,
     zoom: viewportZoom,
-    limit: 2000,
+    limit: 1000,
   })
 
   // Camada UC Proteção Integral (bbox-aware, mesmo toggle unidades_conservacao)
@@ -3065,9 +3128,9 @@ export function MapView() {
           type: 'fill',
           source: SRC_ID,
           paint: {
-            'fill-color': '#7B8B3D',
-            'fill-opacity': 0.4,
-            'fill-outline-color': '#5A6829',
+            'fill-color': '#A78BFA',
+            'fill-opacity': 0.3,
+            'fill-outline-color': '#7c3aed',
           },
         },
         'processos-fill',
@@ -3078,9 +3141,9 @@ export function MapView() {
           type: 'line',
           source: SRC_ID,
           paint: {
-            'line-color': '#5A6829',
+            'line-color': '#7c3aed',
             'line-width': 1,
-            'line-opacity': 0.85,
+            'line-opacity': 0.8,
           },
         },
         'processos-fill',
@@ -3724,7 +3787,7 @@ export function MapView() {
           applyProcessoSelectionFocus(
             map,
             st.processoSelecionado?.id ?? null,
-            st.selecaoOrigemProcesso === 'map' && st.processoSelecionado != null,
+            st.processoSelecionado != null,
           )
         }
 
@@ -4150,7 +4213,7 @@ export function MapView() {
       <RelatorioCompleto
         processo={processoSelecionado}
         aberto={relatorioDrawerAberto}
-        onFechar={() => setRelatorioDrawerAberto(false)}
+        onFechar={() => useMapStore.getState().limparSelecaoMapa()}
         abaInicial={relatorioAbaInicial}
         abaRiscoRequestId={relatorioAbaRiscoRequestId}
         dadosRelatorioApi={relatorioDadosApi}

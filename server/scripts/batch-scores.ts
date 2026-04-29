@@ -1,21 +1,20 @@
 /**
- * Recalcula Risk/OS (motor scoreEngine) e persiste em `scores` (Supabase)
- * com o SHAPE completo `dimensoes_risco.{dim}.subfatores[]` + `dimensoes_oportunidade.{dim}.subfatores[]`
- * — compatível com processos batch_fase1 já persistidos (consumido por
- * `src/lib/riskScoreDecomposicao.ts` e `RelatorioCompleto.tsx`).
+ * Batch: motor S31 (`runS31MotorAndPersist`) em `scores` com UPSERT único pelo motor —
+ * mesmo snapshot que drawer/PDF on-demand (evitar divergência com motor clássico).
+ *
+ * Helpers do motor clássico (`computeAllScores`, `buildDimensoes`, etc.) mantidos aqui até deprecação futura.
  *
  * Uso:
- *   npx tsx server/scripts/batch-scores.ts --numero "864.016/2026" [--force] [--scores-fonte batch_fase1]
- *   npx tsx server/scripts/batch-scores.ts --numeros "857.854/1996,850.280/1991" --force --scores-fonte batch_paulo_demo_20260420
+ *   npx tsx server/scripts/batch-scores.ts --numeros "..." [--force] [--scores-fonte s31_v3_20260428] [--sample-size N]
  *
  * Requer `.env` / `.env.local` com SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY.
  */
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { supabase } from '../supabase'
-import {
-  computeAllScores,
-  type ScoreInput,
-  type ScoreResult,
-} from '../scoreEngine'
+import { type ScoreInput, type ScoreResult } from '../scoreEngine'
+import { runS31MotorAndPersist } from '../scoringMotorS31'
 import {
   getCapag,
   getFiscal,
@@ -784,6 +783,9 @@ async function buildScoreInput(
 
 const errosDetalhados: { numero: string; erro: string; stack?: string }[] = []
 
+/** Inicializado no `main` com stream de arquivo + console; até lá só console. */
+let batchLogMsg: (msg: string) => void = (msg) => console.log(msg)
+
 function hasManualRiskScore(
   scores: Record<string, unknown> | null,
 ): boolean {
@@ -796,81 +798,35 @@ async function runOne(numero: string, force: boolean, scoresFonte: string) {
   const processo = (await getProcesso(numero)) as Record<string, unknown>
   const id = processo.id != null ? String(processo.id) : ''
   if (!id) {
-    console.error(`[batch-scores] Processo sem id: ${numero}`)
+    batchLogMsg(`[batch-scores] ERRO Processo sem id: ${numero}`)
     process.exitCode = 1
     return
   }
 
   const existing = (await getScores(id)) as Record<string, unknown> | null
   if (!force && hasManualRiskScore(existing)) {
-    console.log(
+    batchLogMsg(
       `[batch-scores] Pulado (scores já existem; use --force): ${numero}`,
     )
     return
   }
 
-  const municipioIbge = String(processo.municipio_ibge ?? '')
-  const substanciaAnm = String(processo.substancia ?? '')
-
-  const [capag, mercado, analise, fiscalMun] = await Promise.all([
-    getCapag(municipioIbge),
-    getSubstancia(substanciaAnm),
-    getTerritoralAnalysis(numero),
-    getFiscal(municipioIbge),
-  ])
-
-  const input = await buildScoreInput(
-    processo,
-    analise,
-    mercado as Record<string, unknown> | null,
-    capag as Record<string, unknown> | null,
-    fiscalMun,
-  )
-
-  const result = computeAllScores(input)
-  const { dimensoes_risco, dimensoes_oportunidade } = buildDimensoes(input, result)
-
-  const row: Record<string, unknown> = {
-    processo_id: id,
-    risk_score: result.risk_score,
-    risk_label: result.risk_label,
-    risk_cor: result.risk_cor,
-    os_conservador: result.os_conservador,
-    os_moderado: result.os_moderado,
-    os_arrojado: result.os_arrojado,
-    os_label: result.os_label_conservador,
-    os_classificacao: result.os_label_conservador,
-    dimensoes_risco,
-    dimensoes_oportunidade,
-    scores_fonte: scoresFonte,
-  }
-
-  const { error } = await supabase.from('scores').upsert(row, {
-    onConflict: 'processo_id',
+  const result = await runS31MotorAndPersist(id, {
+    persist: true,
+    scoresFonte,
   })
 
-  if (error) {
-    console.error(`[batch-scores] Supabase erro (${numero}):`, error.message)
-    process.exitCode = 1
-    return
-  }
+  const rb = result.risk_breakdown
+  const ob = result.os_breakdown
 
-  const geoSubs = dimensoes_risco.geologico.subfatores.length
-  const ambSubs = dimensoes_risco.ambiental.subfatores.length
-  const socSubs = dimensoes_risco.social.subfatores.length
-  const regSubs = dimensoes_risco.regulatorio.subfatores.length
-  const atrSubs = dimensoes_oportunidade.atratividade.subfatores.length
-  const viaSubs = dimensoes_oportunidade.viabilidade.subfatores.length
-  const segSubs = dimensoes_oportunidade.seguranca.subfatores.length
-
-  console.log(
+  batchLogMsg(
     `[batch-scores] OK ${numero} RS=${result.risk_score} OS cons/mod/arr=${result.os_conservador}/${result.os_moderado}/${result.os_arrojado}`,
   )
-  console.log(
-    `  dimensoes_risco: geologico(${geoSubs}), ambiental(${ambSubs}), social(${socSubs}), regulatorio(${regSubs})`,
+  batchLogMsg(
+    `[batch-scores]   risk_breakdown: geologico(${rb.geologico}), ambiental(${rb.ambiental}), social(${rb.social}), regulatorio(${rb.regulatorio})`,
   )
-  console.log(
-    `  dimensoes_oportunidade: atratividade(${atrSubs}), viabilidade(${viaSubs}), seguranca(${segSubs})`,
+  batchLogMsg(
+    `[batch-scores]   os_breakdown: atratividade(${ob.atratividade}), viabilidade(${ob.viabilidade}), seguranca(${ob.seguranca})`,
   )
 }
 
@@ -890,180 +846,262 @@ function parseNumerosList(flags: Record<string, string | boolean>): string[] {
 
 async function main() {
   const { flags } = parseCliArgs(process.argv.slice(2))
-  const numerosExplicitos = parseNumerosList(flags)
+  const numerosExplicitosInput = parseNumerosList(flags)
+
+  const sampleRaw = flags['sample-size']
+  let sampleSize: number | null = null
+  if (typeof sampleRaw === 'string' && sampleRaw.trim()) {
+    const n = Number(sampleRaw.trim())
+    if (!Number.isNaN(n) && n > 0) sampleSize = Math.floor(n)
+  }
 
   const force = flags.force === true
   const scoresFonteRaw = flags['scores-fonte']
   const scoresFonte =
     typeof scoresFonteRaw === 'string' && scoresFonteRaw.trim()
       ? scoresFonteRaw.trim()
-      : 'batch_fase1'
+      : 's31_v3_20260428'
 
   const modoAll = flags.all === true
   const skipExisting = flags['skip-existing'] === true
+  const ativosOnly = flags['ativos-only'] === true
 
-  if (numerosExplicitos.length === 0 && !modoAll) {
+  if (numerosExplicitosInput.length === 0 && !modoAll) {
     console.error(
-      'Uso: npx tsx server/scripts/batch-scores.ts --numero "864.016/2026" [--force] [--scores-fonte batch_fase1]',
+      'Uso: npx tsx server/scripts/batch-scores.ts --numero "864.016/2026" [--force] [--scores-fonte s31_v3_20260428]',
     )
     console.error(
-      '   ou: npx tsx server/scripts/batch-scores.ts --numeros "857.854/1996,850.280/1991" --force --scores-fonte batch_xxx',
+      '   ou: npx tsx server/scripts/batch-scores.ts --numeros "857.854/1996,850.280/1991" --force --scores-fonte s31_v3_20260428 [--sample-size N]',
     )
     console.error(
-      '   ou: npx tsx server/scripts/batch-scores.ts --all --force --scores-fonte batch_fase010_20260420',
+      '   ou: npx tsx server/scripts/batch-scores.ts --all --force --scores-fonte s31_v3_20260428',
     )
     console.error(
-      '   ou: npx tsx server/scripts/batch-scores.ts --all --skip-existing --force --scores-fonte batch_fase010_20260420   (retoma)',
+      '   ou: npx tsx server/scripts/batch-scores.ts --all --skip-existing --force --scores-fonte s31_v3_20260428   (retoma)',
     )
     process.exit(1)
   }
 
-  // Pre-carregar conjunto "ja processado" se --skip-existing (keyset paginado)
-  const jaProcessados = new Set<string>()
-  if (skipExisting) {
-    console.log(`[batch-scores] --skip-existing: carregando processos ja feitos com fonte="${scoresFonte}"...`)
-    let lastNumero = ''
-    const PAGE = 1000
-    while (true) {
-      // Usar scores + inner join, ordenado por processos.numero, keyset-style
-      const { data, error } = await supabase
-        .from('scores')
-        .select('processos!inner(numero)')
-        .eq('scores_fonte', scoresFonte)
-        .gt('processos.numero', lastNumero)
-        .order('numero', { foreignTable: 'processos', ascending: true })
-        .limit(PAGE)
+  let logStream: fs.WriteStream | undefined
 
-      if (error) {
-        console.error(`[batch-scores] Erro ao carregar skip-list:`, error.message)
-        break
-      }
-      if (!data || data.length === 0) break
-
-      for (const row of data) {
-        const p = (row as { processos?: { numero?: string } }).processos
-        if (p?.numero) {
-          jaProcessados.add(String(p.numero))
-          lastNumero = String(p.numero)
-        }
-      }
-
-      if (jaProcessados.size % 10000 === 0 || data.length < PAGE) {
-        console.log(`[batch-scores]   skip-list: ${jaProcessados.size} ja processados carregados`)
-      }
-
-      if (data.length < PAGE) break
+  try {
+    const logPath = path.join(os.tmpdir(), `batch-scores-${Date.now()}.log`)
+    logStream = fs.createWriteStream(logPath, { flags: 'a' })
+    const log = (msg: string) => {
+      const ts = new Date().toISOString()
+      const line = `[${ts}] ${msg}\n`
+      logStream!.write(line)
+      console.log(line.trim())
     }
-    console.log(`[batch-scores] --skip-existing: total ${jaProcessados.size} ja processados`)
-  }
+    batchLogMsg = log
+    log(
+      `[batch-scores] Início arquivo de log=${logPath} SUPABASE configurado.`,
+    )
 
-  // STREAMING: processar em lotes de 1000, sem carregar tudo em memoria
-  const LOG_INTERVAL = 500
-  const BATCH_SIZE = 1000
-  const startTime = Date.now()
-  let processados = 0
-  let pulados = 0
-  let erros = 0
+    let numerosExplicitos = [...numerosExplicitosInput]
+    if (numerosExplicitos.length > 0 && sampleSize != null && sampleSize > 0) {
+      numerosExplicitos = numerosExplicitos.slice(0, sampleSize)
+      log(
+        `Modo amostra: rodando apenas ${numerosExplicitos.length} processos (--sample-size ${sampleSize}).`,
+      )
+    }
 
-  async function processarLote(lote: string[]): Promise<void> {
-    const limit = pLimit(CONCURRENCY)
-    const tarefas = lote.map((numero) =>
-      limit(async () => {
-        if (jaProcessados.has(numero)) {
-          pulados++
-          return
+    // Pre-carregar conjunto "ja processado" se --skip-existing (keyset paginado)
+    const jaProcessados = new Set<string>()
+    if (skipExisting) {
+      log(
+        `[batch-scores] --skip-existing: carregando processos ja feitos com fonte="${scoresFonte}"...`,
+      )
+      let lastNumero = ''
+      const PAGE = 1000
+      while (true) {
+        const { data, error } = await supabase
+          .from('scores')
+          .select('processos!inner(numero)')
+          .eq('scores_fonte', scoresFonte)
+          .gt('processos.numero', lastNumero)
+          .order('numero', { foreignTable: 'processos', ascending: true })
+          .limit(PAGE)
+
+        if (error) {
+          log(`[batch-scores] Erro ao carregar skip-list: ${error.message}`)
+          break
         }
-        try {
-          await runOne(numero, force, scoresFonte)
-          processados++
-        } catch (err) {
-          erros++
-          const errMsg = err instanceof Error ? err.message : String(err)
-          const errStack = err instanceof Error ? err.stack : undefined
-          errosDetalhados.push({ numero, erro: errMsg, stack: errStack })
-          console.error(`[batch-scores] Erro em ${numero}:`, errMsg)
+        if (!data || data.length === 0) break
+
+        for (const row of data) {
+          const pRow = (row as { processos?: { numero?: string } }).processos
+          if (pRow?.numero) {
+            jaProcessados.add(String(pRow.numero))
+            lastNumero = String(pRow.numero)
+          }
         }
 
-        if ((processados + pulados) % LOG_INTERVAL === 0 && processados + pulados > 0) {
-          const elapsedSec = (Date.now() - startTime) / 1000
-          const rate = processados / Math.max(elapsedSec, 0.1)
-          const etaMin =
-            rate > 0.1
-              ? Math.ceil((processados * (1 / rate - elapsedSec / processados)) / 60)
-              : -1
-          console.log(
-            `[batch-scores][progresso] processados=${processados} pulados=${pulados} erros=${erros} | ${rate.toFixed(1)} proc/s | elapsed ${Math.round(elapsedSec / 60)}min`,
+        if (
+          jaProcessados.size % 10000 === 0 ||
+          data.length < PAGE
+        ) {
+          log(
+            `[batch-scores]   skip-list: ${jaProcessados.size} ja processados carregados`,
           )
         }
-      })
-    )
-    await Promise.all(tarefas)
-  }
 
-  // Caso 1: numeros explicitos
-  if (numerosExplicitos.length > 0) {
-    console.log(
-      `[batch-scores] iniciando: ${numerosExplicitos.length} processos explicitos, fonte="${scoresFonte}", force=${force}`,
-    )
-    await processarLote(numerosExplicitos)
-  }
-  // Caso 2: --all com keyset pagination streaming
-  else if (modoAll) {
-    console.log(
-      `[batch-scores] iniciando modo --all (keyset streaming), fonte="${scoresFonte}", force=${force}, skip-existing=${skipExisting}`,
-    )
-    let lastNumero = ''
-    let loteIdx = 0
-
-    while (true) {
-      const { data, error } = await supabase
-        .from('processos')
-        .select('numero')
-        .not('geom', 'is', null)
-        .not('substancia', 'is', null)
-        .not('municipio_ibge', 'is', null)
-        .gt('numero', lastNumero)
-        .order('numero', { ascending: true })
-        .limit(BATCH_SIZE)
-
-      if (error) {
-        console.error(`[batch-scores] Erro ao carregar lote ${loteIdx + 1}:`, error.message)
-        break
+        if (data.length < PAGE) break
       }
-      if (!data || data.length === 0) break
-
-      const lote = data.map((r) => String(r.numero))
-      lastNumero = lote[lote.length - 1]
-      loteIdx++
-
-      console.log(`[batch-scores] lote ${loteIdx} carregado (${lote.length} processos, ultimo=${lastNumero})`)
-      await processarLote(lote)
-
-      if (data.length < BATCH_SIZE) break
+      log(
+        `[batch-scores] --skip-existing: total ${jaProcessados.size} ja processados`,
+      )
     }
-  }
 
-  const totalSec = (Date.now() - startTime) / 1000
-  console.log(
-    `[batch-scores][concluido] processados=${processados} pulados=${pulados} erros=${erros} em ${Math.round(totalSec / 60)} min`,
-  )
+    const BATCH_SIZE = 1000
+    const startTime = Date.now()
+    let processados = 0
+    let pulados = 0
+    let erros = 0
 
-  // Dump de erros para análise pós-batch
-  if (errosDetalhados.length > 0) {
-    const fs = await import('fs')
-    const path = await import('path')
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-    const dumpPath = path.join('tmp', `erros_fase010_${timestamp}.json`)
-    try {
-      if (!fs.existsSync('tmp')) fs.mkdirSync('tmp', { recursive: true })
-      fs.writeFileSync(dumpPath, JSON.stringify(errosDetalhados, null, 2))
-      console.log(`[batch-scores] Lista de ${errosDetalhados.length} erros salva em: ${dumpPath}`)
-    } catch (e) {
-      console.error('[batch-scores] Falha ao salvar dump de erros:', e instanceof Error ? e.message : e)
+    /** Metas só para texto do heartbeat (% / média). */
+    let totalHeartbeat: number | null = null
+
+    async function processarLote(lote: string[]): Promise<void> {
+      const limit = pLimit(CONCURRENCY)
+      const tarefas = lote.map((numero) =>
+        limit(async () => {
+          if (jaProcessados.has(numero)) {
+            pulados++
+            return
+          }
+          try {
+            await runOne(numero, force, scoresFonte)
+            processados++
+
+            if (processados % 1000 === 0) {
+              const elapsedMs = Date.now() - startTime
+              const pctStr =
+                totalHeartbeat != null && totalHeartbeat > 0
+                  ? ((100 * processados) / totalHeartbeat).toFixed(1)
+                  : '?'
+              const avgMs =
+                processados > 0 ? elapsedMs / processados : 0
+              log(
+                `Heartbeat: ${processados}/${totalHeartbeat ?? '?'} (${pctStr}%) | erros: ${erros} | pulados: ${pulados} | média por processo: ${avgMs.toFixed(1)} ms | decorrido: ${(elapsedMs / 60000).toFixed(2)} min`,
+              )
+            }
+          } catch (err) {
+            erros++
+            const errMsg = err instanceof Error ? err.message : String(err)
+            const errStack = err instanceof Error ? err.stack : undefined
+            errosDetalhados.push({ numero, erro: errMsg, stack: errStack })
+            log(`[batch-scores] Erro em ${numero}: ${errMsg}`)
+          }
+        }),
+      )
+      await Promise.all(tarefas)
     }
-  }
 
-  if (erros > 0) process.exitCode = 1
+    // Caso 1: numeros explicitos
+    if (numerosExplicitos.length > 0) {
+      totalHeartbeat = numerosExplicitos.length
+      log(
+        `[batch-scores] iniciando: ${numerosExplicitos.length} processos explicitos, fonte="${scoresFonte}", force=${force}`,
+      )
+      await processarLote(numerosExplicitos)
+    }
+    // Caso 2: --all com keyset pagination streaming
+    else if (modoAll) {
+      totalHeartbeat =
+        sampleSize != null && sampleSize > 0 ? sampleSize : null
+      log(
+        `[batch-scores] iniciando modo --all (keyset streaming), fonte="${scoresFonte}", force=${force}, skip-existing=${skipExisting}${sampleSize != null ? ` sample-size=${sampleSize}` : ''}`,
+      )
+      if (ativosOnly) {
+        log(
+          '[batch-scores] FILTRO --ativos-only ATIVO. Processando apenas processos com ativo_derivado=true.',
+        )
+      }
+
+      let lastNumero = ''
+      let loteIdx = 0
+      /** Números ainda aceitos no modo amostra (sem contar já pulados pelo skip-existing). */
+      let numerosRestantesAmostra: number | null =
+        sampleSize != null && sampleSize > 0 ? sampleSize : null
+
+      while (true) {
+        if (numerosRestantesAmostra !== null && numerosRestantesAmostra <= 0)
+          break
+
+        const pageLimit =
+          numerosRestantesAmostra != null
+            ? Math.min(BATCH_SIZE, numerosRestantesAmostra)
+            : BATCH_SIZE
+
+        const baseQuery = supabase
+          .from('processos')
+          .select('numero')
+          .not('geom', 'is', null)
+          .not('substancia', 'is', null)
+          .not('municipio_ibge', 'is', null)
+          .gt('numero', lastNumero)
+        const { data, error } = await (ativosOnly
+          ? baseQuery.eq('ativo_derivado', true)
+          : baseQuery
+        )
+          .order('numero', { ascending: true })
+          .limit(pageLimit)
+
+        if (error) {
+          log(`[batch-scores] Erro ao carregar lote ${loteIdx + 1}: ${error.message}`)
+          break
+        }
+        if (!data || data.length === 0) break
+
+        const lote = data.map((r) => String(r.numero))
+
+        lastNumero = lote[lote.length - 1]
+        loteIdx++
+
+        if (numerosRestantesAmostra != null) {
+          numerosRestantesAmostra -= lote.length
+        }
+
+        log(
+          `[batch-scores] lote ${loteIdx} (${lote.length} processos, ultimo=${lastNumero})`,
+        )
+        await processarLote(lote)
+
+        if (data.length < pageLimit) break
+      }
+    }
+
+    const totalSec = (Date.now() - startTime) / 1000
+    log(
+      `[batch-scores][concluido] processados=${processados} pulados=${pulados} erros=${erros} em ${(totalSec / 60).toFixed(2)} min`,
+    )
+
+    if (errosDetalhados.length > 0) {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+      const dumpPath = path.join('tmp', `erros_fase010_${timestamp}.json`)
+      try {
+        if (!fs.existsSync('tmp')) fs.mkdirSync('tmp', { recursive: true })
+        fs.writeFileSync(dumpPath, JSON.stringify(errosDetalhados, null, 2))
+        log(
+          `[batch-scores] Lista de ${errosDetalhados.length} erros salva em: ${dumpPath}`,
+        )
+      } catch (e) {
+        log(
+          `[batch-scores] Falha ao salvar dump de erros: ${e instanceof Error ? e.message : e}`,
+        )
+      }
+    }
+
+    if (erros > 0) process.exitCode = 1
+  } catch (fatal) {
+    const msg =
+      fatal instanceof Error ? fatal.message + '\n' + fatal.stack : String(fatal)
+    console.error(`[batch-scores] Erro fatal: ${msg}`)
+    process.exitCode = 1
+  } finally {
+    logStream?.end(() => {})
+  }
 }
 
 main().catch((e) => {

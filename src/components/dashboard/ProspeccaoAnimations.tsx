@@ -1,5 +1,4 @@
 import type { CSSProperties } from 'react'
-import { RadarSweepAnimation } from './animations/RadarSweepAnimation'
 import { RiskCalibrationAnimation } from './animations/RiskCalibrationAnimation'
 import { RegionFocusAnimation } from './animations/RegionFocusAnimation'
 
@@ -9,7 +8,7 @@ export function ProspeccaoAnimations({
   reducedMotion,
   exiting = false,
 }: {
-  currentStep: 1 | 2 | 3
+  currentStep: 1 | 2
   visible: boolean
   reducedMotion: boolean
   exiting?: boolean
@@ -44,9 +43,8 @@ export function ProspeccaoAnimations({
           minHeight: 0,
         }}
       >
-        {currentStep === 1 ? <RadarSweepAnimation /> : null}
-        {currentStep === 2 ? <RiskCalibrationAnimation /> : null}
-        {currentStep === 3 ? <RegionFocusAnimation /> : null}
+        {currentStep === 1 ? <RiskCalibrationAnimation /> : null}
+        {currentStep === 2 ? <RegionFocusAnimation /> : null}
       </div>
     </div>
   )

@@ -1,4 +1,4 @@
-import { ArrowLeft, SearchX, X } from 'lucide-react'
+import { ArrowLeft, Loader2, SearchX, X } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -7,8 +7,14 @@ import {
   type CSSProperties,
   type KeyboardEvent,
   type MouseEvent,
+  type ReactNode,
   type RefObject,
 } from 'react'
+import { partitionAtratividadeSubs } from '../../lib/scoreBreakdownDimUi'
+import { formatNumeroPt } from '../../lib/scoreBreakdownFormat'
+import type { SubfatorOutput } from '../../types/scoreBreakdown'
+import { useScoreBreakdown } from '../../hooks/useScoreBreakdown'
+import { SubfatorDecomposicaoRows } from '../map/SubfatorDecomposicaoRows'
 import { motionGroupStyle } from '../../lib/motionStyles'
 import {
   CORES_DIMENSAO,
@@ -16,13 +22,20 @@ import {
   corFaixaOpportunity,
   corMiniBarraValor,
   getOpportunityLabel,
-  qualificadorTextoMiniBarra,
   type OpportunityResult,
   type PerfilRisco,
 } from '../../lib/opportunityScore'
 import { GridBreathingResultadosAnimation } from './animations/GridBreathingResultadosAnimation'
 import { clampBarPct } from '../../lib/radar/bars'
+import { SCORE_MINIMO_POR_PERFIL } from '../../lib/radar/api'
 import { TODAS_SUBST } from '../../lib/substancias'
+import { parseProcessoUuid } from '../../lib/processoUuid'
+import { FASES_CANONICAS } from '../../lib/radar/fasesCanonicas'
+
+function labelFaseChip(value: string): string {
+  const f = FASES_CANONICAS.find((x) => x.value === value)
+  return f?.label ?? value
+}
 
 const OPPORTUNITY_CARD_SELECTED_BORDER = 'rgba(239, 159, 39, 0.38)'
 const OPPORTUNITY_CARD_SELECTED_SHADOW = '0 0 12px rgba(239, 159, 39, 0.05)'
@@ -204,61 +217,6 @@ function CardResultado({
   )
 }
 
-interface SubfatorDrill {
-  nome?: string
-  valor?: number
-  valor_bruto?: number
-  peso_pct?: number
-  texto?: string
-  fonte?: string
-  label?: string
-}
-
-function fmtPtSubfator(n: number): string {
-  const arredondado = Math.round(n * 10) / 10
-  if (arredondado === Math.round(arredondado)) {
-    return String(Math.round(arredondado))
-  }
-  return arredondado.toFixed(1).replace('.', ',')
-}
-
-function SubfatorLinha({ subfator }: { subfator: SubfatorDrill }) {
-  const pesoPct = Number((subfator as { peso_pct?: unknown }).peso_pct) || 0
-  const tetoSubfator = pesoPct * 100
-  const valorBrutoN = Number((subfator as { valor_bruto?: unknown }).valor_bruto)
-  let valorCaptado = Number((subfator as { valor?: unknown }).valor)
-  if (!Number.isFinite(valorCaptado) && tetoSubfator > 0 && Number.isFinite(valorBrutoN)) {
-    valorCaptado = (valorBrutoN / 100) * tetoSubfator
-  }
-  if (!Number.isFinite(valorCaptado)) valorCaptado = 0
-  const aproveitamentoPct = tetoSubfator > 0 ? (valorCaptado / tetoSubfator) * 100 : 0
-  const q = qualificadorTextoMiniBarra(aproveitamentoPct)
-  return (
-    <div>
-      <div className="mb-2 flex items-baseline justify-between gap-3">
-        <span className="text-[13px] text-zinc-300">{subfator.nome ?? subfator.label ?? '—'}</span>
-        <div className="flex flex-shrink-0 items-baseline gap-2">
-          <span className="text-[13px] font-medium tabular-nums" style={{ color: q.color }}>
-            {fmtPtSubfator(valorCaptado)} de {fmtPtSubfator(tetoSubfator)}
-          </span>
-          <span className="min-w-[40px] text-right text-[11px] tracking-wide" style={{ color: '#888780' }}>
-            {q.label}
-          </span>
-        </div>
-      </div>
-      <div className="h-1 overflow-hidden rounded-sm bg-zinc-900">
-        <div
-          className="h-full"
-          style={{
-            width: `${Math.max(0, Math.min(100, aproveitamentoPct))}%`,
-            background: q.color,
-          }}
-        />
-      </div>
-    </div>
-  )
-}
-
 type DimK = 'atratividade' | 'viabilidade' | 'seguranca'
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -345,26 +303,22 @@ function DimensaoExpandivel({
   nome,
   peso,
   valor,
-  subfatores,
   cor,
   aberta,
   onToggle,
   reducedMotion,
+  expandedContent,
 }: {
   k: DimK
   nome: string
   peso: number
   valor: number
-  subfatores: unknown[] | undefined
   cor: string
   aberta: boolean
   onToggle: (key: DimK) => void
   reducedMotion: boolean
+  expandedContent: ReactNode | null
 }) {
-  const subLista = (Array.isArray(subfatores) ? subfatores : []).filter(
-    (sf) => !ehSubfatorParasita(sf as { texto?: unknown }),
-  )
-  const temSubs = subLista.length > 0
   const trClass = reducedMotion
     ? ''
     : 'transition-[grid-template-rows] duration-300 ease-in-out'
@@ -381,7 +335,7 @@ function DimensaoExpandivel({
         }}
         className="mb-2 flex w-full cursor-pointer items-center justify-between text-left"
         aria-expanded={aberta}
-        aria-controls={`dim-drill-${k}`}
+        aria-controls={expandedContent ? `dim-drill-${k}` : undefined}
         id={`dim-head-${k}`}
       >
         <span className="flex items-center gap-1.5 text-[14px] font-medium text-zinc-100">
@@ -397,7 +351,7 @@ function DimensaoExpandivel({
       <div className="mb-5 h-[5px] overflow-hidden rounded-sm bg-zinc-900">
         <div className="h-full rounded-sm" style={barStyle} />
       </div>
-      {temSubs ? (
+      {expandedContent != null ? (
         <div
           className={cn('grid', trClass, aberta ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]')}
           id={`dim-drill-${k}`}
@@ -405,11 +359,7 @@ function DimensaoExpandivel({
           aria-labelledby={`dim-head-${k}`}
         >
           <div className="min-h-0 overflow-hidden">
-            <div className="space-y-4 border-l border-zinc-800 pl-4">
-              {subLista.map((sf, i) => (
-                <SubfatorLinha key={i} subfator={sf as SubfatorDrill} />
-              ))}
-            </div>
+            <div className="space-y-4 border-l border-zinc-800 pl-4">{expandedContent}</div>
           </div>
         </div>
       ) : null}
@@ -434,10 +384,94 @@ function DrilldownCalculo({
   const toggleDim = useCallback((k: DimK) => {
     setDimAberta((prev) => (prev === k ? null : k))
   }, [])
+  const { data: bd, loading: bdLoading, error: bdErrRaw } = useScoreBreakdown(r.processoId)
+  const bdErrMsg = bdErrRaw
+
+  const renderExpandedDim = (dim: DimK): ReactNode => {
+    if (bdLoading && !bd) {
+      return (
+        <div className="flex items-center gap-2 py-2 text-[13px] text-zinc-400">
+          <Loader2
+            className="h-4 w-4 shrink-0 animate-spin"
+            style={{ color: '#EF9F27' }}
+            aria-hidden
+          />
+          Carregando decomposição…
+        </div>
+      )
+    }
+    if (bdErrMsg && !bd) {
+      return (
+        <p className="m-0 text-[13px] text-red-300/90" role="alert">
+          {bdErrMsg}
+        </p>
+      )
+    }
+    const opp = bd?.dimensoes_oportunidade
+    if (!opp) {
+      return (
+        <p className="m-0 text-[13px] text-zinc-500">
+          Decomposição indisponível para este processo.
+        </p>
+      )
+    }
+
+    let rawLines: SubfatorOutput[]
+    switch (dim) {
+      case 'atratividade':
+        rawLines = opp.atratividade?.subfatores ?? []
+        break
+      case 'viabilidade':
+        rawLines = opp.viabilidade?.subfatores ?? []
+        break
+      case 'seguranca':
+        rawLines = opp.seguranca?.subfatores ?? []
+        break
+      default:
+        rawLines = []
+    }
+
+    const filtradas = rawLines.filter((s) => !ehSubfatorParasita(s))
+
+    if (dim === 'atratividade') {
+      const { linhasSubfatores, bonusBadge } = partitionAtratividadeSubs(filtradas)
+      if (linhasSubfatores.length === 0 && !bonusBadge) {
+        return (
+          <p className="m-0 text-[13px] text-zinc-500">
+            Decomposição não disponível para este processo no fluxo atual.
+          </p>
+        )
+      }
+      return (
+        <>
+          {linhasSubfatores.length > 0 ? (
+            <SubfatorDecomposicaoRows variant="oportunidade" subfatores={linhasSubfatores} />
+          ) : null}
+          {bonusBadge ? (
+            <div
+              className="text-right font-semibold tabular-nums text-[13px]"
+              style={{ marginTop: linhasSubfatores.length > 0 ? 10 : 0, color: '#46A672' }}
+            >
+              +{formatNumeroPt(bonusBadge.valor)} pontos · Mineral crítico
+            </div>
+          ) : null}
+        </>
+      )
+    }
+
+    if (filtradas.length === 0) {
+      return (
+        <p className="m-0 text-[13px] text-zinc-500">
+          Decomposição não disponível para este processo no fluxo atual.
+        </p>
+      )
+    }
+    return <SubfatorDecomposicaoRows variant="oportunidade" subfatores={filtradas} />
+  }
+
   const sa = r.scoreAtratividade ?? 0
   const sv = r.scoreViabilidade ?? 0
   const ss = r.scoreSeguranca ?? 0
-  const dimensoes = r.dimensoesOportunidade
   return (
     <div
       onClick={(e) => e.stopPropagation()}
@@ -473,33 +507,37 @@ function DrilldownCalculo({
         nome="Atratividade"
         peso={pesos.a}
         valor={sa}
-        subfatores={dimensoes?.atratividade?.subfatores as unknown[] | undefined}
         cor={CORES_DIMENSAO.atratividade}
         aberta={dimAberta === 'atratividade'}
         onToggle={toggleDim}
         reducedMotion={reducedMotion}
+        expandedContent={
+          dimAberta === 'atratividade' ? renderExpandedDim('atratividade') : null
+        }
       />
       <DimensaoExpandivel
         k="viabilidade"
         nome="Viabilidade"
         peso={pesos.b}
         valor={sv}
-        subfatores={dimensoes?.viabilidade?.subfatores as unknown[] | undefined}
         cor={CORES_DIMENSAO.viabilidade}
         aberta={dimAberta === 'viabilidade'}
         onToggle={toggleDim}
         reducedMotion={reducedMotion}
+        expandedContent={
+          dimAberta === 'viabilidade' ? renderExpandedDim('viabilidade') : null
+        }
       />
       <DimensaoExpandivel
         k="seguranca"
         nome="Segurança"
         peso={pesos.c}
         valor={ss}
-        subfatores={dimensoes?.seguranca?.subfatores as unknown[] | undefined}
         cor={CORES_DIMENSAO.seguranca}
         aberta={dimAberta === 'seguranca'}
         onToggle={toggleDim}
         reducedMotion={reducedMotion}
+        expandedContent={dimAberta === 'seguranca' ? renderExpandedDim('seguranca') : null}
       />
       <PontuacaoFinalCard r={r} perfil={perfil} pesos={pesos} />
       <div className="mt-4 border-t border-zinc-800 pt-4">
@@ -553,6 +591,7 @@ export function ProspeccaoResultados({
   proRisco,
   proSubst,
   proUfs,
+  proFases,
   selectedResultId,
   setSelectedResultId,
   cardVis,
@@ -565,6 +604,8 @@ export function ProspeccaoResultados({
   showToast,
   onAbrirRefinarSubst,
   onRemoverFiltroSubst,
+  onAbrirRefinarFase,
+  onRemoverFiltroFase,
 }: {
   resultados: OpportunityResult[]
   totalOportunidades: number | null
@@ -576,6 +617,7 @@ export function ProspeccaoResultados({
   proRisco: PerfilRisco | null
   proSubst: string[]
   proUfs: string[]
+  proFases: string[]
   selectedResultId: string | null
   setSelectedResultId: (id: string | null) => void
   cardVis: boolean[]
@@ -588,6 +630,8 @@ export function ProspeccaoResultados({
   showToast: (m: string) => void
   onAbrirRefinarSubst: () => void
   onRemoverFiltroSubst: (substancia: string) => void
+  onAbrirRefinarFase: () => void
+  onRemoverFiltroFase: (fase: string) => void
 }) {
   void _barsReady
   const cardsGridRef = resultadosListRef
@@ -746,18 +790,25 @@ export function ProspeccaoResultados({
               >
                 <ArrowLeft size={20} />
               </button>
-              <h2
-                style={{
-                  margin: 0,
-                  fontSize: 22,
-                  fontWeight: 500,
-                  color: '#F1EFE8',
-                }}
-              >
-                {totalOportunidades !== null
-                  ? `${totalOportunidades.toLocaleString('pt-BR')} oportunidades identificadas`
-                  : `${resultados.length} oportunidades carregadas`}
-              </h2>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <h2
+                  style={{
+                    margin: 0,
+                    fontSize: 22,
+                    fontWeight: 500,
+                    color: '#F1EFE8',
+                  }}
+                >
+                  {totalOportunidades !== null
+                    ? `${totalOportunidades.toLocaleString('pt-BR')} oportunidades identificadas`
+                    : `${resultados.length} oportunidades carregadas`}
+                </h2>
+                {proRisco ? (
+                  <p style={{ margin: 0, fontSize: 13, color: '#888780', lineHeight: 1.4 }}>
+                    Critérios: OS ≥ {SCORE_MINIMO_POR_PERFIL[proRisco]} ({proRisco}).
+                  </p>
+                ) : null}
+              </div>
             </div>
 
             <div style={{ display: 'flex', gap: 10, flexShrink: 0, alignItems: 'center' }}>
@@ -872,12 +923,47 @@ export function ProspeccaoResultados({
               <span className={filtroChipsClass}>Brasil</span>
             )}
 
+            {proFases.map((fase) => (
+              <span
+                key={fase}
+                className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-[13px] text-emerald-100"
+              >
+                <span>{labelFaseChip(fase)}</span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onRemoverFiltroFase(fase)
+                  }}
+                  aria-label={`Remover fase ${labelFaseChip(fase)}`}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#888780',
+                    cursor: 'pointer',
+                    padding: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                  }}
+                >
+                  <X size={14} />
+                </button>
+              </span>
+            ))}
+
             <button
               type="button"
               onClick={onAbrirRefinarSubst}
               className="cursor-pointer rounded-full border border-dashed border-zinc-700 bg-transparent px-3.5 py-2 text-[13px] text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-200"
             >
               + Filtrar substância
+            </button>
+            <button
+              type="button"
+              onClick={onAbrirRefinarFase}
+              className="cursor-pointer rounded-full border border-dashed border-zinc-700 bg-transparent px-3.5 py-2 text-[13px] text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-200"
+            >
+              + Filtrar fase
             </button>
           </div>
         </div>
@@ -1082,12 +1168,12 @@ export function ProspeccaoResultados({
                           ord={i + 1}
                           onVerMapa={() => {
                             const n = (r.numero && String(r.numero).trim()) || ''
-                            const id = (r.processoId && String(r.processoId).trim()) || ''
-                            if (!n && !id) {
-                              console.warn('[Ver no Mapa] Card sem numero nem processoId', r)
+                            const uuid = parseProcessoUuid(r.processoId)
+                            if (!uuid && !n) {
+                              console.warn('[Ver no Mapa] Card sem número ANM nem processoId (UUID)', r)
                               return
                             }
-                            navigateProcessoMapa(id, n || null)
+                            navigateProcessoMapa(uuid ?? '', n || null)
                           }}
                           onVerCalculo={() => {
                             setSelectedResultId(r.processoId)

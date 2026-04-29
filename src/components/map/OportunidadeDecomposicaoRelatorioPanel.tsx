@@ -23,6 +23,7 @@ import {
   partitionAtratividadeSubs,
 } from '../../lib/scoreBreakdownDimUi'
 import { formatNumeroPt } from '../../lib/scoreBreakdownFormat'
+import { resolverPenalidadeDisclaimer } from '../../lib/oportunidadePenalidadesDisclaimer'
 
 const FS = {
   sm: 13,
@@ -386,7 +387,7 @@ export function OportunidadeDecomposicaoRelatorioPanel({
                             margin: 0,
                           }}
                         >
-                          Nenhum subfator disponível para esta dimensão.
+                          Decomposição não disponível para este processo no fluxo atual.
                         </p>
                       )
                     }
@@ -425,37 +426,55 @@ export function OportunidadeDecomposicaoRelatorioPanel({
         )
       })}
 
-      {oportunidade.penalidades && oportunidade.penalidades.length > 0 ? (
-        <div
-          style={{
-            marginTop: 20,
-            borderRadius: 6,
-            border: '1px solid rgba(248, 113, 113, 0.4)',
-            background: 'rgba(248, 113, 113, 0.07)',
-            padding: 10,
-            boxSizing: 'border-box',
-          }}
-        >
+      {(() => {
+        const disc = resolverPenalidadeDisclaimer(oportunidade.penalidades)
+        if (!disc) return null
+        return (
           <div
             style={{
-              fontSize: FS.sm,
-              fontWeight: 700,
-              color: '#F87171',
-              marginBottom: 6,
+              marginTop: 20,
+              borderRadius: 6,
+              border: '1px solid rgba(248, 113, 113, 0.4)',
+              background: 'rgba(248, 113, 113, 0.07)',
+              padding: 10,
+              boxSizing: 'border-box',
             }}
           >
-            Penalidades aplicadas (motor S31)
-          </div>
-          {oportunidade.penalidades.map((p, i) => (
             <div
-              key={`${i}-${p.slice(0, 20)}`}
-              style={{ fontSize: FS.md, color: '#D3D1C7', lineHeight: 1.45, marginTop: i > 0 ? 4 : 0 }}
+              style={{
+                fontSize: FS.sm,
+                fontWeight: 700,
+                color: '#F87171',
+                marginBottom: 8,
+              }}
             >
-              {p}
+              {disc.titulo}
             </div>
-          ))}
-        </div>
-      ) : null}
+            <p
+              style={{
+                fontSize: FS.md,
+                color: '#D3D1C7',
+                lineHeight: 1.45,
+                margin: 0,
+              }}
+            >
+              {disc.corpo}
+            </p>
+            <p
+              style={{
+                fontSize: FS.sm,
+                fontStyle: 'italic',
+                color: '#888780',
+                marginTop: 12,
+                marginBottom: 0,
+                lineHeight: 1.45,
+              }}
+            >
+              {disc.rodape}
+            </p>
+          </div>
+        )
+      })()}
     </div>
   )
 }

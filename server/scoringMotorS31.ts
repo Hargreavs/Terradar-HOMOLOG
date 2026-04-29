@@ -1549,13 +1549,28 @@ export async function loadBndes(sub: string | null) {
 
 export async function runS31MotorAndPersist(
   processoId: string,
-  opts: { persist?: boolean; massCaches?: S31MassCaches; returnSubfatores?: boolean } = {},
+  opts: {
+    persist?: boolean
+    massCaches?: S31MassCaches
+    returnSubfatores?: boolean
+    scoresFonte?: string
+  } = {},
 ): Promise<ScoreResult> {
   const prevSess = sessionMassCaches
   const prevCfg = cfgCache
   sessionMassCaches = opts.massCaches ?? null
   const wantSub = opts.returnSubfatores === true
   const persist = opts.persist === true && !wantSub
+  const sfDefault = 's31_v3_20260427'
+  const sfRaw = opts.scoresFonte ?? sfDefault
+  if (
+    typeof sfRaw !== 'string' ||
+    !/^[a-zA-Z0-9_.\-]+$/.test(sfRaw) ||
+    sfRaw.length > 120
+  ) {
+    throw new Error('scoresFonte invalido')
+  }
+  const scoresFonte = sfRaw
   let p: ProcessoMotorRow | null
   let ls: LayerRow[], sub: SubData | null, cpt: number, cfg: Record<string, unknown>, aut: { count: number; total: number }
   let cfe: number, bnd: boolean
@@ -1618,13 +1633,13 @@ export async function runS31MotorAndPersist(
         INSERT INTO scores (processo_id, risk_score, risk_label, risk_cor, os_conservador, os_moderado, os_arrojado, os_label, os_classificacao,
           dimensoes_risco, dimensoes_oportunidade, calculated_at, scores_fonte)
         VALUES (${processoId}::uuid, ${risk}, ${rI.l}, ${rI.c}, ${ocI}, ${omI}, ${oa2I}, ${osU}, ${osU},
-          ${s.json(dimRJson)}::jsonb, ${s.json(dimOJson)}::jsonb, NOW(), 's31_v3_20260427')
+          ${s.json(dimRJson)}::jsonb, ${s.json(dimOJson)}::jsonb, NOW(), ${scoresFonte})
         ON CONFLICT (processo_id) DO UPDATE SET
           risk_score = EXCLUDED.risk_score, risk_label = EXCLUDED.risk_label, risk_cor = EXCLUDED.risk_cor,
           os_conservador = EXCLUDED.os_conservador, os_moderado = EXCLUDED.os_moderado, os_arrojado = EXCLUDED.os_arrojado,
           os_label = EXCLUDED.os_label, os_classificacao = EXCLUDED.os_classificacao,
           dimensoes_risco = EXCLUDED.dimensoes_risco, dimensoes_oportunidade = EXCLUDED.dimensoes_oportunidade,
-          calculated_at = NOW(), scores_fonte = 's31_v3_20260427'
+          calculated_at = NOW(), scores_fonte = ${scoresFonte}
       `
     }
   }
@@ -1655,7 +1670,7 @@ export async function runS31MotorAndPersist(
       scoreComunidades: 0, scoreCAPAG_rs: 0, scoreCaducidade: 0, scoreRegTempo: 0, scoreRegPendencias: 0, scoreRegAlertas: 0,
       a1:0,a2:0,a3:0,a4:0,a5:0, b1:0,b2:0,b3:0,b4:0,b5:0,b6:0,b7:0, c1:0,c2:0,c3:0,c4:0,c5:0,c6:0,
     },
-    fallbacks_usados: ['s31_v3_20260427'],
+    fallbacks_usados: [scoresFonte],
   }
   } finally {
     sessionMassCaches = prevSess

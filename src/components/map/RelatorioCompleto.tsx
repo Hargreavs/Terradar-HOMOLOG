@@ -9,7 +9,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from 'react'
-import { ArrowUpRight, Ban, Info, Loader2, Sparkles } from 'lucide-react'
+import { Ban, Info, Loader2, Sparkles } from 'lucide-react'
 import { relatoriosMock } from '../../data/relatorio.mock'
 import type {
   DadosANM,
@@ -21,11 +21,6 @@ import type {
   RelatorioScoresExibicaoApi,
   Timestamps,
 } from '../../data/relatorio.mock'
-import {
-  rotuloFontePublicacaoExibicao,
-  textoTooltipNivelImpactoLegislativo,
-} from '../../lib/alertaImpactoLegislativo'
-import { estiloBadgeRelevancia } from '../../lib/relevanciaAlerta'
 import { formatarRealBrlInteligente } from '../../lib/formatarRealBrlInteligente'
 import { formatarUsdMiInteligente } from '../../lib/formatarUsdMiInteligente'
 import {
@@ -43,7 +38,8 @@ import {
 } from '../../lib/formatContextoBrasilIntel'
 import { REGIME_LABELS } from '../../lib/regimes'
 import { RegimeBadge } from '../ui/RegimeBadge'
-import { AlertaItemImpactoBar } from '../legislativo/AlertaItemImpactoBar'
+import { CardAlertasRegulatorios } from '../drawer/CardAlertasRegulatorios'
+import { ConflitosTerritoriaisCard } from '../drawer/territorio/ConflitosTerritoriaisCard'
 import { CamadaTooltipHover } from '../filters/CamadaTooltipHover'
 import { TextoTruncadoComTooltip } from '../ui/TextoTruncadoComTooltip'
 import { gerarRiskDecomposicaoParaProcesso } from '../../lib/riskScoreDecomposicao'
@@ -55,7 +51,6 @@ import {
 import { getOpportunityLabel } from '../../lib/opportunityScore'
 import { normalizarSeparadoresRotuloDb } from '../../lib/normalizarRotuloScore'
 import type {
-  AlertaLegislativo,
   CfemBreakdownMunicipio,
   ClassificacaoZumbi,
   Fase,
@@ -83,7 +78,7 @@ import { useScoreBreakdown } from '../../hooks/useScoreBreakdown'
 import { formatNumeroPt } from '../../lib/scoreBreakdownFormat'
 import { formatDateBR } from '../../lib/territorialAmbientalDisplay'
 import { type TipoAreaSensivel, textoCorDistS31 } from '../../lib/distanciaCor'
-import { biomaMultiplicadorS31, corMultiplicadorBioma } from '../../lib/biomaS31'
+import { biomaMultiplicadorS31, corMultiplicadorBioma, textoMultiplicadorBioma } from '../../lib/biomaS31'
 import {
   isPlaceholderEstrategiaNacional,
   msgAmbientalSensivelTipo3,
@@ -91,7 +86,6 @@ import {
   msgCapagIndisponivelMunicipio,
   msgCfemOperacaoEstimativaIndisponivel,
   msgPrecoTipo1GemasSemUsd,
-  msgProcessosVizinhosTipo3,
   msgTipo4BrasilProducaoZeroRef,
   msgValorInsituTipo1AguasMinerais,
   msgValorInsituTipo1Gemas,
@@ -277,40 +271,6 @@ function estiloBadgeSobrepostoAmbiental(): CSSProperties {
   }
 }
 
-function badgeCptFromTierKey(
-  tierKey: string,
-): { label: string; bg: string; fg: string } {
-  const m: Record<string, { label: string; bg: string; fg: string }> = {
-    super_critica: { label: 'Severa', bg: '#3B1212', fg: '#F87171' },
-    critica: { label: 'Alta', bg: '#3B2A12', fg: '#FBBF24' },
-    moderada: { label: 'Moderada', bg: '#3B3512', fg: '#FDE047' },
-    media: { label: 'Moderada', bg: '#3B3512', fg: '#FDE047' },
-    baixa: { label: 'Baixa', bg: '#12321F', fg: '#34D399' },
-    sem_dado: { label: 'Sem registros', bg: '#1F1F1F', fg: '#9CA3AF' },
-    sem_registro: { label: 'Sem registros', bg: '#1F1F1F', fg: '#9CA3AF' },
-  }
-  return (
-    m[tierKey] ?? {
-      label: 'Baixa',
-      bg: '#12321F',
-      fg: '#34D399',
-    }
-  )
-}
-
-function normalizarTierCpt(raw: string): string {
-  return raw
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, '_')
-    .replace(/-/g, '_')
-}
-
-function textoTendenciaCptAnualPct(tend: number): string {
-  const s = tend > 0 ? '+' : ''
-  return `${s}${tend}% ao ano`
-}
-
 /** Rótulo da substância com acentuação correta (ex.: NIQUEL → Níquel). */
 function apresentarSubstanciaLabel(s: string): string {
   return labelSubstanciaParaExibicao(s)
@@ -348,21 +308,6 @@ function corFaixaRisco(v: number): string {
   if (v < 40) return '#1D9E75'
   if (v <= 69) return '#E8A830'
   return '#E24B4A'
-}
-
-/** Rótulo curto para a coluna Substância (tabela Processos vizinhos). */
-function abreviarSubstanciaVizinho(raw: string): string {
-  const t = raw.trim()
-  const u = t
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toUpperCase()
-  if (u === 'MINERIO DE OURO') return 'Min. de Ouro'
-  if (u === 'OURO') return 'Ouro'
-  if (u === 'MINERIO DE LITIO') return 'Min. de Lítio'
-  if (u === 'TERRAS RARAS') return 'Terras Raras'
-  if (u === 'GRANITO') return 'Granito'
-  return t
 }
 
 function classificacaoRiscoTotal(r: number): string {
@@ -562,6 +507,9 @@ const GLOSSARIO_APP =
 const GLOSSARIO_QUILOMBOLA =
   'Comunidade remanescente de quilombo com território reconhecido pelo INCRA. Exige consulta prévia conforme Convenção 169 da OIT.'
 
+const GLOSSARIO_ASSENTAMENTO =
+  'Assentamentos rurais com projeto de assentamento aprovado ou em titulação (INCRA). Distâncias em linha até o perímetro público declarado.'
+
 const AREAS_SENSIVEIS_DIST_TOOLTIP =
   'As distâncias são calculadas entre o centroide do processo minerário e o limite mais próximo de cada área sensível (FUNAI/ICMBio/INCRA). Cores indicam proximidade: vermelho (< 10 km, zona de influência direta), âmbar (10-30 km, zona de atenção), neutro (30-50 km), verde (> 50 km, distância segura). Referência: zonas de amortecimento conforme SNUC e normas específicas de cada UC.'
 
@@ -683,6 +631,7 @@ const DOT_TI = '#D4785A'
 const DOT_UC = '#4A8C5E'
 const DOT_APP = '#6BAF7B'
 const DOT_QUILOMBOLA = '#B8785C'
+const DOT_ASSENTAMENTO = '#A78BFA'
 /** Ausência positiva (sem TI na região monitorada). */
 const DOT_AUSENCIA_POSITIVA = '#1D9E75'
 
@@ -2039,47 +1988,10 @@ export function RelatorioCompleto({
     useState<PerfilOportunidadeOSKey>('conservador')
   const [hoverPerfilOportunidade, setHoverPerfilOportunidade] =
     useState<PerfilOportunidadeOSKey | null>(null)
-  const [cptUfData, setCptUfData] = useState<Record<string, unknown> | null>(null)
 
   useEffect(() => {
     if (aberto) setAba(abaInicial)
   }, [aberto, abaInicial, abaRiscoRequestId])
-
-  useEffect(() => {
-    if (!processo?.uf || aba !== 'territorio') return
-    const ac = new AbortController()
-    void fetch(`/api/cpt/uf/${processo.uf}`, { signal: ac.signal })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => setCptUfData(j))
-      .catch(() => setCptUfData(null))
-    return () => ac.abort()
-  }, [aba, processo?.id, processo?.uf])
-
-  const alertasOrdenados = useMemo(() => {
-    if (!processo) return []
-    const extras: AlertaLegislativo[] = []
-    if (processo.exigencia_pendente === true) {
-      const historico = processo.ativo_derivado === false
-      extras.push({
-        id: 'terr-exigencia-pendente-scm',
-        fonte: 'ANM',
-        fonte_diario: 'Microdados SCM',
-        data:
-          processo.ultimo_evento_data?.trim() ||
-          new Date().toISOString().slice(0, 10),
-        titulo: historico ? 'Exigência (histórico)' : 'Exigência pendente',
-        resumo: historico
-          ? 'Exigência registrada nos Microdados SCM ao encerrar o processo — consulta histórica.'
-          : 'Existe exigência publicada sem cumprimento registrado nos Microdados SCM.',
-        nivel_impacto: historico ? 1 : 2,
-        tipo_impacto: historico ? 'neutro' : 'restritivo',
-        urgencia: historico ? 'medio_prazo' : 'imediata',
-      })
-    }
-    return [...extras, ...processo.alertas].sort(
-      (a, b) => a.nivel_impacto - b.nivel_impacto,
-    )
-  }, [processo])
 
   const riskDecomposicaoMemo = useMemo(() => {
     if (!processo) return null
@@ -2551,6 +2463,23 @@ export function RelatorioCompleto({
     !Number.isNaN(Number(territorial.distancia_quilombola_km))
   const nomeQuilombolaExibicao =
     territorial.nome_quilombola_proximo ?? territorial.nome_quilombola
+
+  const useAssentamentoDistancia =
+    territorial.distancia_assentamento_km != null &&
+    !Number.isNaN(Number(territorial.distancia_assentamento_km))
+
+  const distanciaAssentamentoKmRaw = territorial.distancia_assentamento_km
+  const nomeAssentamentoBaseRaw = territorial.nome_assentamento_proximo
+
+  const nomeAssentamentoExibicaoCard =
+    nomeAssentamentoBaseRaw != null && String(nomeAssentamentoBaseRaw).trim() !== ''
+      ? territorial.fase_assentamento_incr != null &&
+        String(territorial.fase_assentamento_incr).trim() !== ''
+        ? `Assentamento INCRA: ${String(nomeAssentamentoBaseRaw).trim()} (${String(
+            territorial.fase_assentamento_incr,
+          ).trim()})`
+        : `Assentamento INCRA: ${String(nomeAssentamentoBaseRaw).trim()}`
+      : 'Assentamento INCRA'
 
   const distanciaSedeKm =
     territorial.distancia_sede_km ?? territorial.distancia_sede_municipal_km
@@ -3629,6 +3558,83 @@ export function RelatorioCompleto({
                     </span>
                   </div>
                 )}
+                <div aria-hidden style={separadorInsetTerritorio} />
+                {useAssentamentoDistancia ? (
+                  (() => {
+                    const akm = Number(distanciaAssentamentoKmRaw)
+                    const dqA = textoCorDistS31(
+                      'ASSENTAMENTO',
+                      akm,
+                      akm <= 0.001,
+                    )
+                    return (
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 8,
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            minWidth: 0,
+                            flex: 1,
+                          }}
+                        >
+                          <span
+                            style={{
+                              width: 8,
+                              height: 8,
+                              borderRadius: '50%',
+                              backgroundColor: DOT_ASSENTAMENTO,
+                              flexShrink: 0,
+                            }}
+                          />
+                          <span
+                            style={{
+                              fontSize: FS.md,
+                              color: '#D3D1C7',
+                              minWidth: 0,
+                              flex: 1,
+                            }}
+                          >
+                            <CamadaTooltipHover
+                              texto={GLOSSARIO_ASSENTAMENTO}
+                              maxWidthPx={300}
+                              inlineWrap
+                            >
+                              <span
+                                style={{
+                                  cursor: 'help',
+                                  textDecoration: 'underline dotted',
+                                  textUnderlineOffset: 2,
+                                }}
+                              >
+                                {nomeAssentamentoExibicaoCard}
+                              </span>
+                            </CamadaTooltipHover>
+                          </span>
+                        </div>
+                        <span
+                          style={{
+                            fontSize: FS.md,
+                            fontWeight: 500,
+                            color: dqA.color,
+                            flexShrink: 0,
+                            marginLeft: 'auto',
+                            textAlign: 'right',
+                          }}
+                        >
+                          {dqA.text}
+                        </span>
+                      </div>
+                    )
+                  })()
+                ) : null}
               </div>
               <FonteLabel
                 dataIso={timestamps.terras_indigenas}
@@ -3638,150 +3644,13 @@ export function RelatorioCompleto({
               />
             </Card>
 
-            {cptUfData != null && typeof cptUfData.tier === 'string' ? (
-              <Card>
-                <SecLabel branco>Conflitos territoriais no estado</SecLabel>
-                <p
-                  style={{
-                    fontSize: FS.sm,
-                    color: 'rgba(255, 255, 255, 0.6)',
-                    margin: '0 0 12px 0',
-                    lineHeight: 1.5,
-                  }}
-                >
-                  Esta área concentra histórico relevante de conflitos rurais
-                  documentados pela Comissão Pastoral da Terra (CPT) — referência
-                  nacional em pressão social sobre projetos de mineração.
-                </p>
-                {(() => {
-                  const mult = Number(cptUfData.multiplicador)
-                  const tierNorm = normalizarTierCpt(String(cptUfData.tier))
-                  const badge = badgeCptFromTierKey(tierNorm)
-                  const f20 = Number(cptUfData.familias_2020) || 0
-                  const f24 = Number(cptUfData.familias_2024) || 0
-                  const tend =
-                    f20 > 0 ? Math.round(((f24 - f20) / f20) * 100) : null
-                  const multFmt = Number.isFinite(mult)
-                    ? mult.toLocaleString('pt-BR', {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })
-                    : '—'
-                  return (
-                    <>
-                      <div
-                        style={{
-                          display: 'grid',
-                          gridTemplateColumns: '1fr 1fr',
-                          gap: 10,
-                          marginBottom: 10,
-                        }}
-                      >
-                        <div>
-                          <div style={{ fontSize: FS.sm, color: '#888780' }}>
-                            Ocorrências (últimos 5 anos)
-                          </div>
-                          <div style={{ fontSize: FS.lg, color: '#D3D1C7' }}>
-                            {cptUfData.total_ocorrencias_5anos != null
-                              ? Number(
-                                  cptUfData.total_ocorrencias_5anos,
-                                ).toLocaleString('pt-BR')
-                              : '—'}
-                          </div>
-                        </div>
-                        <div>
-                          <div style={{ fontSize: FS.sm, color: '#888780' }}>
-                            Famílias atingidas
-                          </div>
-                          <div style={{ fontSize: FS.lg, color: '#D3D1C7' }}>
-                            {cptUfData.total_familias_5anos != null
-                              ? Number(
-                                  cptUfData.total_familias_5anos,
-                                ).toLocaleString('pt-BR')
-                              : '—'}
-                          </div>
-                        </div>
-                      </div>
-                      <div style={{ marginBottom: 10 }}>
-                        <div style={{ fontSize: FS.sm, color: '#888780' }}>
-                          Classificação
-                        </div>
-                        <div style={{ marginTop: 4 }}>
-                          <span
-                            style={{
-                              display: 'inline-block',
-                              padding: '2px 8px',
-                              borderRadius: 999,
-                              fontSize: FS.sm,
-                              fontWeight: 600,
-                              background: badge.bg,
-                              color: badge.fg,
-                            }}
-                          >
-                            {badge.label}
-                          </span>
-                        </div>
-                      </div>
-                      {tend != null ? (
-                        <p
-                          style={{
-                            fontSize: FS.md,
-                            color: '#888780',
-                            borderTop: '1px solid #2C2C2A',
-                            paddingTop: 8,
-                            margin: 0,
-                          }}
-                        >
-                          Tendência 2020-2024:{' '}
-                          <span
-                            style={{
-                              color: tend > 0 ? '#E8A830' : '#1D9E75',
-                            }}
-                          >
-                            {textoTendenciaCptAnualPct(tend)}
-                          </span>
-                        </p>
-                      ) : null}
-                      <div
-                        style={{
-                          marginTop: 16,
-                          paddingTop: 12,
-                          borderTop: '1px solid rgba(255, 255, 255, 0.1)',
-                        }}
-                      >
-                        <p
-                          style={{
-                            fontSize: FS.sm,
-                            color: 'rgba(255, 255, 255, 0.7)',
-                            lineHeight: 1.45,
-                            margin: 0,
-                          }}
-                        >
-                          <strong style={{ color: '#F1EFE8' }}>
-                            Impacto no Risk Social:
-                          </strong>{' '}
-                          este histórico aplica multiplicador de{' '}
-                          <strong style={{ color: '#F1EFE8' }}>
-                            {multFmt}×{' '}
-                          </strong>
-                          sobre a dimensão Social. Áreas sem registros recebem
-                          multiplicador 1,00×.
-                        </p>
-                      </div>
-                      <p
-                        style={{
-                          fontSize: 11,
-                          color: '#5F5E5A',
-                          margin: '10px 0 0 0',
-                        }}
-                      >
-                        Fonte: Atlas CPT — Comissão Pastoral da Terra
-                      </p>
-                    </>
-                  )
-                })()}
-              </Card>
-            ) : null}
+            <ConflitosTerritoriaisCard
+              municipioIbge={processo.municipio_ibge ?? null}
+              municipioNome={
+                processo.municipio?.trim() ? processo.municipio : null
+              }
+              uf={processo.uf ?? null}
+            />
 
             {processo.amb_assentamento_sobrepoe === true ||
             processo.amb_assentamento_2km === true ? (
@@ -4045,27 +3914,48 @@ export function RelatorioCompleto({
                   style={{
                     borderTop: '1px solid #2C2C2A',
                     marginTop: 12,
-                    paddingTop: 10,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 8,
+                    paddingTop: 14,
                   }}
                 >
-                  <span style={{ fontSize: FS.md, color: '#888780' }}>
-                    Multiplicador risco ambiental
-                  </span>
-                  <span
+                  <div
                     style={{
-                      fontSize: FS.lg,
-                      fontWeight: 600,
-                      color: corMultiplicadorBioma(
-                        biomaMultiplicadorS31(territorial.bioma),
-                      ),
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 8,
                     }}
                   >
-                    ×{biomaMultiplicadorS31(territorial.bioma).toFixed(2)}
-                  </span>
+                    <span style={{ fontSize: FS.md, color: '#888780' }}>
+                      Multiplicador risco ambiental
+                    </span>
+                    <span
+                      style={{
+                        fontSize: FS.lg,
+                        fontWeight: 600,
+                        color: corMultiplicadorBioma(
+                          biomaMultiplicadorS31(territorial.bioma),
+                        ),
+                      }}
+                    >
+                      ×{biomaMultiplicadorS31(territorial.bioma).toFixed(2)}
+                    </span>
+                  </div>
+                  {(() => {
+                    const descMult = textoMultiplicadorBioma(territorial.bioma)
+                    return descMult !== '' ? (
+                      <p
+                        style={{
+                          fontSize: FS.md,
+                          lineHeight: 1.45,
+                          color: '#888780',
+                          margin: 0,
+                          paddingTop: 4,
+                        }}
+                      >
+                        {descMult}
+                      </p>
+                    ) : null
+                  })()}
                 </div>
               ) : null}
               <FonteLabel
@@ -4502,23 +4392,12 @@ export function RelatorioCompleto({
                     </div>
                       )
                     })}
-                  <div
-                    style={{
-                      marginTop: 16,
-                      paddingTop: 12,
-                      borderTop: '1px solid rgba(255, 255, 255, 0.1)',
-                      fontSize: FS.min,
-                      color: 'rgba(255, 255, 255, 0.5)',
-                      lineHeight: 1.45,
-                    }}
-                  >
-                    <div>
-                      Atualizado em {formatDateBR(ambiental.calculado_em)}
-                    </div>
-                    <div style={{ marginTop: 4 }}>
-                      Fontes: IPHAN, SNIRH-ANA
-                    </div>
-                  </div>
+                  <FonteLabel
+                    dataIso={ambiental.calculado_em.slice(0, 10)}
+                    fonte="IPHAN, SNIRH-ANA"
+                    marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
+                    fonteTitulo="Fontes"
+                  />
                 </>
               )
               )
@@ -5872,168 +5751,14 @@ export function RelatorioCompleto({
               />
             </div>
 
-            <Card>
-              <p
-                style={{
-                  ...subsecaoTituloStyle,
-                  color: '#F1EFE8',
-                  margin: 0,
-                  marginBottom: 4,
-                }}
-              >
-                Processos vizinhos
-              </p>
-              <p
-                style={{
-                  fontSize: FS.min,
-                  color: 'rgba(241, 239, 232, 0.4)',
-                  margin: '0 0 8px 0',
-                  lineHeight: 1.45,
-                }}
-              >
-                111 processos num raio de 25 km · 5 mais relevantes
-              </p>
-              {intel_mineral.processos_vizinhos.length === 0 ? (
-                <p
-                  style={{
-                    fontSize: FS.lg,
-                    color: '#888780',
-                    margin: 0,
-                    lineHeight: 1.55,
-                  }}
-                >
-                  {msgProcessosVizinhosTipo3()}
-                </p>
-              ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table
-                  style={{
-                    width: '100%',
-                    borderCollapse: 'collapse',
-                    fontSize: FS.md,
-                  }}
-                >
-                  <thead>
-                    <tr>
-                      {(
-                        [
-                          'Nº processo',
-                          'Titular',
-                          'Substância',
-                          'Área (ha)',
-                        ] as const
-                      ).map((h) => (
-                        <th
-                          key={h}
-                          style={{
-                            textAlign: 'left',
-                            ...subsecaoTituloStyle,
-                            fontSize: FS.min,
-                            padding: '0 6px 8px 0',
-                          }}
-                        >
-                          {h}
-                        </th>
-                      ))}
-                      <th
-                        style={{
-                          textAlign: 'left',
-                          ...subsecaoTituloStyle,
-                          fontSize: FS.min,
-                          padding: '0 6px 8px 0',
-                        }}
-                      >
-                        <CamadaTooltipHover
-                          texto="Distância em quilômetros entre os centroides dos dois processos (fonte: SIGMINE/ANM)"
-                          maxWidthPx={300}
-                        >
-                          <span
-                            style={{
-                              cursor: 'help',
-                              textDecoration: 'underline dotted',
-                              textUnderlineOffset: 2,
-                            }}
-                          >
-                            DIST. (km)
-                          </span>
-                        </CamadaTooltipHover>
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[...intel_mineral.processos_vizinhos]
-                      .sort(
-                        (a, b) =>
-                          (a.distancia_km ?? 0) - (b.distancia_km ?? 0),
-                      )
-                      .map((v, i) => (
-                        <tr
-                          key={v.numero}
-                          style={{
-                            backgroundColor: i % 2 === 0 ? '#0D0D0C' : '#1A1A18',
-                          }}
-                        >
-                          <td
-                            style={{ padding: '8px 6px 8px 0', color: '#D3D1C7' }}
-                          >
-                            {v.numero}
-                          </td>
-                          <td
-                            style={{ padding: '8px 6px 8px 0', color: '#D3D1C7' }}
-                          >
-                            <span
-                              title={v.titular}
-                              style={{ display: 'block', minWidth: 0 }}
-                            >
-                              <TextoTruncadoComTooltip
-                                text={v.titular}
-                                placement="above"
-                                className="block max-w-[100px] terrae-pdf-titular-wrap"
-                                style={{ fontSize: FS.md, color: '#D3D1C7' }}
-                              />
-                            </span>
-                          </td>
-                          <td
-                            style={{ padding: '8px 6px 8px 0', color: '#D3D1C7' }}
-                          >
-                            {abreviarSubstanciaVizinho(v.substancia)}
-                          </td>
-                          <td
-                            style={{ padding: '8px 6px 8px 0', color: '#D3D1C7' }}
-                          >
-                            {Math.round(v.area_ha).toLocaleString('pt-BR')}
-                          </td>
-                          <td
-                            style={{ padding: '8px 6px 8px 0', color: '#D3D1C7' }}
-                          >
-                            {v.distancia_km == null
-                              ? '\u2014'
-                              : v.distancia_km <= 0
-                                ? 'SOBREPOSTO'
-                                : `${v.distancia_km.toLocaleString('pt-BR', {
-                                    minimumFractionDigits: 1,
-                                    maximumFractionDigits: 1,
-                                  })} km`}
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </div>
-              )}
-              <FonteLabel
-                dataIso={timestamps.sigmine}
-                fonte="ANM / SIGMINE"
-                marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
-              />
-            </Card>
               </>
             )}
           </>
         ) : null}
 
         {aba === 'risco' ? (
-          scoreIndisponivel ? (
+          <>
+          {scoreIndisponivel ? (
             // Empty state honesto da aba Risco. Evita renderizar "N/A" em
             // cards vazios quando o processo não tem Risk Score (zumbi, sem
             // geom sem score, ou fora de escopo atual). O texto é contextual
@@ -6288,195 +6013,12 @@ export function RelatorioCompleto({
               </Card>
             ) : null}
 
-            <Card>
-              <SecLabel branco>Alertas regulatórios</SecLabel>
-              {alertasOrdenados.length === 0 ? (
-                <p style={{ fontSize: FS.base, color: '#888780', margin: 0 }}>
-                  Nenhum alerta regulatório ativo
-                </p>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-                  {alertasOrdenados.map((al, idx) => {
-                    const metaFonte: CSSProperties = {
-                      fontSize: FS.sm,
-                      color: '#5F5E5A',
-                    }
-                    const rotuloFonte = rotuloFontePublicacaoExibicao(
-                      al.fonte,
-                      al.fonte_diario,
-                    )
-                    const relevanciaMeta = estiloBadgeRelevancia(
-                      al.nivel_impacto,
-                      al.tipo_impacto,
-                    )
-                    return (
-                    <div key={al.id}>
-                      {idx > 0 ? (
-                        <div
-                          style={{
-                            height: 1,
-                            backgroundColor: '#2C2C2A',
-                            margin: '16px 0',
-                          }}
-                        />
-                      ) : null}
-                      <div
-                        style={{
-                          display: 'flex',
-                          alignItems: 'flex-start',
-                        }}
-                      >
-                        <AlertaItemImpactoBar
-                          nivel={al.nivel_impacto}
-                          tipo_impacto={al.tipo_impacto}
-                          textoDetalhe={textoTooltipNivelImpactoLegislativo(
-                            al.nivel_impacto,
-                          )}
-                          zIndexTooltip={CFEM_BAR_TOOLTIP.zIndex + 1}
-                          barraAlturaFixaPx={48}
-                        />
-                        <div
-                          style={{
-                            flex: 1,
-                            minWidth: 0,
-                            paddingLeft: 12,
-                          }}
-                        >
-                          <div
-                            style={{
-                              display: 'flex',
-                              flexWrap: 'nowrap',
-                              justifyContent: 'space-between',
-                              alignItems: 'flex-start',
-                              gap: 12,
-                            }}
-                          >
-                            <p
-                              style={{
-                                flex: 1,
-                                minWidth: 0,
-                                margin: 0,
-                                padding: 0,
-                                fontSize: FS.md,
-                                color: '#888780',
-                                lineHeight: 1.45,
-                              }}
-                            >
-                              {al.titulo}
-                            </p>
-                            <a
-                              href="#"
-                              onClick={(e) => {
-                                e.preventDefault()
-                                console.log('abrir publicação')
-                              }}
-                              style={{
-                                display: 'inline-flex',
-                                alignItems: 'flex-start',
-                                alignSelf: 'flex-start',
-                                flexShrink: 0,
-                                margin: 0,
-                                padding: 0,
-                                fontSize: FS.sm,
-                                fontWeight: 500,
-                                color: '#F1B85A',
-                                whiteSpace: 'nowrap',
-                                textDecoration: 'none',
-                                cursor: 'pointer',
-                                lineHeight: 1.45,
-                              }}
-                            >
-                              Ver no Diário
-                              <ArrowUpRight
-                                size={14}
-                                strokeWidth={2}
-                                aria-hidden
-                                className="shrink-0"
-                                style={{ marginLeft: 4, flexShrink: 0 }}
-                                color="#F1B85A"
-                              />
-                            </a>
-                          </div>
-                          <div
-                            style={{
-                              display: 'flex',
-                              flexWrap: 'wrap',
-                              alignItems: 'baseline',
-                              gap: '6px 8px',
-                              marginTop: 6,
-                            }}
-                          >
-                            <span
-                              style={{
-                                fontSize: FS.sm,
-                                fontWeight: 500,
-                                lineHeight: 1.45,
-                                margin: 0,
-                                padding: 0,
-                                color: relevanciaMeta.cor,
-                                display: 'inline-block',
-                              }}
-                            >
-                              {relevanciaMeta.label}
-                            </span>
-                            <span
-                              style={{
-                                color: '#5F5E5A',
-                                ...metaFonte,
-                                lineHeight: 1.45,
-                                margin: 0,
-                                padding: 0,
-                              }}
-                            >
-                              ·
-                            </span>
-                            <span
-                              style={{
-                                ...metaFonte,
-                                lineHeight: 1.45,
-                                margin: 0,
-                                padding: 0,
-                              }}
-                            >
-                              {rotuloFonte}
-                            </span>
-                            <span
-                              style={{
-                                color: '#5F5E5A',
-                                ...metaFonte,
-                                lineHeight: 1.45,
-                                margin: 0,
-                                padding: 0,
-                              }}
-                            >
-                              ·
-                            </span>
-                            <span
-                              style={{
-                                ...metaFonte,
-                                lineHeight: 1.45,
-                                margin: 0,
-                                padding: 0,
-                              }}
-                            >
-                              {formatarDataIsoPtBr(al.data)}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    )
-                  })}
-                </div>
-              )}
-              <FonteLabel
-                dataIso={timestamps.alertas_legislativos}
-                fonte="Adoo"
-                marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
-              />
-            </Card>
           </>
-          )
+          )}
+            <div style={{ marginTop: 14 }}>
+              <CardAlertasRegulatorios processoId={processo.id} />
+            </div>
+          </>
         ) : null}
 
         {aba === 'oportunidade' ? (
@@ -7245,7 +6787,7 @@ export function RelatorioCompleto({
                       {fiscal.autuacoes_anm.num}
                     </p>
                     <p style={{ fontSize: FS.sm, color: '#888780', margin: '4px 0 0 0' }}>
-                      autuação(ões) históricas
+                      Autuações históricas
                     </p>
                   </div>
                   <div>
@@ -7265,14 +6807,15 @@ export function RelatorioCompleto({
                         : 'Não disponível'}
                     </p>
                     <p style={{ fontSize: FS.sm, color: '#888780', margin: '4px 0 0 0' }}>
-                      valor total autuado
+                      Valor total autuado
                     </p>
                   </div>
                 </div>
-                <p style={{ fontSize: FS.min, color: '#5F5E5A', margin: 0, lineHeight: 1.45 }}>
-                  Fonte: ANM Dados Abertos · CFEM_Autuacao. Não substitui consulta
-                  processual direta.
-                </p>
+                <FonteLabel
+                  dataIso={timestamps.cfem}
+                  fonte="ANM Dados Abertos · CFEM_Autuacao. Não substitui consulta processual direta."
+                  marginTopPx={FONTE_LABEL_MARGIN_TOP_RELATORIO_EXTRA_PX}
+                />
               </Card>
             ) : null}
 

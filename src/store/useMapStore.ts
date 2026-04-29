@@ -133,7 +133,7 @@ export interface MapStore {
   processos: Processo[]
   filtros: FiltrosState
   processoSelecionado: Processo | null
-  /** Só o clique no mapa aplica o modo foco (opacidade dos outros processos). Busca/Intel: null ou `busca`. */
+/** Origem da seleção: clique no polígono ou busca/Intel (ambos usam o mesmo foco visual no mapa). */
   selecaoOrigemProcesso: ProcessoSelecaoOrigem | null
   /** Pedido de câmara; `processoId` permite fitBounds mesmo se outro efeito limpar a seleção. */
   flyTo: {
@@ -183,6 +183,9 @@ export interface MapStore {
   ) => void
   clearFlyTo: () => void
   setRelatorioDrawerAberto: (aberto: boolean) => void
+  /** Limpa seleção de processo, busca textual, flyTo e drawer (estado idle do mapa). */
+  limparSelecaoMapa: () => void
+
   /** Volta todos os filtros ao padrão (camadas, período, substâncias, UF, município, risk range, busca). */
   resetFiltros: () => void
   /**
@@ -458,6 +461,15 @@ export const useMapStore = create<MapStore>()(
       },
 
       clearFlyTo: () => set({ flyTo: null }),
+
+      limparSelecaoMapa: () =>
+        set((s) => ({
+          processoSelecionado: null,
+          selecaoOrigemProcesso: null,
+          flyTo: null,
+          relatorioDrawerAberto: false,
+          filtros: { ...s.filtros, searchQuery: '' },
+        })),
 
       setRelatorioDrawerAberto: (aberto) => set({ relatorioDrawerAberto: aberto }),
 

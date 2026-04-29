@@ -146,6 +146,10 @@ export interface DadosTerritoriais {
   responsavel_quilombola?: string | null
   esfera_quilombola?: string | null
   distancia_quilombola_km?: number | null
+  nome_assentamento_proximo?: string | null
+  /** Fase INCRA (titulação etc.) vindas da análise territorial. */
+  fase_assentamento_incr?: string | null
+  distancia_assentamento_km?: number | null
 }
 
 /** Alias documental (Config-Scores / prompts territoriais). */
@@ -192,27 +196,31 @@ export interface IntelMineral {
    * em `demanda_projetada_2030` (mantido para compatibilidade / busca).
    */
   demanda_projetada_estruturada?: DemandaProjetadaEstruturada
-  preco_medio_usd_t: number
+  /** USD/t na unidade padrão; `null` quando não há spot/cotação publicada (nunca forçar 0). */
+  preco_medio_usd_t: number | null
   /**
    * Unidade de cotação exibida no card de preço (`oz` ouro/prata; `ct` diamantes; `L` águas; `t` padrão).
    * Se omitido, a UI assume `t`.
    */
   unidade_preco?: UnidadePrecoIntel
-  /** USD/oz quando `unidade_preco === 'oz'`. */
-  preco_referencia_usd_oz?: number
-  tendencia_preco: 'alta' | 'estavel' | 'queda'
+  /** USD/oz quando `unidade_preco === 'oz'`; `null` se ausente. */
+  preco_referencia_usd_oz?: number | null
+  /** `null` = omitir chip de tendência no drawer (sem dado explícito). */
+  tendencia_preco: 'alta' | 'estavel' | 'queda' | null
   aplicacoes_principais: string[]
+  /** Texto bruto da master quando `aplicacoes_principais` veio vazio após parse. */
+  aplicacoes_texto_bruto?: string | null
   paises_concorrentes: string[] | null
   estrategia_nacional: string
   /** Parágrafos separados (opcional); se ausente, usa `estrategia_nacional` ou quebras `\n\n`. */
   estrategia_nacional_itens?: string[]
   potencial_reserva_estimado_t: number | null
   /** Total in-situ legado (Mi USD); ainda usado em scores / agregados. O card Inteligência usa `valor_estimado_usd_ha` por hectare. */
-  valor_estimado_usd_mi: number
+  valor_estimado_usd_mi: number | null
   /** USD/ha — valor in-situ teórico por hectare (exibição principal do card; não multiplicar pela área). */
-  valor_estimado_usd_ha?: number
+  valor_estimado_usd_ha?: number | null
   /** BRL/ha (valor absoluto por hectare; ex.: geo.fiscal.val_reserva_brl_ha). Quando presente, o card BRL usa direto (÷ 1e9 → bi/ha). */
-  valor_estimado_brl_ha?: number
+  valor_estimado_brl_ha?: number | null
   /** Trilhões BRL (estimativa in-situ total); legado / compatível; BRL/ha no UI deriva de USD/ha × câmbio ou deste total ÷ área. */
   valor_estimado_brl_tri?: number
   metodologia_estimativa: string
@@ -229,6 +237,8 @@ export interface IntelMineral {
   cagr_5a_pct?: number
   /** `master_substancias.tipo_mercado` — `BR_ONLY` → card «Contexto Brasil». */
   tipo_mercado?: string | null
+  /** `master_substancias.familia` propagada no processo (ex.: `gemas_pedras`). */
+  familia?: string | null
   producao_br_absoluta_t?: number | null
   valor_producao_br_brl?: number | null
   preco_medio_br_brl_t?: number | null
@@ -269,13 +279,16 @@ export interface DadosFiscaisRicos {
   capag: string
   capag_descricao: string
   capag_estruturado?: CapagEstruturado
-  receita_propria_mi: number
-  divida_consolidada_mi: number
+  /** `null` quando a série SICONFI/STN não trouxe o indicador (omitir coluna no card 25). */
+  receita_propria_mi: number | null
+  /** `null` indisponível; `0` = sem dívida declarada. */
+  divida_consolidada_mi: number | null
   /** Texto alinhado ao PDF (`ReportData.divida`), ex.: «R$ 7,47 Mi» ou «Não disponível». */
   divida_exibicao?: string
   /** Coluna de origem em `fiscal_municipios` para o valor da dívida. */
   divida_fonte?: 'divida_consolidada' | 'passivo_nao_circulante' | null
-  pib_municipal_mi: number
+  /** `null` quando o PIB municipal não veio no recorte consultado. */
+  pib_municipal_mi: number | null
   dependencia_transferencias_pct: number
   /** IDH municipal (IBGE), texto pt-BR ex.: «0,620»; opcional quando só há mock. */
   idh_municipal?: string

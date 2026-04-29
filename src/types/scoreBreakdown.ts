@@ -1,4 +1,4 @@
-/** Espelho dos tipos `server/scoringS31BreakdownTypes.ts` para o cliente (payload do motor). */
+/** Espelho dos tipos do motor S31 para o cliente (payload do score-breakdown). */
 
 export type SubfatorOutput = {
   nome: string
@@ -29,7 +29,7 @@ export type S31DimensoesOportunidade = {
   penalidades: string[]
 }
 
-/** Quatro dimensões do risk (card mini-barras + cabeçalho), espelha `ScoreResult` do motor. */
+/** Quatro dimensoes do risk (cabecalho + mini-barras). */
 export type RiskBreakdownQuatro = {
   geologico: number
   ambiental: number
@@ -37,10 +37,14 @@ export type RiskBreakdownQuatro = {
   regulatorio: number
 }
 
-/**
- * Payload do GET `/api/processos/:id/score-breakdown` (motor S31 on-demand).
- * Inclui campos de topo do `ScoreResult` além das decomposições.
- */
+/** Tres parcelas atratividade / viabilidade / seguranca (OS). */
+export type OsBreakdownTriple = {
+  atratividade: number
+  viabilidade: number
+  seguranca: number
+}
+
+/** Payload JSON do endpoint score-breakdown (motor S31 no servidor). */
 export type ScoreBreakdownPayload = {
   dimensoes_risco?: S31DimensoesRisco
   dimensoes_oportunidade?: S31DimensoesOportunidade
@@ -48,4 +52,11 @@ export type ScoreBreakdownPayload = {
   risk_label?: string
   risk_cor?: string
   risk_breakdown?: RiskBreakdownQuatro
+  os_conservador?: number
+  os_moderado?: number
+  os_arrojado?: number
+  os_label_conservador?: string
+  os_label_moderado?: string
+  os_label_arrojado?: string
+  os_breakdown?: OsBreakdownTriple
 }

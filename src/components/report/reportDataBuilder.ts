@@ -15,10 +15,14 @@ import type {
   LayerData,
   MasterSubstancia,
   ReportData,
+  ReportSubfatoresContexto,
+  ReportSubfatorContextItem,
   RiskDimension,
 } from '../../lib/reportTypes'
+import type { ScoreBreakdownPayload, SubfatorOutput } from '../../types/scoreBreakdown'
 import {
   fetchProcessoCompleto,
+  fetchScoreBreakdownForReport,
   type AnaliseTerritorial,
   type ScoreAutoResult,
 } from '../../lib/processoApi'
@@ -462,6 +466,168 @@ function scoreFromDimensao(
   return 0
 }
 
+function scoreBreakdownPayloadUsable(
+  bd: ScoreBreakdownPayload | null,
+): bd is ScoreBreakdownPayload & { risk_score: number } {
+  return (
+    bd != null &&
+    typeof bd.risk_score === 'number' &&
+    Number.isFinite(bd.risk_score)
+  )
+}
+
+function riskDimValorFromBreakdown(
+  bd: ScoreBreakdownPayload,
+  dim: 'geologico' | 'ambiental' | 'social' | 'regulatorio',
+): number {
+  const v = bd.dimensoes_risco?.[dim]?.valor
+  if (typeof v === 'number' && Number.isFinite(v)) return v
+  const rb = bd.risk_breakdown?.[dim]
+  if (typeof rb === 'number' && Number.isFinite(rb)) return rb
+  return 0
+}
+
+function osDimValorFromBreakdown(
+  bd: ScoreBreakdownPayload,
+  dim: 'atratividade' | 'viabilidade' | 'seguranca',
+): number {
+  const v = bd.dimensoes_oportunidade?.[dim]?.valor
+  if (typeof v === 'number' && Number.isFinite(v)) return v
+  const ob = bd.os_breakdown?.[dim]
+  if (typeof ob === 'number' && Number.isFinite(ob)) return ob
+  return 0
+}
+
+function stripSubfatoresParaContexto(
+  sfs: SubfatorOutput[],
+): ReportSubfatorContextItem[] {
+  return sfs.map(({ nome, fonte, label, texto }) => {
+    const base: ReportSubfatorContextItem = { nome, label, texto }
+    if (fonte != null && String(fonte).trim() !== '')
+      return { ...base, fonte: String(fonte).trim() }
+    return base
+  })
+}
+
+function sitiosArqueologicosDaAnalise(
+  analise: AnaliseTerritorial | null,
+): string[] | undefined {
+  if (!analise?.areas_protegidas?.length) return undefined
+  const out: string[] = []
+  for (const ap of analise.areas_protegidas) {
+    const nome = String(ap.nome ?? '').trim()
+    if (!nome) continue
+    const blob = `${String(ap.tipo ?? '')} ${nome}`.toLowerCase()
+    if (/arqueol|iphan|sitio|s[ií]tio|patrim[oô]nio\s+arqueol/i.test(blob)) {
+      out.push(nome)
+    }
+  }
+  return out.length ? [...new Set(out)] : undefined
+}
+
+function minarHintsDaProsa(textoConcat: string): {
+  biome: string | null
+  cpt: string | null
+} {
+  const mBio =
+    textoConcat.match(
+      /\b(?:Amaz[oô]nia[^\n.;]{0,120}|multiplicador[^\n.;]{0,160})/iu,
+    ) ?? textoConcat.match(/bioma[^\n.;]{0,120}/iu)
+  const mCpt =
+    textoConcat.match(/conflitos?\s+CPT[^\n.;]{0,200}/iu) ??
+    textoConcat.match(/\bCPT[^\n.;]{0,200}/iu)
+  return {
+    biome: mBio?.[0]?.trim().slice(0, 420) ?? null,
+    cpt: mCpt?.[0]?.trim().slice(0, 420) ?? null,
+  }
+}
+
+/** Subfatores + dicas territoriais apenas para prompts LLM (sem matemática). */
+function buildSubfatoresContexto(
+  bd: ScoreBreakdownPayload,
+  analise: AnaliseTerritorial | null,
+): ReportSubfatoresContexto {
+  const dr = bd.dimensoes_risco
+  const dop = bd.dimensoes_oportunidade
+
+  let textoBlob = ''
+
+  const appendSubs = (sfs: SubfatorOutput[] | undefined) => {
+    for (const s of sfs ?? []) {
+      if (String(s.texto ?? '').trim()) textoBlob += `\n${s.texto}`
+    }
+  }
+
+  if (dr) {
+    appendSubs(dr.geologico?.subfatores)
+    appendSubs(dr.ambiental?.subfatores)
+    appendSubs(dr.social?.subfatores)
+    appendSubs(dr.regulatorio?.subfatores)
+  }
+  if (dop) {
+    appendSubs(dop.atratividade?.subfatores)
+    appendSubs(dop.viabilidade?.subfatores)
+    appendSubs(dop.seguranca?.subfatores)
+  }
+
+  const hints = minarHintsDaProsa(textoBlob)
+  const sitios = sitiosArqueologicosDaAnalise(analise)
+
+  const riscoPorDim = dr
+    ? {
+        geologico:
+          dr.geologico?.subfatores && dr.geologico.subfatores.length > 0
+            ? stripSubfatoresParaContexto(dr.geologico.subfatores)
+            : undefined,
+        ambiental:
+          dr.ambiental?.subfatores && dr.ambiental.subfatores.length > 0
+            ? stripSubfatoresParaContexto(dr.ambiental.subfatores)
+            : undefined,
+        social:
+          dr.social?.subfatores && dr.social.subfatores.length > 0
+            ? stripSubfatoresParaContexto(dr.social.subfatores)
+            : undefined,
+        regulatorio:
+          dr.regulatorio?.subfatores && dr.regulatorio.subfatores.length > 0
+            ? stripSubfatoresParaContexto(dr.regulatorio.subfatores)
+            : undefined,
+      }
+    : undefined
+
+  const oportunidadePorDim = dop
+    ? {
+        atratividade:
+          dop.atratividade?.subfatores &&
+          dop.atratividade.subfatores.length > 0
+            ? stripSubfatoresParaContexto(dop.atratividade.subfatores)
+            : undefined,
+        viabilidade:
+          dop.viabilidade?.subfatores &&
+          dop.viabilidade.subfatores.length > 0
+            ? stripSubfatoresParaContexto(dop.viabilidade.subfatores)
+            : undefined,
+        seguranca:
+          dop.seguranca?.subfatores && dop.seguranca.subfatores.length > 0
+            ? stripSubfatoresParaContexto(dop.seguranca.subfatores)
+            : undefined,
+      }
+    : undefined
+
+  const penalidades_oportunidade =
+    dop?.penalidades?.length ? dop.penalidades : undefined
+
+  const ctx: ReportSubfatoresContexto = {}
+  if (riscoPorDim) ctx.riscoPorDim = riscoPorDim
+  if (oportunidadePorDim) ctx.oportunidadePorDim = oportunidadePorDim
+  if (penalidades_oportunidade)
+    ctx.penalidades_oportunidade = penalidades_oportunidade
+  if (hints.biome) ctx.multiplicador_bioma_hint = hints.biome
+  if (hints.cpt) ctx.conflitos_cpt_hint = hints.cpt
+  if (sitios?.length) ctx.sitios_arqueologicos = sitios
+
+  return ctx
+}
+
 function dadosSeiFromProcesso(
   p: Record<string, unknown>,
 ): ReportData['dados_sei'] | undefined {
@@ -558,9 +724,32 @@ function formatBrlNum(n: number): string {
   return `R$ ${n.toLocaleString('pt-BR')}`
 }
 
+/**
+ * Dedup de camadas para o PDF quando `territorial_layers` (ou ingest) repete mesmo
+ * tipo+nome+distância — preserva ordem da primeira linha vista.
+ */
+function dedupeLayersByTerritorialKey(layers: LayerData[]): LayerData[] {
+  const seen = new Set<string>()
+  const out: LayerData[] = []
+  for (const row of layers) {
+    const dist = Number(row.distancia_km) || 0
+    const nome = String(row.nome ?? '').trim()
+    const tipo = String(row.tipo ?? '').trim()
+    const key = `${tipo}|${nome}|${dist}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(row)
+  }
+  return out
+}
+
 function normalizeTipoLayer(raw: unknown): string {
   const k = (typeof raw === 'string' ? raw : String(raw ?? '')).trim()
   switch (k) {
+    case 'ASSENTAMENTO':
+    case 'ASSENTAMENTO_INCRA':
+    case 'Assentamento INCRA':
+      return 'Assentamento INCRA'
     case 'Terra Indigena':
     case 'TI':
       return 'Terra Indígena'
@@ -584,19 +773,21 @@ function buildLayersFromApi(
   tagNao: string,
 ): LayerData[] {
   if (!rows.length) return []
-  return rows.map((row) => {
-    const sobrePct = Number(row.sobreposicao_pct ?? 0)
-    const sobreposto = sobrePct > 0
-    return {
-      tipo: normalizeTipoLayer(row.tipo),
-      nome: nd(row.nome),
-      detalhes: nd(row.detalhes),
-      distancia_km: Number(row.distancia_km) || 0,
-      sobreposto,
-      tag_class: sobreposto ? 'ta' : 'tg',
-      tag_label: sobreposto ? tagSobre : tagNao,
-    }
-  })
+  return dedupeLayersByTerritorialKey(
+    rows.map((row) => {
+      const sobrePct = Number(row.sobreposicao_pct ?? 0)
+      const sobreposto = sobrePct > 0
+      return {
+        tipo: normalizeTipoLayer(row.tipo),
+        nome: nd(row.nome),
+        detalhes: nd(row.detalhes),
+        distancia_km: Number(row.distancia_km) || 0,
+        sobreposto,
+        tag_class: sobreposto ? 'ta' : 'tg',
+        tag_label: sobreposto ? tagSobre : tagNao,
+      }
+    }),
+  )
 }
 
 function buildInfraFromApi(
@@ -645,10 +836,14 @@ function buildLayersFromPostGIS(
 
   for (const ap of analise.areas_protegidas) {
     const sobreposto = ap.distancia_km <= 0.5
+    const detalhesCamada =
+      ap.tipo === 'ASSENTAMENTO_INCRA'
+        ? String(ap.categoria ?? ap.orgao ?? '').trim() || ''
+        : (ap.orgao ?? '')
     fromAp.push({
       tipo: formatTipoArea(ap.tipo, ap.categoria),
       nome: ap.nome,
-      detalhes: ap.orgao ?? '',
+      detalhes: detalhesCamada,
       distancia_km: ap.distancia_km,
       sobreposto,
       tag_class: sobreposto ? 'ta' : 'tg',
@@ -673,7 +868,10 @@ function buildLayersFromPostGIS(
     })
   }
 
-  return [...areasPorSubcategoria, ...aquiferos]
+  return dedupeLayersByTerritorialKey([
+    ...areasPorSubcategoria,
+    ...aquiferos,
+  ])
 }
 
 function formatTipoArea(tipo: string, categoria: string | null): string {
@@ -685,6 +883,9 @@ function formatTipoArea(tipo: string, categoria: string | null): string {
       return cat ? `UC ${cat}` : 'Unidade de Conservação'
     case 'QUILOMBOLA':
       return 'Quilombola'
+    case 'ASSENTAMENTO':
+    case 'ASSENTAMENTO_INCRA':
+      return 'Assentamento INCRA'
     default:
       return tipo
   }
@@ -1057,6 +1258,10 @@ export async function buildReportData(
     return partes.join(' · ')
   })
   const p = api.processo as Record<string, unknown>
+  const processoUuid =
+    p.id != null && String(p.id).trim() !== ''
+      ? String(p.id).trim()
+      : ''
   const scores = (api.scores ?? null) as Record<string, unknown> | null
   const fiscal = api.fiscal
   const mercado: MasterSubstancia | null = api.mercado
@@ -1071,13 +1276,20 @@ export async function buildReportData(
   const scoresAuto: ScoreAutoResult | null = api.scores_auto ?? null
   const analise = api.analise_territorial ?? null
 
+  /** Motor S31 on-demand — mesmos agregados do drawer (GET /api/processos/:id/score-breakdown). */
+  const scoreBreakdownPayload =
+    processoUuid !== ''
+      ? await fetchScoreBreakdownForReport(processoUuid)
+      : null
+
   const isTerminal =
     typeof p.ativo_derivado === 'boolean' && p.ativo_derivado === false
   const bloqueadorConstitucional = detectarBloqueadorConstitucional(
     analise?.areas_protegidas,
   )
 
-  // ═══ SCORES: preferir scores_auto, fallback para seed manual ═══
+  // ═══ SCORES: banco (risk_score persistido) prevalece; scores_auto =
+  // fallback legado apenas quando não há score numérico em `scores` ═══
   //
   // Tipos `number | null`: ausência de score é propagada até `ReportData`
   // (em vez do antigo fallback silencioso `|| 0`). Consumidores downstream
@@ -1097,7 +1309,58 @@ export async function buildReportData(
   let osViab: RiskDimension
   let osSeg: RiskDimension
 
-  if (scoresAuto) {
+  const rsDbRaw = scores != null ? (scores as Record<string, unknown>).risk_score : null
+  const dbHasManualScore =
+    scores != null &&
+    typeof rsDbRaw === 'number' &&
+    Number.isFinite(rsDbRaw)
+
+  if (dbHasManualScore && scores) {
+    riskScore = propagarScoreNumerico(scores.risk_score)
+    const riskLabelRaw = String(scores.risk_label ?? '').trim()
+    rs_classificacao_final = riskLabelRaw
+      ? translatePtLabel(riskLabelRaw, lang)
+      : riskScore != null
+        ? rsClassificacaoLabel(riskScore, lang)
+        : t.nd
+
+    const dimsRisco = parseDimJson(scores.dimensoes_risco)
+    rsGeo = riskDimFromScore(
+      scoreFromDimensao(dimsRisco, ['geologico', 'geológico']),
+      lang,
+    )
+    rsAmb = riskDimFromScore(
+      scoreFromDimensao(dimsRisco, ['ambiental']),
+      lang,
+    )
+    rsSoc = riskDimFromScore(scoreFromDimensao(dimsRisco, ['social']), lang)
+    rsReg = riskDimFromScore(
+      scoreFromDimensao(dimsRisco, ['regulatorio', 'regulatório']),
+      lang,
+    )
+
+    const dimsOport = parseDimJson(scores.dimensoes_oportunidade)
+    osMerc = osDimFromScore(
+      scoreFromDimensao(dimsOport, ['mercado', 'atratividade']),
+      lang,
+    )
+    osViab = osDimFromScore(
+      scoreFromDimensao(dimsOport, ['viabilidade']),
+      lang,
+    )
+    osSeg = osDimFromScore(
+      scoreFromDimensao(dimsOport, ['seguranca', 'segurança']),
+      lang,
+    )
+
+    osCons = propagarScoreNumerico(scores.os_conservador)
+    osMod = propagarScoreNumerico(scores.os_moderado)
+    osArr = propagarScoreNumerico(scores.os_arrojado)
+    const osClassRaw =
+      String(scores.os_classificacao ?? '').trim() ||
+      String(scores.os_label ?? '').trim()
+    osClass = osClassRaw ? translatePtLabel(osClassRaw, lang) : t.nd
+  } else if (scoresAuto) {
     riskScore = scoresAuto.risk_score
     rs_classificacao_final = translatePtLabel(scoresAuto.risk_label, lang)
 
@@ -1115,60 +1378,19 @@ export async function buildReportData(
     osViab = osDimFromScore(scoresAuto.os_breakdown.viabilidade, lang)
     osSeg = osDimFromScore(scoresAuto.os_breakdown.seguranca, lang)
   } else {
-    riskScore = propagarScoreNumerico(scores?.risk_score)
-    const riskLabelRaw = String(scores?.risk_label ?? '').trim()
-    rs_classificacao_final = riskLabelRaw
-      ? translatePtLabel(riskLabelRaw, lang)
-      : riskScore != null
-        ? rsClassificacaoLabel(riskScore, lang)
-        : t.nd
-
-    const dimsRisco = parseDimJson(scores?.dimensoes_risco)
-    rsGeo = riskDimFromScore(
-      scoreFromDimensao(dimsRisco, ['geologico', 'geológico']),
-      lang,
-    )
-    rsAmb = riskDimFromScore(
-      scoreFromDimensao(dimsRisco, ['ambiental']),
-      lang,
-    )
-    rsSoc = riskDimFromScore(scoreFromDimensao(dimsRisco, ['social']), lang)
-    rsReg = riskDimFromScore(
-      scoreFromDimensao(dimsRisco, ['regulatorio', 'regulatório']),
-      lang,
-    )
-
-    const dimsOport = parseDimJson(scores?.dimensoes_oportunidade)
-    osMerc = osDimFromScore(
-      scoreFromDimensao(dimsOport, ['mercado', 'atratividade']),
-      lang,
-    )
-    osViab = osDimFromScore(
-      scoreFromDimensao(dimsOport, ['viabilidade']),
-      lang,
-    )
-    osSeg = osDimFromScore(
-      scoreFromDimensao(dimsOport, ['seguranca', 'segurança']),
-      lang,
-    )
-
-    osCons = propagarScoreNumerico(scores?.os_conservador)
-    osMod = propagarScoreNumerico(scores?.os_moderado)
-    osArr = propagarScoreNumerico(scores?.os_arrojado)
-    const osClassRaw =
-      String(scores?.os_classificacao ?? '').trim() ||
-      String(scores?.os_label ?? '').trim()
-    osClass = osClassRaw ? translatePtLabel(osClassRaw, lang) : t.nd
-  }
-
-  const denormAmbiental = (() => {
-    const v = p.score_territorial
-    if (v == null) return null
-    const n = Number(v)
-    return Number.isFinite(n) ? n : null
-  })()
-  if (denormAmbiental != null) {
-    rsAmb = riskDimFromScore(denormAmbiental, lang)
+    riskScore = null
+    rs_classificacao_final = t.nd
+    rsGeo = riskDimFromScore(0, lang)
+    rsAmb = riskDimFromScore(0, lang)
+    rsSoc = riskDimFromScore(0, lang)
+    rsReg = riskDimFromScore(0, lang)
+    osCons = null
+    osMod = null
+    osArr = null
+    osClass = t.nd
+    osMerc = osDimFromScore(0, lang)
+    osViab = osDimFromScore(0, lang)
+    osSeg = osDimFromScore(0, lang)
   }
 
   if (scores) {
@@ -1198,12 +1420,50 @@ export async function buildReportData(
     (scoresAuto ? String(scoresAuto.risk_cor ?? '').trim() : '')
   // Cor final só faz sentido quando há score numérico. Fica string vazia
   // quando o score é `null` (empty state assume o controle visual).
-  const rs_cor_final =
+  let rs_cor_final =
     rsCorPersist || (riskScore != null ? corFaixaRiscoValor(riskScore) : '')
 
   const osCorPersist = String(scores?.os_cor ?? '').trim()
-  const os_cor_final =
+  let os_cor_final =
     osCorPersist || (osCons != null ? corFaixaOS(osCons) : '')
+
+  /** Quando disponível: substitui apenas agregados persistidos pela mesma corrida que o drawer. */
+  let subfatoresContextoLLM: ReportSubfatoresContexto | null = null
+
+  if (scoreBreakdownPayloadUsable(scoreBreakdownPayload)) {
+    const bd = scoreBreakdownPayload
+    riskScore = bd.risk_score
+    const riskLabelBd = String(bd.risk_label ?? '').trim()
+    rs_classificacao_final = riskLabelBd
+      ? translatePtLabel(riskLabelBd, lang)
+      : rsClassificacaoLabel(riskScore, lang)
+
+    rsGeo = riskDimFromScore(riskDimValorFromBreakdown(bd, 'geologico'), lang)
+    rsAmb = riskDimFromScore(riskDimValorFromBreakdown(bd, 'ambiental'), lang)
+    rsSoc = riskDimFromScore(riskDimValorFromBreakdown(bd, 'social'), lang)
+    rsReg = riskDimFromScore(riskDimValorFromBreakdown(bd, 'regulatorio'), lang)
+
+    osCons = propagarScoreNumerico(bd.os_conservador)
+    osMod = propagarScoreNumerico(bd.os_moderado)
+    osArr = propagarScoreNumerico(bd.os_arrojado)
+    const osClassBd = String(bd.os_label_conservador ?? '').trim()
+    osClass = osClassBd ? translatePtLabel(osClassBd, lang) : t.nd
+
+    osMerc = osDimFromScore(osDimValorFromBreakdown(bd, 'atratividade'), lang)
+    osViab = osDimFromScore(osDimValorFromBreakdown(bd, 'viabilidade'), lang)
+    osSeg = osDimFromScore(osDimValorFromBreakdown(bd, 'seguranca'), lang)
+
+    rs_cor_final =
+      String(bd.risk_cor ?? '').trim() ||
+      (riskScore != null ? corFaixaRiscoValor(riskScore) : '')
+    os_cor_final = osCons != null ? corFaixaOS(osCons) : ''
+
+    subfatoresContextoLLM = buildSubfatoresContexto(bd, analise)
+  } else if (processoUuid) {
+    console.warn(
+      '[buildReportData] Motor S31 (score-breakdown) indisponível ou incompleto — mantendo Risk/OS do cadastro/batch legado.',
+    )
+  }
 
   const substanciaRaw = String(p.substancia ?? '')
   const areaHa = Number(p.area_ha) || 0
@@ -1280,15 +1540,20 @@ export async function buildReportData(
   const ptaxLegacy = cambioRef ?? 0
 
   /**
-   * Valor in-situ e CFEM: sempre derivados de teor × massa/ha × preço.
-   * Não usar `val_reserva_usd_ha` / `val_reserva_brl_ha` da master (escala incorreta no dataset legado).
+   * Valor in-situ e CFEM: derivados de teor × massa/ha × preço quando há teor válido.
+   * Sem teor (ex.: gemas sem cubagem) ⇒ `null` — NUNCA forçar 0 Mi/ha no PDF.
+   * Não usar `val_reserva_usd_ha` / `val_reserva_brl_ha` da master (legado inconsistente).
    */
-  const valReservaUsdHa =
+  const valReservaUsdHa: number | null =
     mercado && precoUsdPorT > 0 && teorFracao > 0
       ? TONELADAS_POR_HA * teorFracao * precoUsdPorT
-      : 0
+      : null
   const valReservaBrlHa =
-    cambioRef != null && valReservaUsdHa > 0 ? valReservaUsdHa * cambioRef : 0
+    cambioRef != null &&
+    valReservaUsdHa != null &&
+    valReservaUsdHa > 0
+      ? valReservaUsdHa * cambioRef
+      : 0
 
   const cfemPctAliquota =
     Number(mercado?.cfem_pct ?? p.cfem_aliquota_pct ?? 0) || 0
@@ -1298,7 +1563,11 @@ export async function buildReportData(
       : 0
 
   const cfemEstimadaHaFinal =
-    mercado && precoUsdPorT > 0 && teorFracao > 0 && cfemBrlSobreInSituHa > 0
+    mercado &&
+    valReservaUsdHa != null &&
+    valReservaUsdHa > 0 &&
+    teorFracao > 0 &&
+    cfemBrlSobreInSituHa > 0
       ? Math.round(cfemBrlSobreInSituHa)
       : cfemEstHaMunicipal
 
@@ -1554,6 +1823,17 @@ export async function buildReportData(
       Number.isFinite(Number(mercado.producao_br_pct))
         ? Number(mercado.producao_br_pct)
         : null,
+    substancia_familia:
+      mercado?.familia != null &&
+      String(mercado.familia).trim() !== ''
+        ? String(mercado.familia).trim()
+        : null,
+    gap_pp_master:
+      mercado?.gap_pp != null &&
+      String(mercado.gap_pp).trim() !== '' &&
+      Number.isFinite(Number(mercado.gap_pp))
+        ? Number(mercado.gap_pp)
+        : null,
     fonte_preco:
       mercado?.fonte_preco != null && String(mercado.fonte_preco).trim() !== ''
         ? String(mercado.fonte_preco).trim()
@@ -1598,15 +1878,16 @@ export async function buildReportData(
 
     mapa_base64: mapBase64 && mapBase64.length > 20 ? mapBase64 : '',
     layers:
-      Array.isArray(api.territorial?.layers) && api.territorial.layers.length > 0
-        ? buildLayersFromApi(
-            api.territorial.layers as Record<string, unknown>[],
-            nd,
-            t.tagSobreposto,
-            t.tagNao,
-          )
-        : analise
-          ? buildLayersFromPostGIS(analise, t.tagSobreposto, t.tagNao)
+      analise != null
+        ? buildLayersFromPostGIS(analise, t.tagSobreposto, t.tagNao)
+        : Array.isArray(api.territorial?.layers) &&
+            api.territorial.layers.length > 0
+          ? buildLayersFromApi(
+              api.territorial.layers as Record<string, unknown>[],
+              nd,
+              t.tagSobreposto,
+              t.tagNao,
+            )
           : [],
     infraestrutura: appendSedeInfraRow(
       analise,
@@ -1722,5 +2003,6 @@ export async function buildReportData(
     versao: 'R1',
 
     lang,
+    subfatores_contexto: subfatoresContextoLLM,
   }
 }

@@ -1,4 +1,5 @@
 import type { MasterSubstancia } from './reportTypes'
+import type { ScoreBreakdownPayload } from '../types/scoreBreakdown'
 import type { RespostaBusca } from '../types/busca'
 import type { TerritorialAmbientalResponse } from '../types/territorialAmbiental'
 
@@ -142,6 +143,26 @@ export async function fetchProcessoCompleto(
     )
   }
   return json.data
+}
+
+/**
+ * Motor S31 on-demand (`GET /api/processos/:id/score-breakdown`), alinhado ao drawer.
+ * Usado pelo PDF para substituir agregados de score legados quando a chamada tem sucesso.
+ */
+export async function fetchScoreBreakdownForReport(
+  processoId: string,
+): Promise<ScoreBreakdownPayload | null> {
+  const id = processoId.trim()
+  if (!id) return null
+  try {
+    const res = await fetch(
+      `/api/processos/${encodeURIComponent(id)}/score-breakdown`,
+    )
+    if (!res.ok) return null
+    return (await res.json()) as ScoreBreakdownPayload
+  } catch {
+    return null
+  }
 }
 
 // ── Histórico da busca no mapa (localStorage, UTF-8) ──

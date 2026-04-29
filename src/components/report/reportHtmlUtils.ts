@@ -151,6 +151,49 @@ export function fmtValorInsituUsdMiPerHa(n: number): string {
 }
 
 /**
+ * Preço spot USD no PDF: `master_substancias.preco_usd` já está na unidade de
+ * `preco_unidade_label` (kg, t, oz, …) — não converter a partir de USD/t canónico.
+ * Fallback: `preco_brl` / câmbio quando `preco_usd` vier vazio.
+ */
+export function formatUsdSpotDeclaradoMaster(
+  data: {
+    preco_usd_por_t: number | null
+    preco_brl_por_t: number | null
+    ptax: number
+    preco_unidade_label: string
+  },
+  lang: 'pt' | 'en',
+): string {
+  let usd =
+    data.preco_usd_por_t != null &&
+    Number.isFinite(data.preco_usd_por_t) &&
+    data.preco_usd_por_t > 0
+      ? data.preco_usd_por_t
+      : null
+  if (
+    usd == null &&
+    data.preco_brl_por_t != null &&
+    Number.isFinite(data.preco_brl_por_t) &&
+    data.preco_brl_por_t > 0 &&
+    data.ptax != null &&
+    Number.isFinite(data.ptax) &&
+    data.ptax > 0
+  ) {
+    usd = data.preco_brl_por_t / data.ptax
+  }
+  if (usd == null || !Number.isFinite(usd) || usd <= 0)
+    return lang === 'en' ? 'N/A' : 'N/D'
+  const uRaw = String(data.preco_unidade_label ?? '').trim()
+  const u = uRaw !== '' ? uRaw : 't'
+  const locale = lang === 'en' ? 'en-US' : 'pt-BR'
+  const fractionDigits = usd < 10_000 ? 2 : 0
+  return `USD ${usd.toLocaleString(locale, {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  })}/${u}`
+}
+
+/**
  * CFEM estimada / ha (BRL interno em escala absoluta) → «R$ X,X Mi/ha».
  */
 export function fmtCfemEstimadaBrlMiPerHa(n: number): string {

@@ -287,6 +287,11 @@ export async function ingerirData(
   return { ingeridos, pulados, erros }
 }
 
+/** Fecha pool postgres do script — usar após ingest em lote (ingestar_range). */
+export async function closeIngestDouSql(): Promise<void> {
+  await sql.end({ timeout: 15 })
+}
+
 function isEntrypoint(): boolean {
   const a = fileURLToPath(import.meta.url)
   const b = process.argv[1] ? path.resolve(process.argv[1]) : ''

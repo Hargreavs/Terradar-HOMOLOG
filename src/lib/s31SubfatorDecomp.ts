@@ -78,39 +78,58 @@ export function buildAtratividadeItemsS31(
   const a3 = scoreA3Preco(mercado?.preco_brl ?? null)
   const a4 = scoreA4Tendencia(mercado?.tendencia ?? null)
   const a5 = scoreA5ValorReserva(mercado?.val_reserva_brl_ha ?? null, processo.area_ha)
+  const areaFmt =
+    processo.area_ha != null && Number.isFinite(processo.area_ha)
+      ? `${processo.area_ha.toLocaleString('pt-BR', {
+          maximumFractionDigits: 0,
+        })} ha`
+      : null
   return [
     {
-      nome: 'A1 Relevância (substância)',
+      nome: 'Relevância da substância',
       valor: a1,
       peso: 0.25,
-      fonte: `master_substancias / ${processo.substancia ?? '—'}`,
+      fonte: processo.substancia
+        ? `${processo.substancia} · base TERRADAR`
+        : 'Substância não declarada',
     },
     {
-      nome: 'A2 Gap brasileiro',
+      nome: 'Espaço de mercado',
       valor: a2,
       peso: 0.25,
-      fonte: `gap_pp ${mercado?.gap_pp != null ? String(mercado.gap_pp) : '—'}`,
+      fonte:
+        mercado?.gap_pp != null
+          ? `Diferença reservas vs produção: ${mercado.gap_pp.toLocaleString(
+              'pt-BR',
+              { maximumFractionDigits: 1 },
+            )} p.p.`
+          : 'Sem dado de gap publicado',
     },
     {
-      nome: 'A3 Preço (referência)',
+      nome: 'Preço de mercado',
       valor: a3,
       peso: 0.2,
       fonte:
         mercado?.preco_brl != null
-          ? `R$ ${mercado.preco_brl.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}/t`
+          ? `R$ ${mercado.preco_brl.toLocaleString('pt-BR', {
+              maximumFractionDigits: 0,
+            })}/t`
           : '—',
     },
     {
-      nome: 'A4 Tendência',
+      nome: 'Tendência de preço',
       valor: a4,
       peso: 0.15,
       fonte: mercado?.tendencia ?? '—',
     },
     {
-      nome: 'A5 Valor de reserva (ilustrativo)',
+      nome: 'Valor da reserva por hectare',
       valor: a5,
       peso: 0.15,
-      fonte: `BRL/ha × ${processo.area_ha ?? 0} ha (master)`,
+      fonte:
+        areaFmt !== null
+          ? `R$ por hectare × ${areaFmt} (área do processo)`
+          : 'Área não informada',
     },
   ]
 }
@@ -129,16 +148,18 @@ export function buildGeologicoItemsS31(processo: Processo): S31SubfatorItem[] {
   }
   return [
     {
-      nome: 'Substância (relevância)',
+      nome: 'Relevância da substância',
       valor: sSub,
       peso: 0.5,
-      fonte: `master / ${processo.substancia ?? '—'}`,
+      fonte: processo.substancia
+        ? `${processo.substancia} · base TERRADAR de 47 minerais`
+        : 'Substância não declarada',
     },
     {
-      nome: 'Qualidade do dado (cadastro)',
+      nome: 'Maturidade dos dados de pesquisa',
       valor: sQual,
       peso: 0.5,
-      fonte: 'RAL / portarias / eventos',
+      fonte: 'Histórico de cadastro ANM (RAL, portarias, eventos)',
     },
   ]
 }

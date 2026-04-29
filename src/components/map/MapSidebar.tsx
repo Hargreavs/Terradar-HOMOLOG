@@ -11,6 +11,7 @@ import {
   Search,
   ShieldCheck,
   TrainTrack,
+  Tractor,
   TreePine,
   Users,
   Waves,
@@ -155,8 +156,8 @@ const CAMADAS_GEO_ITEM: Record<
   quilombolas: { label: 'Quilombolas', color: '#C4915A', Icon: Home },
   assentamentos: {
     label: 'Assentamentos INCRA',
-    color: '#7B8B3D',
-    Icon: Home,
+    color: '#A78BFA',
+    Icon: Tractor,
   },
   sitios_arqueologicos: {
     label: 'Sítios Arqueológicos',

@@ -100,7 +100,16 @@ function anoDe(iso: string | null | undefined): string | null {
   return /^\d{4}$/.test(slice) ? slice : null
 }
 
-const SECTION_TITLE = 'var(--text-section-title)'
+/** Alinhado a `SecLabel branco` no drawer (ex.: card Pendências). */
+const TITULO_CARD_SECAO_STYLE: CSSProperties = {
+  fontSize: 16,
+  fontWeight: 700,
+  textTransform: 'uppercase',
+  letterSpacing: '1px',
+  color: '#F1EFE8',
+  margin: 0,
+  marginBottom: 30,
+}
 
 const PAGE_INITIAL = 5
 const PAGE_INCREMENT = 5
@@ -147,12 +156,14 @@ export function ProcessoEventosTimeline({
   cadastroDataIso,
 }: ProcessoEventosTimelineProps) {
   const [eventos, setEventos] = useState<EventoRow[] | null>(null)
+  const [totalFromFetch, setTotalFromFetch] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [visiveis, setVisiveis] = useState(PAGE_INITIAL)
 
   useEffect(() => {
     setLoading(true)
     setVisiveis(PAGE_INITIAL)
+    setTotalFromFetch(null)
     let cancelled = false
     const qs = new URLSearchParams({
       numero: numero.trim(),
@@ -165,19 +176,30 @@ export function ProcessoEventosTimeline({
         if (cancelled) return
         if (!res.ok) {
           setEventos(null)
+          setTotalFromFetch(null)
           return
         }
         const json = (await res.json()) as {
           ok?: boolean
-          data?: { eventos?: EventoRow[] }
+          data?: { total?: number; eventos?: EventoRow[] }
         }
         if (json.ok && Array.isArray(json.data?.eventos)) {
           setEventos(json.data!.eventos!)
+          if (
+            typeof json.data?.total === 'number' &&
+            Number.isFinite(json.data.total)
+          ) {
+            setTotalFromFetch(json.data.total)
+          }
         } else {
           setEventos(null)
+          setTotalFromFetch(null)
         }
       } catch {
-        if (!cancelled) setEventos(null)
+        if (!cancelled) {
+          setEventos(null)
+          setTotalFromFetch(null)
+        }
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -188,9 +210,11 @@ export function ProcessoEventosTimeline({
   }, [numero])
 
   const total =
-    typeof totalEventos === 'number' && Number.isFinite(totalEventos)
-      ? totalEventos
-      : null
+    totalFromFetch !== null
+      ? totalFromFetch
+      : typeof totalEventos === 'number' && Number.isFinite(totalEventos)
+        ? totalEventos
+        : null
 
   const eventosVisiveis =
     eventos != null ? eventos.slice(0, visiveis) : []
@@ -198,19 +222,7 @@ export function ProcessoEventosTimeline({
 
   return (
     <div>
-      <p
-        style={{
-          fontSize: 13,
-          fontWeight: 600,
-          color: SECTION_TITLE,
-          margin: 0,
-          marginBottom: 10,
-          letterSpacing: '0.02em',
-          textTransform: 'uppercase',
-        }}
-      >
-        Eventos (SCM / ANM)
-      </p>
+      <p style={TITULO_CARD_SECAO_STYLE}>Eventos (SCM / ANM)</p>
 
       <div
         style={{
@@ -455,7 +467,7 @@ export function ProcessoEventosTimeline({
               >
                 Carregar mais {Math.min(PAGE_INCREMENT, restantes)}
               </button>
-              <span style={{ fontSize: 11, color: '#5F5E5A' }}>
+              <span style={{ fontSize: 12, color: '#5F5E5A' }}>
                 {restantes} restantes
               </span>
             </div>

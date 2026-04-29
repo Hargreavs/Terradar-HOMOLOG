@@ -3,6 +3,8 @@
  * Pesos e lookups alinhados a TERRADAR-Config-Scores-v2.xlsx (comentários por aba).
  */
 
+import type { S31DimensoesOportunidade, S31DimensoesRisco } from './scoringS31BreakdownTypes'
+
 // ══════════════════════════════════════════════════
 // CONSTANTES DE CÁLCULO
 // ══════════════════════════════════════════════════
@@ -250,6 +252,9 @@ export interface ScoreResult {
     social: number
     regulatorio: number
   }
+  /** Preenchido quando o motor S31 roda com `returnSubfatores: true` */
+  dimensoes_risco?: S31DimensoesRisco
+  dimensoes_oportunidade?: S31DimensoesOportunidade
   os_conservador: number
   os_moderado: number
   os_arrojado: number

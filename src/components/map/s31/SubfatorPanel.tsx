@@ -85,7 +85,7 @@ export function SubfatorPanel({
           fontSize: FS.md,
         }}
       >
-        <span style={{ color: '#D3D1C7' }}>Total da dimensão (motor S31)</span>
+        <span style={{ color: '#D3D1C7' }}>Total da dimensão</span>
         <span
           style={{ color: '#F1EFE8', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}
         >

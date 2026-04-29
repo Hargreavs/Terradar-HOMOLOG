@@ -13,15 +13,17 @@ import { RadarBackgroundAnimation } from './RadarBackgroundAnimation'
 import { RadarAlertasSubtab } from './RadarAlertasSubtab'
 import { ProspeccaoWizard } from './ProspeccaoWizard'
 import { ProspeccaoResultados } from './ProspeccaoResultados'
+import { RefinarFaseSheet } from './RefinarFaseSheet'
 import { RefinarSubstanciaSheet } from './RefinarSubstanciaSheet'
 import { TerraeLogoLoading } from './animations/TerraeLogoLoading'
 import { useStaggeredEntrance } from '../../hooks/useStaggeredEntrance'
-import { type ObjetivoProspeccao, type OpportunityResult, type PerfilRisco } from '../../lib/opportunityScore'
+import { type OpportunityResult, type PerfilRisco } from '../../lib/opportunityScore'
 import { MOTION_GROUP_FADE_MS } from '../../lib/motionDurations'
 import { TODAS_SUBST } from '../../lib/substancias'
 import type { FamiliasResponse, SubstanciasResponse } from '../../lib/radar/api'
 import {
   RADAR_OPORTUNIDADES_PAGE_SIZE,
+  SCORE_MINIMO_POR_PERFIL,
   contarOportunidades,
   expandirSubstanciasParaVariantes,
   listarFamiliasDisponiveis,
@@ -31,32 +33,33 @@ import {
 
 /** Snapshot dos filtros da última análise concluída (para pular loading se iguais). */
 interface FiltrosSnapshot {
-  objetivo: string
   substancias: string[]
   perfil: string
   ufs: string[]
+  /** Fases aplicadas na listagem (pós-resultado); [] = sem filtro de fase. */
+  fases: string[]
 }
 
 function buildFiltrosSnapshot(
-  objetivo: ObjetivoProspeccao,
   subst: string[],
   perfil: PerfilRisco,
   ufs: string[],
+  fases: string[],
 ): FiltrosSnapshot {
   return {
-    objetivo,
     substancias: [...subst].sort(),
     perfil,
     ufs: [...ufs].sort(),
+    fases: [...fases].sort(),
   }
 }
 
 function filtrosIguais(a: FiltrosSnapshot, b: FiltrosSnapshot): boolean {
   return (
-    a.objetivo === b.objetivo &&
     a.perfil === b.perfil &&
     JSON.stringify(a.substancias) === JSON.stringify(b.substancias) &&
-    JSON.stringify(a.ufs) === JSON.stringify(b.ufs)
+    JSON.stringify(a.ufs) === JSON.stringify(b.ufs) &&
+    JSON.stringify(a.fases) === JSON.stringify(b.fases)
   )
 }
 
@@ -211,11 +214,9 @@ export function RadarDashboard({
   const [homeLeaveSource, setHomeLeaveSource] = useState<'wizard' | 'resultados' | null>(null)
   const [wizardEntryVisible, setWizardEntryVisible] = useState(false)
 
-  const [proObjetivo, setProObjetivo] = useState<ObjetivoProspeccao | null>(null)
   const [proSubst, setProSubst] = useState<string[]>([])
   const [proRisco, setProRisco] = useState<PerfilRisco | null>(null)
   const [proUfs, setProUfs] = useState<string[]>([])
-  const [loadProgress, setLoadProgress] = useState(0)
   const [loadMsgIdx, setLoadMsgIdx] = useState(0)
   const [loadOverlayOut, setLoadOverlayOut] = useState(false)
   const [resultados, setResultados] = useState<OpportunityResult[]>([])
@@ -224,23 +225,19 @@ export function RadarDashboard({
   const [carregandoPagina, setCarregandoPagina] = useState(false)
   const [selectedResultId, setSelectedResultId] = useState<string | null>(null)
   const resultadosListRef = useRef<HTMLDivElement | null>(null)
-  const [wizardEntryStep, setWizardEntryStep] = useState<1 | 2 | 3>(1)
+  const [wizardEntryStep, setWizardEntryStep] = useState<1 | 2>(1)
   const [toastMsg, setToastMsg] = useState<string | null>(null)
   const [loadingOverlayVisible, setLoadingOverlayVisible] = useState(false)
   const [ultimosFiltrosAnalise, setUltimosFiltrosAnalise] = useState<FiltrosSnapshot | null>(
     null,
   )
   const [refinarSubstAberto, setRefinarSubstAberto] = useState(false)
+  const [refinarFaseAberto, setRefinarFaseAberto] = useState(false)
+  /** Incrementa a cada abertura do sheet de fase para key estável (draft init + animação). */
+  const refinarFaseMontagemKey = useRef(0)
+  const [proFases, setProFases] = useState<string[]>([])
   const [skipStaggerResultados, setSkipStaggerResultados] = useState(false)
   const prevTelaRef = useRef(telaAtiva)
-
-  const loadingMsgs = [
-    'Cruzando 30 processos com 7 camadas territoriais...',
-    'Analisando alertas de 2.500 fontes regulatórias...',
-    'Calculando viabilidade econômica e logística...',
-    'Aplicando perfil de risco selecionado...',
-    'Gerando ranking de oportunidades...',
-  ]
 
   const substanciasFiltroProspeccao = useMemo(() => {
     if (proSubst.includes(TODAS_SUBST)) return null
@@ -249,21 +246,45 @@ export function RadarDashboard({
     return expandirSubstanciasParaVariantes(xs, catalogoSubstancias)
   }, [proSubst, catalogoSubstancias])
 
+  const loadingMsgs = useMemo(() => {
+    if (!proRisco) return []
+    const ufLabel =
+      proUfs.length === 0 ? 'em todo o Brasil' : proUfs.length === 1 ? `em ${proUfs[0]}` : `em ${proUfs.length} estados`
+    const limiar = SCORE_MINIMO_POR_PERFIL[proRisco]
+    const nomePerfil =
+      proRisco === 'conservador' ? 'conservador' : proRisco === 'moderado' ? 'moderado' : 'arrojado'
+    const substPhrase =
+      substanciasFiltroProspeccao == null
+        ? 'todas as substâncias'
+        : substanciasFiltroProspeccao.length === 1
+          ? 'a substância filtrada'
+          : `${substanciasFiltroProspeccao.length} substâncias`
+    return [
+      `Filtrando processos ativos ${ufLabel}…`,
+      `Aplicando perfil ${nomePerfil} (limiar OS ≥ ${limiar})…`,
+      `Selecionando ${substPhrase}…`,
+      `Ordenando por Opportunity Score…`,
+    ]
+  }, [proRisco, proUfs, substanciasFiltroProspeccao])
+
   const showToast = useCallback((msg: string) => {
     setToastMsg(msg)
     window.setTimeout(() => setToastMsg(null), 2800)
   }, [])
 
   const buildFiltrosListagem = useCallback(
-    (novasSubst: string[]) => {
+    (novasSubst: string[], fasesLista: string[]) => {
       if (!proRisco) {
         return null
       }
+      const fasesRpc =
+        fasesLista.length > 0 ? fasesLista.map((x) => x.trim()).filter(Boolean) : null
       if (novasSubst.includes(TODAS_SUBST)) {
         return {
           perfil: proRisco,
           substancias: null,
           ufs: proUfs.length > 0 ? proUfs : null,
+          fases: fasesRpc,
         }
       }
       const xs = novasSubst.filter((s) => s !== TODAS_SUBST)
@@ -272,6 +293,7 @@ export function RadarDashboard({
         substancias:
           xs.length > 0 ? expandirSubstanciasParaVariantes(xs, catalogoSubstancias) : null,
         ufs: proUfs.length > 0 ? proUfs : null,
+        fases: fasesRpc,
       }
     },
     [proRisco, proUfs, catalogoSubstancias],
@@ -282,8 +304,8 @@ export function RadarDashboard({
       const substAnterior = proSubst
       setProSubst(novasSubstancias)
       setRefinarSubstAberto(false)
-      if (!proRisco || !proObjetivo) return
-      const filtros = buildFiltrosListagem(novasSubstancias)
+      if (!proRisco) return
+      const filtros = buildFiltrosListagem(novasSubstancias, proFases)
       if (!filtros) return
       setCarregandoPagina(true)
       setSelectedResultId(null)
@@ -309,19 +331,64 @@ export function RadarDashboard({
         setTotalOportunidades(null)
         console.warn('Falha ao contar oportunidades:', contadoResult.reason)
       }
-      setUltimosFiltrosAnalise(buildFiltrosSnapshot(proObjetivo, novasSubstancias, proRisco, proUfs))
+      setUltimosFiltrosAnalise(
+        buildFiltrosSnapshot(novasSubstancias, proRisco, proUfs, proFases),
+      )
       setCarregandoPagina(false)
     },
-    [proRisco, proObjetivo, proUfs, proSubst, showToast, buildFiltrosListagem],
+    [proRisco, proUfs, proSubst, proFases, showToast, buildFiltrosListagem],
   )
 
-  const runAnalise = useCallback(async (): Promise<boolean> => {
-    if (!proObjetivo || !proRisco) return false
-    const filtros = {
-      perfil: proRisco,
-      substancias: substanciasFiltroProspeccao,
-      ufs: proUfs.length > 0 ? proUfs : null,
-    }
+  const handleAplicarFiltroFase = useCallback(
+    async (novasFases: string[]) => {
+      const fasesAntes = proFases
+      setProFases(novasFases)
+      setRefinarFaseAberto(false)
+      if (!proRisco) return
+      const filtros = buildFiltrosListagem(proSubst, novasFases)
+      if (!filtros) return
+      setCarregandoPagina(true)
+      setSelectedResultId(null)
+      const [listadoResult, contadoResult] = await Promise.allSettled([
+        listarOportunidades(filtros, RADAR_OPORTUNIDADES_PAGE_SIZE, 0),
+        contarOportunidades(filtros),
+      ])
+      if (listadoResult.status === 'rejected') {
+        console.error(listadoResult.reason)
+        setProFases(fasesAntes)
+        showToast('Não foi possível aplicar o filtro de fase. Tente novamente.')
+        setResultados([])
+        setTotalOportunidades(null)
+        setPaginaAtual(1)
+        setCarregandoPagina(false)
+        return
+      }
+      setResultados(listadoResult.value.resultados)
+      setPaginaAtual(1)
+      if (contadoResult.status === 'fulfilled') {
+        setTotalOportunidades(contadoResult.value)
+      } else {
+        setTotalOportunidades(null)
+        console.warn('Falha ao contar oportunidades:', contadoResult.reason)
+      }
+      setUltimosFiltrosAnalise(buildFiltrosSnapshot(proSubst, proRisco, proUfs, novasFases))
+      setCarregandoPagina(false)
+    },
+    [
+      buildFiltrosListagem,
+      proSubst,
+      proRisco,
+      proUfs,
+      proFases,
+      showToast,
+    ],
+  )
+
+  /** Lista de fases a enviar à RPC (`[]` no assistente nova análise; após filtros na listagem passar `proFases`). */
+  const runAnalise = useCallback(async (fasesParaListagem: string[]): Promise<boolean> => {
+    if (!proRisco) return false
+    const filtros = buildFiltrosListagem(proSubst, fasesParaListagem)
+    if (!filtros) return false
     const [listadoResult, contadoResult] = await Promise.allSettled([
       listarOportunidades(filtros, RADAR_OPORTUNIDADES_PAGE_SIZE, 0),
       contarOportunidades(filtros),
@@ -344,19 +411,32 @@ export function RadarDashboard({
       console.warn('Falha ao contar oportunidades:', contadoResult.reason)
     }
     return true
-  }, [proObjetivo, proRisco, substanciasFiltroProspeccao, proUfs, showToast])
+  }, [showToast, buildFiltrosListagem, proSubst, proRisco])
+
+  const runAnaliseRef = useRef(runAnalise)
+
+  useEffect(() => {
+    runAnaliseRef.current = runAnalise
+  }, [runAnalise])
+
+  const proSubstRef = useRef(proSubst)
+  const proUfsRef = useRef(proUfs)
+  const proRiscoRef = useRef(proRisco)
+
+  useEffect(() => {
+    proSubstRef.current = proSubst
+    proUfsRef.current = proUfs
+    proRiscoRef.current = proRisco
+  }, [proSubst, proUfs, proRisco])
 
   const irParaPagina = useCallback(
     async (pagina: number) => {
-      if (!proRisco || !proObjetivo) return
+      if (!proRisco) return
       const offset = (pagina - 1) * RADAR_OPORTUNIDADES_PAGE_SIZE
       setCarregandoPagina(true)
       try {
-        const filtros = {
-          perfil: proRisco,
-          substancias: substanciasFiltroProspeccao,
-          ufs: proUfs.length > 0 ? proUfs : null,
-        }
+        const filtros = buildFiltrosListagem(proSubst, proFases)
+        if (!filtros) throw new Error('Filtros indisponíveis')
         const resultado = await listarOportunidades(
           filtros,
           RADAR_OPORTUNIDADES_PAGE_SIZE,
@@ -372,7 +452,7 @@ export function RadarDashboard({
         setCarregandoPagina(false)
       }
     },
-    [proRisco, proObjetivo, substanciasFiltroProspeccao, proUfs, showToast],
+    [proRisco, buildFiltrosListagem, proSubst, proFases, showToast],
   )
 
   useEffect(() => {
@@ -388,54 +468,59 @@ export function RadarDashboard({
   }, [proRisco])
 
   useEffect(() => {
-    if (!loadingOverlayVisible) return
+    if (!loadingOverlayVisible || !proRisco) return
+    setProFases((prev) => (prev.length === 0 ? prev : []))
     setSelectedResultId(null)
-    setLoadProgress(0)
     setLoadMsgIdx(0)
     setLoadOverlayOut(false)
-    const t0 = Date.now()
-    let done = false
+    const msgsLen = Math.max(1, loadingMsgs.length)
+
+    let cancelled = false
+    const tStarted = Date.now()
+    const MIN_VISIBLE_MS = 800
+
     const msgId = window.setInterval(() => {
-      setLoadMsgIdx((i) => (i + 1) % loadingMsgs.length)
+      setLoadMsgIdx((i) => (i + 1) % msgsLen)
     }, 1200)
-    const id = window.setInterval(() => {
-      const elapsed = Date.now() - t0
-      const p = Math.min(100, (elapsed / 5000) * 100)
-      setLoadProgress(p)
-      if (elapsed >= 5000 && !done) {
-        done = true
-        clearInterval(id)
-        clearInterval(msgId)
-        setLoadOverlayOut(true)
-        window.setTimeout(() => {
-          void (async () => {
-            const ok = await runAnalise()
-            if (ok && proObjetivo && proRisco) {
-              setUltimosFiltrosAnalise(
-                buildFiltrosSnapshot(proObjetivo, proSubst, proRisco, proUfs),
-              )
-            }
-            setLoadingOverlayVisible(false)
-            setLoadOverlayOut(false)
-            setViewState('resultados')
-          })()
-        }, reducedMotion ? 0 : 300)
-      }
-    }, 50)
+
+    void (async () => {
+      const ok = await runAnaliseRef.current([])
+      if (cancelled) return
+      const elapsed = Date.now() - tStarted
+      const waitRemain = Math.max(0, MIN_VISIBLE_MS - elapsed)
+      window.setTimeout(
+        () => {
+          if (cancelled) return
+          clearInterval(msgId)
+          const rAtual = proRiscoRef.current
+          if (ok && rAtual) {
+            setUltimosFiltrosAnalise(
+              buildFiltrosSnapshot(proSubstRef.current, rAtual, proUfsRef.current, []),
+            )
+          }
+          setLoadOverlayOut(true)
+          window.setTimeout(
+            () => {
+              if (cancelled) return
+              setLoadingOverlayVisible(false)
+              setLoadOverlayOut(false)
+              setViewState('resultados')
+            },
+            reducedMotion ? 0 : 300,
+          )
+        },
+        waitRemain,
+      )
+    })()
+
     return () => {
-      clearInterval(id)
+      cancelled = true
       clearInterval(msgId)
     }
-  }, [
-    loadingOverlayVisible,
-    runAnalise,
-    reducedMotion,
-    loadingMsgs.length,
-    proObjetivo,
-    proRisco,
-    proSubst,
-    proUfs,
-  ])
+  }, [loadingOverlayVisible, proRisco, reducedMotion, loadingMsgs.length])
+
+  /** Filtros atuais (subst., UF, perfil) sem filtro de fase — só para contagens por fase ao abrir o sheet. */
+  const filtrosBaseContagemPorFase = useMemo(() => buildFiltrosListagem(proSubst, []), [buildFiltrosListagem, proSubst])
 
   const cardStaggerCount = resultados.length > 0 ? resultados.length : 1
   const cardVis = useStaggeredEntrance(cardStaggerCount, {
@@ -489,10 +574,10 @@ export function RadarDashboard({
   }, [telaAtiva, pendingRadarAlertaId, radarAbrirHomeIntent, setRadarAbrirHomeIntent])
 
   const resetProspeccao = useCallback(() => {
-    setProObjetivo(null)
     setProSubst([])
     setProRisco(null)
     setProUfs([])
+    setProFases([])
     setResultados([])
     setTotalOportunidades(null)
     setPaginaAtual(1)
@@ -529,8 +614,8 @@ export function RadarDashboard({
   }, [reducedMotion])
 
   const handleAnalisar = useCallback(() => {
-    if (!proObjetivo || !proRisco) return
-    const snap = buildFiltrosSnapshot(proObjetivo, proSubst, proRisco, proUfs)
+    if (!proRisco) return
+    const snap = buildFiltrosSnapshot(proSubst, proRisco, proUfs, proFases)
     if (
       ultimosFiltrosAnalise &&
       filtrosIguais(ultimosFiltrosAnalise, snap) &&
@@ -540,10 +625,10 @@ export function RadarDashboard({
       return
     }
     setLoadingOverlayVisible(true)
-  }, [proObjetivo, proRisco, proSubst, proUfs, ultimosFiltrosAnalise, resultados.length])
+  }, [proRisco, proSubst, proUfs, proFases, ultimosFiltrosAnalise, resultados.length])
 
   const handleRefinarBusca = useCallback(() => {
-    setWizardEntryStep(3)
+    setWizardEntryStep(2)
     if (reducedMotion) {
       setViewState('wizard')
       return
@@ -858,8 +943,6 @@ export function RadarDashboard({
             <ProspeccaoWizard
               key={`wizard-${wizardEntryStep}`}
               reducedMotion={reducedMotion}
-              proObjetivo={proObjetivo}
-              setProObjetivo={setProObjetivo}
               proRisco={proRisco}
               setProRisco={setProRisco}
               proUfs={proUfs}
@@ -904,9 +987,12 @@ export function RadarDashboard({
                     animation: reducedMotion ? undefined : 'terraeRadarFadeMsg 200ms ease-out',
                   }}
                 >
-                  {loadingMsgs[loadMsgIdx]}
+                  {loadingMsgs[
+                    loadingMsgs.length > 0 ? loadMsgIdx % loadingMsgs.length : 0
+                  ] ?? 'Carregando oportunidades…'}
                 </p>
                 <div
+                  aria-hidden
                   style={{
                     marginTop: 20,
                     width: 240,
@@ -914,17 +1000,20 @@ export function RadarDashboard({
                     backgroundColor: '#2C2C2A',
                     borderRadius: 2,
                     overflow: 'hidden',
+                    position: 'relative',
                   }}
                 >
-                  <div
-                    style={{
-                      height: '100%',
-                      width: `${loadProgress}%`,
-                      backgroundColor: '#EF9F27',
-                      borderRadius: 2,
-                      transition: reducedMotion ? undefined : 'width 50ms linear',
-                    }}
-                  />
+                  {reducedMotion ? (
+                    <div
+                      style={{
+                        height: '100%',
+                        width: '100%',
+                        backgroundColor: '#EF9F27',
+                      }}
+                    />
+                  ) : (
+                    <div className="terraeRadarIndeterminateBar" />
+                  )}
                 </div>
               </div>
             ) : null}
@@ -968,6 +1057,7 @@ export function RadarDashboard({
                   proRisco={proRisco}
                   proSubst={proSubst}
                   proUfs={proUfs}
+                  proFases={proFases}
                   selectedResultId={selectedResultId}
                   setSelectedResultId={setSelectedResultId}
                   cardVis={cardVis}
@@ -983,6 +1073,14 @@ export function RadarDashboard({
                     const novas = proSubst.filter((s) => s !== substancia)
                     void handleAplicarFiltroSubstancia(novas)
                   }}
+                  onAbrirRefinarFase={() => {
+                    refinarFaseMontagemKey.current += 1
+                    setRefinarFaseAberto(true)
+                  }}
+                  onRemoverFiltroFase={(fase) => {
+                    const novas = proFases.filter((f) => f !== fase)
+                    void handleAplicarFiltroFase(novas)
+                  }}
                 />
                 <RefinarSubstanciaSheet
                   catalog={catalogoSubstancias}
@@ -992,6 +1090,18 @@ export function RadarDashboard({
                   onClose={() => setRefinarSubstAberto(false)}
                   reducedMotion={reducedMotion}
                 />
+                {filtrosBaseContagemPorFase ? (
+                  <RefinarFaseSheet
+                    key={`fase-${refinarFaseMontagemKey.current}`}
+                    filtrosBase={filtrosBaseContagemPorFase}
+                    proFases={proFases}
+                    open={refinarFaseAberto}
+                    onApply={handleAplicarFiltroFase}
+                    onClose={() => setRefinarFaseAberto(false)}
+                    onVoltarWizard={handleRefinarBusca}
+                    reducedMotion={reducedMotion}
+                  />
+                ) : null}
               </div>
 
               {viewState === 'resultados' && resultados.length > 0 ? (

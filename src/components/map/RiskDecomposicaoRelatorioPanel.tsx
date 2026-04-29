@@ -427,7 +427,7 @@ export function RiskDecomposicaoRelatorioPanel({
                             margin: 0,
                           }}
                         >
-                          Nenhum subfator disponível para esta dimensão.
+                          Decomposição não disponível para este processo no fluxo atual.
                         </p>
                       )
                     }

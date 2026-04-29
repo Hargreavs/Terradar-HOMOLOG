@@ -93,17 +93,26 @@ export const REPORT_L10N_PT = {
   var12m: 'Var. 12 meses',
   refSpot: 'Referência master / fonte de preço',
   cresc5a: 'Crescimento 5 anos',
-  cagrLbl: 'CAGR (master)',
+  cagrLbl: 'CAGR',
   demandaGlobal: 'Demanda global',
-  refMercado: 'Projeções / cenários (master)',
+  refMercado: 'Projeções / cenários',
 
   posicaoBrasil: 'Posição do Brasil',
   tblReservasMundiais: 'Reservas mundiais (BR)',
   tblProducaoMundial: 'Produção mundial (BR)',
   tblGap: 'Gap reservas vs. produção',
   tblAplicacoes: 'Principais aplicações',
-  tblAplicacoesVal: 'Ver PNM / USGS (master)',
+  tblAplicacoesVal: 'Ver PNM / USGS',
   doTotalGlobal: 'do total global',
+  reservasMundiaisNdNota:
+    '(não há estatística oficial comparável publicada por USGS/ANM para esta série)',
+
+  gemasProducaoDeclaradaLinha: (pctFmt: string) =>
+    `Produção declarada (referência CFEM / faturamento): ${pctFmt} do mercado nacional.`,
+  gemasReservasNdParagrafo:
+    'Reservas mundiais: dado não publicado por USGS/ANM para gemas de cor (sem cubagem global comparável).',
+  gemasTopProdutorLinha: (uf: string, pctFmt: string) =>
+    `Principal produtor: ${uf} (${pctFmt} do faturamento declarado).`,
 
   aspectosReg: 'Aspectos regulatórios e CFEM',
   tblEstrategiaPnm: 'Estratégia nacional (PNM)',
@@ -116,7 +125,7 @@ export const REPORT_L10N_PT = {
 
   valorEstimadoReserva: 'Valor estimado da reserva (premissas)',
   valorInsituKpi: 'Valor in-situ',
-  refMercado2: 'Teor × massa/ha × preço USD (master)',
+  refMercado2: 'Teor × massa/ha × preço USD',
   cfemEstKpi: 'CFEM estimada',
   cfemEstSub: 'Alíquota',
   cfemEstSubSobre: 'sobre valor in-situ',
@@ -124,6 +133,11 @@ export const REPORT_L10N_PT = {
   potencialTeoricoBrutoLabel: 'Potencial teórico bruto',
   potencialTeoricoBrutoSub:
     'Premissas fixas · 30 m × 2,5 t/m³ × teor master × preço spot',
+  potencialInsituAusenteCubagemSub:
+    'Cubagem oficial não disponível para esta substância no master.',
+  potencialGemasNaoAplicavelValor: 'Não aplicável',
+  potencialGemasNaoAplicavelSub:
+    'Gemas são avaliadas por pedra individual, não por densidade volumétrica média por hectare.',
   potencialTeoricoBrutoAviso:
     'Ordem de grandeza. Não constitui NI 43-101 / JORC. Valor realizável depende de cubagem técnica, recuperação metalúrgica e viabilidade operacional.',
   cfemAliquotaLabel: 'Alíquota CFEM',
@@ -382,17 +396,26 @@ export const REPORT_L10N_EN = {
   var12m: '12-month chg.',
   refSpot: 'Master / price source',
   cresc5a: '5-year growth',
-  cagrLbl: 'CAGR (master)',
+  cagrLbl: 'CAGR',
   demandaGlobal: 'Global demand',
-  refMercado: 'Projections / scenarios (master)',
+  refMercado: 'Projections / scenarios',
 
   posicaoBrasil: 'Brazil’s position',
   tblReservasMundiais: 'World reserves (BR)',
   tblProducaoMundial: 'World production (BR)',
   tblGap: 'Reserves vs. production gap',
   tblAplicacoes: 'Key applications',
-  tblAplicacoesVal: 'See PNM / USGS (master)',
+  tblAplicacoesVal: 'See PNM / USGS',
   doTotalGlobal: 'of global total',
+  reservasMundiaisNdNota:
+    '(no comparable official statistic published by USGS/ANM for this series)',
+
+  gemasProducaoDeclaradaLinha: (pctFmt: string) =>
+    `Declared production (CFEM / revenue reference): ${pctFmt} of the domestic market.`,
+  gemasReservasNdParagrafo:
+    'World reserves: not published by USGS/ANM for colored gemstones (no comparable global tally).',
+  gemasTopProdutorLinha: (uf: string, pctFmt: string) =>
+    `Leading producer: ${uf} (${pctFmt} of declared revenue).`,
 
   aspectosReg: 'Regulatory and CFEM',
   tblEstrategiaPnm: 'National strategy (PNM)',
@@ -405,7 +428,7 @@ export const REPORT_L10N_EN = {
 
   valorEstimadoReserva: 'Estimated reserve value (assumptions)',
   valorInsituKpi: 'In-situ value',
-  refMercado2: 'Grade × mass/ha × USD price (master)',
+  refMercado2: 'Grade × mass/ha × USD price',
   cfemEstKpi: 'Estimated CFEM',
   cfemEstSub: 'Rate',
   cfemEstSubSobre: 'on in-situ value',
@@ -413,6 +436,11 @@ export const REPORT_L10N_EN = {
   potencialTeoricoBrutoLabel: 'Theoretical gross potential',
   potencialTeoricoBrutoSub:
     'Fixed assumptions · 30 m × 2.5 t/m³ × master grade × spot price',
+  potencialInsituAusenteCubagemSub:
+    'Official resource tally not available in the master dataset for this substance.',
+  potencialGemasNaoAplicavelValor: 'Not applicable',
+  potencialGemasNaoAplicavelSub:
+    'Colored gemstones are valued per stone, not via average volumetric density per hectare.',
   potencialTeoricoBrutoAviso:
     'Order-of-magnitude estimate. Does not constitute NI 43-101 / JORC. Realizable value depends on technical resource definition, metallurgical recovery and operational viability.',
   cfemAliquotaLabel: 'CFEM royalty rate',

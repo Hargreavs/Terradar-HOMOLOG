@@ -118,7 +118,8 @@ export interface CfemBreakdownMunicipio {
   municipio_ibge: string
   uf: string
   processo_total: number
-  municipio_total: number
+  /** `null` quando o histórico municipal não pôde ser carregado (distinto de zero real). */
+  municipio_total: number | null
   percentual_do_municipio: number
   num_lancamentos: number
   serie_anual: Array<{ ano: number; processo: number; municipio: number }>
@@ -130,6 +131,8 @@ export interface Processo {
   regime: Regime
   fase: Fase
   substancia: string
+  /** Família cadastral (master_substancias), ex.: gemas_pedras — UI condicional Inteligência. */
+  substancia_familia?: string | null
   is_mineral_estrategico: boolean
   titular: string
   /** Opcional, ex.: CNPJ verificado (processo real SIGMINE). */
@@ -167,6 +170,8 @@ export interface Processo {
   total_eventos?: number
   area_ha: number
   uf: string
+  /** Código IBGE do município (cadastro / API), quando disponível. */
+  municipio_ibge?: string | null
   municipio: string
   lat: number
   lng: number

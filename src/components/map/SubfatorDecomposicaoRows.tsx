@@ -6,6 +6,7 @@ import {
   formatPesoDimensaoLine,
   sanitizarRuídoDecimalNaProsa,
 } from '../../lib/scoreBreakdownFormat'
+import { refinarTextoSubfator } from '../../lib/oportunidadeCopy'
 
 const FS = { sm: 13, md: 14 } as const
 
@@ -67,7 +68,7 @@ export function SubfatorDecomposicaoRows({
       {subfatores.map((sf, vi) => {
         const pctMag = Math.min(100, Math.max(0, Number(sf.valor_bruto ?? sf.valor)))
         const fonteHover = sf.fonte?.trim() ? `Fonte: ${sf.fonte}` : undefined
-        const textoLimpo = sanitizarRuídoDecimalNaProsa(sf.texto ?? '')
+        const textoLimpo = sanitizarRuídoDecimalNaProsa(refinarTextoSubfator(sf))
         return (
           <div key={`${sf.nome}-${vi}`} style={{ marginTop: vi > 0 ? 12 : 0 }}>
             <div

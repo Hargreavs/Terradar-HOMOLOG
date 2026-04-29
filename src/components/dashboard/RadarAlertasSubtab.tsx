@@ -6,22 +6,17 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
 import {
   ArrowUpRight,
   Bell,
   ChevronDown,
-  ChevronRight,
   FileText,
   Search,
-  Sparkles,
   X,
 } from 'lucide-react'
 import { useAppStore } from '../../store/useAppStore'
-import { useMapStore } from '../../store/useMapStore'
-import type { Processo } from '../../types'
 import type { RadarAlerta } from '../../data/radar-alertas.mock'
 import { MultiSelectDropdown } from '../ui/MultiSelectDropdown'
 import { BadgeSubstancia } from '../ui/BadgeSubstancia'
@@ -32,27 +27,92 @@ import {
   type TipoImpacto,
 } from '../../lib/relevanciaAlerta'
 import { motionMs } from '../../lib/motionDurations'
-import { corSubstanciaOuUndefined } from '../../lib/corSubstancia'
-import { TODAS_SUBST } from '../../lib/substancias'
-import { useRadarEventos } from '../../lib/radar/useRadarEventos'
+import { type RadarEventoEnriquecido } from '../../lib/radar/eventoAdapter'
+import {
+  useRadarEventoDetalhe,
+  useRadarEventos,
+  type RadarResumo,
+} from '../../lib/radar/useRadarEventos'
+import {
+  TooltipProvider,
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from '../ui/tooltip'
 
-const RELEV_ORDER: Relevancia[] = [
-  'critico',
-  'desfavoravel',
-  'neutro',
-  'positivo',
-  'favoravel',
-]
-
-type PeriodoKey = 'hoje' | '7d' | '30d' | '90d' | 'personalizar'
+type PeriodoKey = '7d' | '30d' | '90d'
 
 const PERIODO_OPCOES: { id: PeriodoKey; label: string }[] = [
-  { id: 'hoje', label: 'Hoje' },
   { id: '7d', label: 'Últimos 7 dias' },
   { id: '30d', label: 'Últimos 30 dias' },
   { id: '90d', label: 'Últimos 90 dias' },
-  { id: 'personalizar', label: 'Personalizar' },
 ]
+
+/** Limite por página na API (top UFs são amostrados neste conjunto quando há corte por limite). */
+const RADAR_FETCH_LIMITE = 100
+
+const BR_UFS_ALL: readonly string[] = [
+  'AC',
+  'AL',
+  'AP',
+  'AM',
+  'BA',
+  'CE',
+  'DF',
+  'ES',
+  'GO',
+  'MA',
+  'MT',
+  'MS',
+  'MG',
+  'PA',
+  'PB',
+  'PR',
+  'PE',
+  'PI',
+  'RJ',
+  'RN',
+  'RS',
+  'RO',
+  'RR',
+  'SC',
+  'SP',
+  'SE',
+  'TO',
+]
+
+const CATEGORIAS_FILTRO_API: readonly string[] = [
+  'CRITICO',
+  'DESFAVORAVEL',
+  'NEUTRO',
+  'POSITIVO',
+  'FAVORAVEL',
+]
+
+const BORDA_URGENTE_FEED = '#F59E0B'
+
+function isAlertaRowUrgenteVisual(a: RadarEventoEnriquecido): boolean {
+  if (a.urgente === true) return true
+  const f = a.flags_atencao
+  if (!Array.isArray(f)) return false
+  return f.some((x) => String(x).toUpperCase().includes('URGENTE'))
+}
+
+/** Intervalo de datas exclusivo Radar Alertas (7 / 30 / 90 dias). */
+export function computePeriodoRange(periodo: PeriodoKey): {
+  dataDe: string
+  dataAte: string
+} {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const ymd = (d: Date) =>
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  const hoje = new Date()
+  const dataAte = ymd(hoje)
+  const days = periodo === '7d' ? 7 : periodo === '90d' ? 90 : 30
+  const de = new Date(hoje)
+  de.setDate(de.getDate() - days)
+  return { dataDe: ymd(de), dataAte }
+}
 
 function ymdFromDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -66,31 +126,6 @@ function parseAlertaDateTimeMs(a: RadarAlerta): number {
   const t = `${a.data}T${a.hora}:00`
   const ms = new Date(t).getTime()
   return Number.isFinite(ms) ? ms : new Date(`${a.data}T12:00:00`).getTime()
-}
-
-function alertaPassaPeriodo(
-  a: RadarAlerta,
-  periodo: PeriodoKey,
-  customDe: string,
-  customAte: string,
-): boolean {
-  const ms = parseAlertaDateTimeMs(a)
-  const day = a.data.slice(0, 10)
-  if (periodo === 'hoje') return day === ymdToday()
-  if (periodo === '7d')
-    return ms >= Date.now() - 7 * 86400000
-  if (periodo === '30d')
-    return ms >= Date.now() - 30 * 86400000
-  if (periodo === '90d')
-    return ms >= Date.now() - 90 * 86400000
-  if (periodo === 'personalizar') {
-    if (!customDe || !customAte) return true
-    const t0 = new Date(`${customDe}T00:00:00`).getTime()
-    const t1 = new Date(`${customAte}T23:59:59`).getTime()
-    if (!Number.isFinite(t0) || !Number.isFinite(t1)) return true
-    return ms >= t0 && ms <= t1
-  }
-  return true
 }
 
 const MESES_PT_CURTO = [
@@ -144,24 +179,6 @@ const INTEL_KP_LABEL_COLOR = '#FFFFFF'
 const INTEL_KP_SUB_FS = 15
 const INTEL_KP_SUB_COLOR = '#888780'
 
-function labelRelevResumoPalavra(k: Relevancia, n: number): string {
-  const one: Record<Relevancia, string> = {
-    critico: 'Crítico',
-    desfavoravel: 'Desfavorável',
-    neutro: 'Neutro',
-    positivo: 'Positivo',
-    favoravel: 'Favorável',
-  }
-  const many: Record<Relevancia, string> = {
-    critico: 'Críticos',
-    desfavoravel: 'Desfavoráveis',
-    neutro: 'Neutros',
-    positivo: 'Positivos',
-    favoravel: 'Favoráveis',
-  }
-  return n === 1 ? one[k] : many[k]
-}
-
 /**
  * Filtros da sub-aba Alertas: mesma paleta/cantos que UF/Subst. na Inteligência,
  * com padding vertical menor para alinhar à linha (sem alterar o componente na aba Intel).
@@ -195,11 +212,22 @@ function normSubStr(s: string): string {
   return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase()
 }
 
-function corRiscoProcesso(score: number | null): string {
-  if (score == null) return '#888780'
-  if (score < 40) return '#1D9E75'
-  if (score < 70) return '#EF9F27'
-  return '#E24B4A'
+function toggleUfNaLista(prev: string[], uf: string): string[] {
+  const u = uf.trim().toUpperCase()
+  if (!u) return prev
+  return prev.includes(u) ? prev.filter((x) => x !== u) : [...prev, u]
+}
+
+function substJaSelecionada(lista: string[], raw: string): boolean {
+  const k = normSubStr(raw)
+  return lista.some((p) => normSubStr(p) === k)
+}
+
+function toggleSubstNaLista(prev: string[], raw: string): string[] {
+  const k = normSubStr(raw)
+  const has = prev.some((p) => normSubStr(p) === k)
+  if (has) return prev.filter((p) => normSubStr(p) !== k)
+  return [...prev, raw]
 }
 
 function analiseTexto(a: RadarAlerta): string {
@@ -220,30 +248,202 @@ const LABEL_SECTION_DETAIL: CSSProperties = {
   color: '#888780',
 }
 
-const DISCLAIMER_RELEVANCIA: Record<Relevancia, string> = {
-  critico:
-    'Este alerta foi classificado como crítico porque tem alto impacto restritivo sobre os processos monitorados. Requer atenção imediata e pode exigir ações urgentes de compliance ou revisão de cronogramas.',
-  desfavoravel:
-    'Este alerta foi classificado como desfavorável porque tem impacto restritivo de nível médio sobre os processos monitorados. Pode afetar cronogramas e exigir ações de compliance.',
-  neutro:
-    'Este alerta foi classificado como neutro porque tem caráter informativo, sem impacto direto significativo sobre os processos monitorados. Recomenda-se acompanhamento.',
-  positivo:
-    'Este alerta foi classificado como positivo porque traz impacto favorável moderado para os processos monitorados. Pode representar oportunidades de simplificação ou agilização.',
-  favoravel:
-    'Este alerta foi classificado como favorável porque tem alto impacto positivo sobre os processos monitorados. Representa oportunidades significativas ou redução de barreiras regulatórias.',
+function labelCategoriaFiltro(id: string): string {
+  const m: Record<string, string> = {
+    CRITICO: 'Crítico',
+    DESFAVORAVEL: 'Desfavorável',
+    NEUTRO: 'Neutro',
+    POSITIVO: 'Positivo',
+    FAVORAVEL: 'Favorável',
+  }
+  return m[id] ?? id
 }
 
-function tooltipProcessoRisk(label: string, riskScore: number | null): string {
-  if (riskScore == null) {
-    return `${label}. Risco não avaliado`
+/** Ordem visual do painel "Resumo do período" (alinhado à API). */
+const RESUMO_PERIODO_CAT: readonly {
+  api: string
+  rel: Relevancia
+  label: string
+}[] = [
+  { api: 'FAVORAVEL', rel: 'favoravel', label: 'Favorável' },
+  { api: 'DESFAVORAVEL', rel: 'desfavoravel', label: 'Desfavorável' },
+  { api: 'NEUTRO', rel: 'neutro', label: 'Neutro' },
+  { api: 'POSITIVO', rel: 'positivo', label: 'Positivo' },
+  { api: 'CRITICO', rel: 'critico', label: 'Crítico' },
+]
+
+function contagemPorCategoriaApi(
+  por: Record<string, number> | undefined,
+  code: string,
+): number {
+  if (!por) return 0
+  const up = code.toUpperCase()
+  for (const [k, v] of Object.entries(por)) {
+    if (k.replace(/\s+/g, '').toUpperCase() === up.replace(/\s+/g, '')) {
+      return v
+    }
   }
-  if (riskScore < 40) {
-    return `${label}. Risco: ${riskScore}/100 (Baixo)`
+  return 0
+}
+
+function urlDouPublicacao(a: RadarAlerta): string | null {
+  const u = (a as RadarEventoEnriquecido).url_dou?.trim()
+  if (u && /^https?:\/\//i.test(u)) return u
+  return null
+}
+
+const ITENS_POR_PAGINA_FEED = 25
+const ITENS_MODAL_PROCESSOS = 50
+
+type RadarLinhaProc = {
+  id: string
+  numero: string
+}
+
+function strRadarDet(k: Record<string, unknown> | null, campo: string): string {
+  if (!k) return ''
+  const v = k[campo]
+  return typeof v === 'string' ? v : v != null ? String(v) : ''
+}
+
+function extrairProcessosRadarDetalhe(
+  det: Record<string, unknown> | null,
+): RadarLinhaProc[] {
+  const raw = det?.processos_afetados
+  if (!Array.isArray(raw)) return []
+  const out: RadarLinhaProc[] = []
+  for (const row of raw) {
+    if (!row || typeof row !== 'object') continue
+    const o = row as Record<string, unknown>
+    const id = o.id != null ? String(o.id).trim() : ''
+    let num =
+      typeof o.numero === 'string'
+        ? o.numero.trim()
+        : o.numero != null && o.numero !== ''
+          ? String(o.numero).trim()
+          : ''
+    num = num || id
+    if (num || id) out.push({ id: id || num, numero: num })
   }
-  if (riskScore < 70) {
-    return `${label}. Risco: ${riskScore}/100 (Médio)`
+  return out
+}
+
+function totalAfetadosDoDetalhe(
+  det: Record<string, unknown> | null,
+  amostraLen: number,
+): number {
+  const raw = det?.total_processos_afetados
+  let n: number
+  if (typeof raw === 'number' && Number.isFinite(raw)) n = raw
+  else if (typeof raw === 'string') {
+    const p = parseInt(raw.replace(/\D/g, ''), 10)
+    n = Number.isFinite(p) ? p : NaN
+  } else {
+    n = NaN
   }
-  return `${label}. Risco: ${riskScore}/100 (Alto)`
+  if (Number.isFinite(n) && n >= 0) return Math.floor(n)
+  return amostraLen
+}
+
+function textoLinhaPublicacaoDet(
+  det: Record<string, unknown> | null,
+  fall: RadarAlerta,
+): string {
+  if (!det) return fall.fonte_nome_completo
+  const org = strRadarDet(det, 'orgao_emissor').trim()
+  const tipo = strRadarDet(det, 'tipo_ato').trim()
+  const numero = strRadarDet(det, 'numero_ato').trim()
+  const parts = [org, tipo, numero].filter(Boolean)
+  return parts.length ? parts.join(' · ') : fall.fonte_nome_completo
+}
+
+function formatoDataEvtDetalhe(iso: unknown): string {
+  if (typeof iso !== 'string' || !iso.trim()) return '—'
+  const d = new Date(iso)
+  if (!Number.isFinite(d.getTime())) return '—'
+  return `${d.toLocaleDateString('pt-BR', { day: 'numeric', month: 'short', year: 'numeric' })} · ${d.toLocaleTimeString(
+    'pt-BR',
+    { hour: '2-digit', minute: '2-digit' },
+  )}`
+}
+
+function parseUfArray(field: unknown): string[] {
+  if (!Array.isArray(field)) return []
+  return field
+    .map((u) => (typeof u === 'string' ? u.trim().toUpperCase() : ''))
+    .filter(Boolean)
+}
+
+/** LLM (`ufs_afetadas`) com fallback para pipeline (`ufs_afetadas_real`) na view. */
+function ufsDoDetalhe(det: Record<string, unknown> | null): string[] {
+  if (!det) return []
+  const llm = parseUfArray(det.ufs_afetadas)
+  if (llm.length > 0) return llm
+  return parseUfArray(det.ufs_afetadas_real)
+}
+
+function parseSubstArray(field: unknown): string[] {
+  if (!Array.isArray(field)) return []
+  return field
+    .map((s) => (typeof s === 'string' ? s.trim().toUpperCase() : ''))
+    .filter(Boolean)
+}
+
+/**
+ * LLM (`substancias_minerais`) → pipeline (`substancias_afetadas_real`) → item do feed.
+ */
+function subsDoDetalhe(
+  det: Record<string, unknown> | null,
+  fallback: RadarAlerta,
+): string[] {
+  if (!det) return parseSubstArray(fallback.substancias_afetadas)
+  const llm = parseSubstArray(det.substancias_minerais)
+  if (llm.length > 0) return llm
+  const real = parseSubstArray(det.substancias_afetadas_real)
+  if (real.length > 0) return real
+  return parseSubstArray(fallback.substancias_afetadas)
+}
+
+function analiseTextoPreferDet(
+  det: Record<string, unknown> | null,
+  listaItem: RadarAlerta,
+): string {
+  const t = strRadarDet(det, 'analise_terradar').trim()
+  if (t) return t
+  const r = strRadarDet(det, 'resumo').trim()
+  if (r) return r
+  return analiseTexto(listaItem)
+}
+
+type IndiceRadarPg = number | 'ellipsis'
+
+function indicesPaginasNumeradas(total: number, atual: number): IndiceRadarPg[] {
+  const t = Math.max(1, total)
+  const cur = Math.min(Math.max(1, atual), t)
+  if (t <= 7) {
+    return Array.from({ length: t }, (_, i) => i + 1)
+  }
+  const s = new Set<number>([
+    1,
+    t,
+    cur - 2,
+    cur - 1,
+    cur,
+    cur + 1,
+    cur + 2,
+  ])
+  const ord = [...s].filter((p) => p >= 1 && p <= t).sort((a, b) => a - b)
+  const out: IndiceRadarPg[] = []
+  for (let i = 0; i < ord.length; i++) {
+    const p = ord[i]
+    if (p === undefined) continue
+    if (i > 0) {
+      const prev = ord[i - 1]
+      if (prev !== undefined && p - prev > 1) out.push('ellipsis')
+    }
+    out.push(p)
+  }
+  return out
 }
 
 function PeriodoSingleDropdown({
@@ -269,7 +469,7 @@ function PeriodoSingleDropdown({
     width: number
     maxH: number
   } | null>(null)
-  const label = PERIODO_OPCOES.find((o) => o.id === value)?.label ?? 'Hoje'
+  const label = PERIODO_OPCOES.find((o) => o.id === value)?.label ?? 'Últimos 30 dias'
   const tMs = motionMs(150, reducedMotion)
 
   useLayoutEffect(() => {
@@ -405,6 +605,150 @@ function PeriodoSingleDropdown({
   )
 }
 
+const CAIXA_ALERTA_RADAR: CSSProperties = {
+  border: '1px solid #E8A830',
+  borderRadius: 8,
+  padding: '12px 14px',
+  backgroundColor: 'rgba(232,168,48,0.08)',
+}
+
+function PilulaProcessoNeutral({ numero }: { numero: string }) {
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        padding: '4px 10px',
+        borderRadius: 4,
+        border: '1px solid #3D3D3A',
+        backgroundColor: '#2C2C2A',
+        color: '#D3D1C7',
+        fontSize: 12,
+        cursor: 'default',
+        userSelect: 'none',
+      }}
+    >
+      {numero}
+    </span>
+  )
+}
+
+function SecaoProcAfetRadar({
+  total,
+  amostraLinhas,
+  onAbrirModal,
+}: {
+  total: number
+  amostraLinhas: RadarLinhaProc[]
+  onAbrirModal: (titulo: string) => void
+}) {
+  const nShow = Math.min(10, amostraLinhas.length)
+  const pilhas = () =>
+    nShow > 0 ? (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {amostraLinhas.slice(0, nShow).map((row) => (
+          <PilulaProcessoNeutral
+            key={row.id || row.numero}
+            numero={row.numero || row.id}
+          />
+        ))}
+      </div>
+    ) : null
+
+  if (total === 0) {
+    return (
+      <p style={{ margin: 0, fontSize: INTEL_KP_SUB_FS, color: INTEL_KP_SUB_COLOR }}>
+        Nenhum processo vinculado.
+      </p>
+    )
+  }
+
+  if (total >= 1 && total <= 10) return pilhas()
+
+  if (total >= 11 && total <= 100) {
+    const restantes = Math.max(0, total - 10)
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {pilhas()}
+        {restantes > 0 ? (
+          <button
+            type="button"
+            onClick={() => onAbrirModal('Processos afetados')}
+            style={{
+              alignSelf: 'flex-start',
+              border: '1px solid #5F5E5A',
+              background: 'transparent',
+              color: '#D3D1C7',
+              fontSize: 13,
+              borderRadius: 6,
+              padding: '6px 12px',
+              cursor: 'pointer',
+            }}
+          >
+            + {restantes} outros · Ver todos
+          </button>
+        ) : null}
+      </div>
+    )
+  }
+
+  if (total >= 101 && total <= 10000) {
+    return (
+      <div style={{ ...CAIXA_ALERTA_RADAR }}>
+        <div style={{ fontSize: 13, color: '#E8A830', fontWeight: 600 }}>
+          ⚠ Este ato tem alcance amplo
+        </div>
+        <div style={{ marginTop: 6, fontSize: INTEL_KP_SUB_FS, color: INTEL_KP_SUB_COLOR }}>
+          Afeta {total.toLocaleString('pt-BR')} processos minerários
+        </div>
+        <button
+          type="button"
+          onClick={() => onAbrirModal('Lista de processos afetados')}
+          style={{
+            marginTop: 10,
+            border: '1px solid #EF9F27',
+            backgroundColor: 'transparent',
+            color: '#EF9F27',
+            fontSize: 13,
+            fontWeight: 500,
+            borderRadius: 6,
+            padding: '8px 14px',
+            cursor: 'pointer',
+          }}
+        >
+          Ver lista completa
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ ...CAIXA_ALERTA_RADAR }}>
+      <div style={{ fontSize: 13, color: '#E8A830', fontWeight: 600 }}>🌎 Ato de escopo nacional</div>
+      <div style={{ marginTop: 6, fontSize: INTEL_KP_SUB_FS, color: INTEL_KP_SUB_COLOR }}>
+        Afeta {total.toLocaleString('pt-BR')} processos no Brasil
+      </div>
+      <button
+        type="button"
+        title="Em breve"
+        disabled
+        style={{
+          marginTop: 10,
+          border: '1px solid #5F5E5A',
+          backgroundColor: 'transparent',
+          color: '#5F5E5A',
+          fontSize: 13,
+          borderRadius: 6,
+          padding: '8px 14px',
+          cursor: 'not-allowed',
+        }}
+      >
+        Filtrar no mapa
+      </button>
+    </div>
+  )
+}
+
 export function RadarAlertasSubtab({
   reducedMotion,
   onToast,
@@ -412,52 +756,122 @@ export function RadarAlertasSubtab({
   reducedMotion: boolean
   onToast?: (msg: string) => void
 }) {
-  const setTelaAtiva = useAppStore((s) => s.setTelaAtiva)
   const pendingRadarAlertaId = useAppStore((s) => s.pendingRadarAlertaId)
   const setPendingRadarAlertaId = useAppStore((s) => s.setPendingRadarAlertaId)
-  const processos = useMapStore((s) => s.processos)
-  const setPendingNavigation = useMapStore((s) => s.setPendingNavigation)
 
-  const {
-    eventos: alertasLista,
-    carregando,
-    erro,
-  } = useRadarEventos({
-    data_de: '2026-04-27',
-    data_ate: '2026-04-27',
-    limite: 50,
-  })
-  const alertas = alertasLista
-
-  const processoById = useMemo(() => {
-    const m = new Map<string, Processo>()
-    for (const p of processos) m.set(p.id, p)
-    return m
-  }, [processos])
-
-  const substanciasCatalogo = useMemo(() => {
-    const s = new Set<string>()
-    for (const p of processos) s.add(p.substancia)
-    return [...s].sort((a, b) => a.localeCompare(b, 'pt-BR'))
-  }, [processos])
-
-  const [periodo, setPeriodo] = useState<PeriodoKey>('hoje')
-  const [customDe, setCustomDe] = useState(ymdToday())
-  const [customAte, setCustomAte] = useState(ymdToday())
-  const [substSel, setSubstSel] = useState<string[]>([])
+  const [periodo, setPeriodo] = useState<PeriodoKey>('30d')
+  const [categoriasSelecionadas, setCategoriasSelecionadas] = useState<string[]>([])
+  const [ufsSelecionadas, setUfsSelecionadas] = useState<string[]>([])
+  const [substanciasSelecionadas, setSubstanciasSelecionadas] = useState<string[]>(
+    [],
+  )
   const [busca, setBusca] = useState('')
+  const [buscaDebounced, setBuscaDebounced] = useState('')
   const [buscaFocada, setBuscaFocada] = useState(false)
   const [ddPeriodo, setDdPeriodo] = useState(false)
-  const [ddSub, setDdSub] = useState(false)
+  const [ddCat, setDdCat] = useState(false)
+  const [ddUf, setDdUf] = useState(false)
   const [alertaSelecionadoId, setAlertaSelecionadoId] = useState<string | null>(null)
   const [drawerAberto, setDrawerAberto] = useState(false)
   const [wide, setWide] = useState(
     typeof window !== 'undefined' ? window.matchMedia('(min-width: 1200px)').matches : true,
   )
 
-  const [hoveredSubstancia, setHoveredSubstancia] = useState<string | null>(null)
-  const [hoveredRelevancia, setHoveredRelevancia] = useState<Relevancia | null>(null)
-  const [feedRowHoveredId, setFeedRowHoveredId] = useState<string | null>(null)
+  const [paginaFeed, setPaginaFeed] = useState(1)
+  const [modalProcAberto, setModalProcAberto] = useState(false)
+  const [modalProcTitulo, setModalProcTitulo] = useState('')
+  const [modalProcLista, setModalProcLista] = useState<RadarLinhaProc[]>([])
+  const [modalProcPagIdx, setModalProcPagIdx] = useState(1)
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setBuscaDebounced(busca.trim()), 300)
+    return () => window.clearTimeout(t)
+  }, [busca])
+
+  const { dataDe, dataAte } = useMemo(() => computePeriodoRange(periodo), [periodo])
+
+  const categoriaCsv = useMemo(
+    () =>
+      categoriasSelecionadas.length > 0
+        ? categoriasSelecionadas.join(',')
+        : undefined,
+    [categoriasSelecionadas],
+  )
+
+  const ufCsv = useMemo(
+    () =>
+      ufsSelecionadas.length > 0 ? ufsSelecionadas.join(',') : undefined,
+    [ufsSelecionadas],
+  )
+
+  const substanciaCsv = useMemo(
+    () =>
+      substanciasSelecionadas.length > 0
+        ? substanciasSelecionadas.join(',')
+        : undefined,
+    [substanciasSelecionadas],
+  )
+
+  const {
+    eventos: alertas,
+    resumo,
+    ufsTopSample,
+    carregando,
+    erro,
+    updatedAtMs,
+  } = useRadarEventos({
+    data_de: dataDe,
+    data_ate: dataAte,
+    categoria: categoriaCsv,
+    uf: ufCsv,
+    substancia: substanciaCsv,
+    q: buscaDebounced || undefined,
+    limite: RADAR_FETCH_LIMITE,
+  })
+
+  const limparFiltros = useCallback(() => {
+    setPeriodo('30d')
+    setCategoriasSelecionadas([])
+    setUfsSelecionadas([])
+    setSubstanciasSelecionadas([])
+    setBusca('')
+    setBuscaDebounced('')
+    setDdPeriodo(false)
+    setDdCat(false)
+    setDdUf(false)
+    setPaginaFeed(1)
+  }, [])
+
+  const prefixCat =
+    categoriasSelecionadas.length === 0
+      ? 'Categoria'
+      : categoriasSelecionadas.length === 1
+        ? labelCategoriaFiltro(categoriasSelecionadas[0]!)
+        : `${categoriasSelecionadas.length} categorias`
+
+  const prefixUf =
+    ufsSelecionadas.length === 0
+      ? 'UF'
+      : ufsSelecionadas.length === 1
+        ? ufsSelecionadas[0]!
+        : `${ufsSelecionadas.length} UFs`
+
+  const atualizadoLabel = useMemo(() => {
+    if (updatedAtMs == null) return '—'
+    try {
+      return new Date(updatedAtMs).toLocaleTimeString('pt-BR', {
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    } catch {
+      return '—'
+    }
+  }, [updatedAtMs])
+
+  const urgentesNoFetch = useMemo(
+    () => alertas.filter((x) => isAlertaRowUrgenteVisual(x)).length,
+    [alertas],
+  )
 
   const feedScrollRef = useRef<HTMLDivElement>(null)
 
@@ -483,46 +897,62 @@ export function RadarAlertasSubtab({
     return () => mq.removeEventListener('change', fn)
   }, [])
 
-  const onSubstChange = useCallback((next: string[]) => {
-    setSubstSel((prev) => {
-      if (next.includes(TODAS_SUBST)) {
-        if (!prev.includes(TODAS_SUBST)) return [TODAS_SUBST]
-        return next.filter((x) => x !== TODAS_SUBST)
-      }
-      return next
-    })
-  }, [])
-
-  const substOpcoes = useMemo(() => [TODAS_SUBST, ...substanciasCatalogo], [substanciasCatalogo])
-  const prefixSub =
-    substSel.length === 0 || substSel.includes(TODAS_SUBST)
-      ? 'Todas'
-      : substSel.length === 1
-        ? substSel[0]!
-        : `${substSel.length} substâncias`
-
-  const alertasFiltrados = useMemo(() => {
-    return alertas.filter((a) => {
-      if (!alertaPassaPeriodo(a, periodo, customDe, customAte)) return false
-      const subFiltro = substSel.filter((x) => x !== TODAS_SUBST)
-      if (subFiltro.length > 0) {
-        const ok = a.substancias_afetadas.some((s) => subFiltro.includes(s))
-        if (!ok) return false
-      }
-      const q = busca.trim().toLowerCase()
-      if (q) {
-        const blob = `${a.titulo} ${analiseTexto(a)} ${a.ementa}`.toLowerCase()
-        if (!blob.includes(q)) return false
-      }
-      return true
-    })
-  }, [alertas, periodo, customDe, customAte, substSel, busca])
-
   const alertasOrdenados = useMemo(() => {
-    return [...alertasFiltrados].sort(
+    return [...alertas].sort(
       (a, b) => parseAlertaDateTimeMs(b) - parseAlertaDateTimeMs(a),
     )
-  }, [alertasFiltrados])
+  }, [alertas])
+
+  const alertasFiltrados = alertasOrdenados
+
+  const totalPaginasFeed =
+    alertasFiltrados.length === 0
+      ? 1
+      : Math.max(1, Math.ceil(alertasFiltrados.length / ITENS_POR_PAGINA_FEED))
+
+  const alertasPaginados = useMemo(
+    () =>
+      alertasFiltrados.slice(
+        (paginaFeed - 1) * ITENS_POR_PAGINA_FEED,
+        paginaFeed * ITENS_POR_PAGINA_FEED,
+      ),
+    [alertasFiltrados, paginaFeed],
+  )
+
+  const idxRodapePaginas = useMemo(
+    () => indicesPaginasNumeradas(totalPaginasFeed, paginaFeed),
+    [totalPaginasFeed, paginaFeed],
+  )
+
+  const primeiroIdxAlertaRodape =
+    alertasPaginados.length === 0
+      ? 0
+      : (paginaFeed - 1) * ITENS_POR_PAGINA_FEED + 1
+  const ultimoIdxAlertaRodape =
+    primeiroIdxAlertaRodape === 0
+      ? 0
+      : primeiroIdxAlertaRodape + alertasPaginados.length - 1
+
+  useEffect(() => {
+    setPaginaFeed(1)
+  }, [
+    periodo,
+    categoriasSelecionadas,
+    ufsSelecionadas,
+    substanciasSelecionadas,
+    buscaDebounced,
+  ])
+
+  useEffect(() => {
+    setPaginaFeed((p) => Math.min(p, Math.max(1, totalPaginasFeed)))
+  }, [totalPaginasFeed])
+
+  useEffect(() => {
+    feedScrollRef.current?.scrollTo({ top: 0, behavior: 'auto' })
+  }, [paginaFeed])
+
+  const { detalhe: detRadarEv, carregando: cargDetRadarEv } =
+    useRadarEventoDetalhe(alertaSelecionadoId)
 
   /** Seleciona o alerta e abre o detalhe (sem alternar desseleção). */
   const selecionarAlertaParaDetalhe = useCallback(
@@ -540,17 +970,17 @@ export function RadarAlertasSubtab({
     const ro = new ResizeObserver(() => syncRadarFeedBleedWidth())
     ro.observe(el)
     return () => ro.disconnect()
-  }, [syncRadarFeedBleedWidth, alertasOrdenados.length, wide])
+  }, [syncRadarFeedBleedWidth, alertasPaginados.length, wide])
 
   useEffect(() => {
     if (
       alertaSelecionadoId &&
-      !alertasFiltrados.some((a) => a.id === alertaSelecionadoId)
+      !alertas.some((a) => a.id === alertaSelecionadoId)
     ) {
       setAlertaSelecionadoId(null)
       setDrawerAberto(false)
     }
-  }, [alertasFiltrados, alertaSelecionadoId])
+  }, [alertas, alertaSelecionadoId])
 
   useEffect(() => {
     if (!pendingRadarAlertaId) return
@@ -559,7 +989,7 @@ export function RadarAlertasSubtab({
 
   useEffect(() => {
     if (!pendingRadarAlertaId) return
-    if (!alertasFiltrados.some((a) => a.id === pendingRadarAlertaId)) return
+    if (!alertas.some((a) => a.id === pendingRadarAlertaId)) return
     const idParaScroll = pendingRadarAlertaId
     selecionarAlertaParaDetalhe(idParaScroll)
     setPendingRadarAlertaId(null)
@@ -569,51 +999,14 @@ export function RadarAlertasSubtab({
       )
       el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
     })
-  }, [pendingRadarAlertaId, alertasFiltrados, selecionarAlertaParaDetalhe, setPendingRadarAlertaId])
-
-  const hojeYmd = ymdToday()
-
-  const alertasHojeResumo = useMemo(
-    () => alertas.filter((a) => a.data.slice(0, 10) === hojeYmd),
-    [alertas, hojeYmd],
-  )
-
-  const resumoDiaStats = useMemo(() => {
-    const rel = new Map<Relevancia, number>()
-    for (const k of RELEV_ORDER) rel.set(k, 0)
-    for (const a of alertasHojeResumo) {
-      const r = calcularRelevancia(a.nivel_impacto, tipoParaCalculo(a.tipo_impacto))
-      rel.set(r, (rel.get(r) ?? 0) + 1)
-    }
-    const subCount = new Map<string, number>()
-    for (const a of alertasHojeResumo) {
-      for (const s of a.substancias_afetadas) {
-        subCount.set(s, (subCount.get(s) ?? 0) + 1)
-      }
-    }
-    const topSub = [...subCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)
-    return { rel, topSub, n: alertasHojeResumo.length }
-  }, [alertasHojeResumo])
+  }, [pendingRadarAlertaId, alertas, selecionarAlertaParaDetalhe, setPendingRadarAlertaId])
 
   const alertaSelecionado = useMemo(
     () =>
       alertaSelecionadoId
-        ? alertasFiltrados.find((a) => a.id === alertaSelecionadoId) ?? null
+        ? alertas.find((a) => a.id === alertaSelecionadoId) ?? null
         : null,
-    [alertaSelecionadoId, alertasFiltrados],
-  )
-
-  const navigateProcessoMapa = useCallback(
-    (id: string) => {
-      setPendingNavigation({
-        type: 'processo',
-        payload: id,
-        timestamp: Date.now(),
-      })
-      setTelaAtiva('mapa')
-      setDrawerAberto(false)
-    },
-    [setPendingNavigation, setTelaAtiva],
+    [alertaSelecionadoId, alertas],
   )
 
   const onSelectAlerta = (id: string) => {
@@ -630,9 +1023,35 @@ export function RadarAlertasSubtab({
     onToast?.(msg)
   }
 
+  const abrirModalListaProcessos = useCallback((titulo: string, lista: RadarLinhaProc[]) => {
+    setModalProcTitulo(titulo)
+    setModalProcLista(lista)
+    setModalProcPagIdx(1)
+    setModalProcAberto(true)
+  }, [])
+
+  useEffect(() => {
+    const t = Math.max(
+      1,
+      Math.ceil(modalProcLista.length / ITENS_MODAL_PROCESSOS),
+    )
+    setModalProcPagIdx((p) => Math.min(p, t))
+  }, [modalProcLista])
+
+  const modalListaPaginas = Math.max(
+    1,
+    Math.ceil(modalProcLista.length / ITENS_MODAL_PROCESSOS),
+  )
+  const modalProcSliceLista = modalProcLista.slice(
+    (modalProcPagIdx - 1) * ITENS_MODAL_PROCESSOS,
+    modalProcPagIdx * ITENS_MODAL_PROCESSOS,
+  )
+
   const detalheConteudo = (mobile: boolean) => {
     if (!alertaSelecionado) {
-      if (resumoDiaStats.n === 0) {
+      const totalPeriodo = resumo?.total ?? 0
+
+      if (totalPeriodo === 0) {
         return (
           <div
             style={{
@@ -657,7 +1076,7 @@ export function RadarAlertasSubtab({
                 textAlign: 'center',
               }}
             >
-              Sem atividade hoje
+              Nenhum evento no período selecionado.
             </div>
             <div
               style={{
@@ -665,15 +1084,44 @@ export function RadarAlertasSubtab({
                 fontSize: INTEL_KP_SUB_FS,
                 color: INTEL_KP_SUB_COLOR,
                 textAlign: 'center',
-                maxWidth: 220,
+                maxWidth: 280,
                 lineHeight: 1.4,
               }}
             >
-              Alertas aparecerão aqui conforme forem publicados
+              Tente ampliar o período ou limpar filtros.
             </div>
+            <button
+              type="button"
+              onClick={limparFiltros}
+              style={{
+                marginTop: 20,
+                borderWidth: 1,
+                borderStyle: 'solid',
+                borderColor: '#EF9F27',
+                backgroundColor: 'transparent',
+                color: '#EF9F27',
+                fontSize: 14,
+                fontWeight: 500,
+                borderRadius: 8,
+                padding: '10px 20px',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              Limpar filtros
+            </button>
           </div>
         )
       }
+
+      const porSub = resumo?.substancias_citadas ?? []
+      const topSubst = porSub.slice(0, 5)
+      const maxCatN = Math.max(
+        1,
+        ...RESUMO_PERIODO_CAT.map((c) =>
+          contagemPorCategoriaApi(resumo?.por_categoria, c.api),
+        ),
+      )
 
       return (
         <div
@@ -685,7 +1133,7 @@ export function RadarAlertasSubtab({
             flexDirection: 'column',
           }}
         >
-          <p style={INTEL_DIST_REGIME_SECTION_TITLE}>Resumo do dia</p>
+          <p style={INTEL_DIST_REGIME_SECTION_TITLE}>Resumo do período</p>
           <div
             style={{
               marginTop: 16,
@@ -695,437 +1143,486 @@ export function RadarAlertasSubtab({
               lineHeight: 1.35,
             }}
           >
-            {resumoDiaStats.n} alertas publicados hoje
+            {totalPeriodo} {totalPeriodo === 1 ? 'evento' : 'eventos'}
           </div>
-          {resumoDiaStats.n > 0 ? (
-            <div
-              style={{
-                marginTop: 10,
-                display: 'flex',
-                gap: 1,
-                width: '100%',
-                height: 8,
-                minHeight: 0,
-                borderRadius: 4,
-                overflow: 'hidden',
-                boxSizing: 'border-box',
-              }}
-            >
-              {(() => {
-                const activeKeys = RELEV_ORDER.filter(
-                  (rk) => (resumoDiaStats.rel.get(rk) ?? 0) > 0,
-                )
-                const len = activeKeys.length
-                return activeKeys.map((k, i) => {
-                  const n = resumoDiaStats.rel.get(k) ?? 0
-                  let borderRadius: number | string
-                  if (len === 1) borderRadius = 4
-                  else if (i === 0) borderRadius = '4px 0 0 4px'
-                  else if (i === len - 1) borderRadius = '0 4px 4px 0'
-                  else borderRadius = 0
-                  const segDim =
-                    hoveredSubstancia === null &&
-                    hoveredRelevancia !== null &&
-                    hoveredRelevancia !== k
-                  return (
+          <div
+            style={{
+              marginTop: 6,
+              fontSize: INTEL_KP_SUB_FS,
+              color: INTEL_KP_SUB_COLOR,
+            }}
+          >
+            {urgentesNoFetch}{' '}
+            {urgentesNoFetch === 1 ? 'urgente' : 'urgentes'} (entre os{' '}
+            {alertas.length} mais recentes)
+          </div>
+
+          <p
+            style={{
+              ...LABEL_SECTION,
+              marginTop: 18,
+              marginBottom: 0,
+            }}
+          >
+            Por categoria
+          </p>
+          <div
+            style={{
+              marginTop: 10,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+            }}
+          >
+            {RESUMO_PERIODO_CAT.map(({ api, rel, label }) => {
+              const n = contagemPorCategoriaApi(resumo?.por_categoria, api)
+              const wPct = (n / maxCatN) * 100
+              return (
+                <div
+                  key={api}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 10,
+                    minWidth: 0,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 72,
+                      height: 8,
+                      borderRadius: 4,
+                      backgroundColor: '#2C2C2A',
+                      overflow: 'hidden',
+                      flexShrink: 0,
+                    }}
+                  >
                     <div
-                      key={k}
-                      role="presentation"
-                      onMouseEnter={() => {
-                        setHoveredRelevancia(k)
-                        setHoveredSubstancia(null)
-                      }}
-                      onMouseLeave={() => setHoveredRelevancia(null)}
                       style={{
-                        flexGrow: n,
-                        flexShrink: 1,
-                        flexBasis: 0,
-                        minWidth: 0,
-                        height: 8,
-                        backgroundColor: COR_BOLINHA_RELEV[k],
-                        borderRadius,
-                        cursor: 'pointer',
-                        opacity: segDim ? 0.3 : 1,
-                        transition: 'opacity 0.15s ease',
+                        width: `${wPct}%`,
+                        height: '100%',
+                        backgroundColor: COR_BOLINHA_RELEV[rel],
                       }}
                     />
-                  )
-                })
-              })()}
-            </div>
+                  </div>
+                  <span
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      fontSize: INTEL_KP_SUB_FS,
+                      color: '#B4B2A9',
+                    }}
+                  >
+                    {label}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: INTEL_KP_SUB_FS,
+                      fontWeight: 600,
+                      color: '#D3D1C7',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {n}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+
+          <p
+            style={{
+              ...LABEL_SECTION,
+              marginTop: 20,
+              marginBottom: 0,
+            }}
+          >
+            UFs mais ativas
+          </p>
+          <div
+            style={{
+              marginTop: 6,
+              fontSize: INTEL_KP_SUB_FS,
+              color: INTEL_KP_SUB_COLOR,
+              lineHeight: 1.35,
+            }}
+          >
+            UFs com mais atos regulatórios no período
+          </div>
+          {totalPeriodo > 100 ? (
+            <p
+              className="terrae-radar-amostra-disclaimer"
+              style={{
+                margin: '8px 0 0',
+                fontSize: 11,
+                color: '#5F5E5A',
+                lineHeight: 1.35,
+              }}
+            >
+              Calculado sobre amostra de {alertas.length} eventos mais recentes
+            </p>
           ) : null}
           <div
             style={{
               marginTop: 8,
-              fontSize: INTEL_KP_SUB_FS,
-              lineHeight: 1.4,
-              color: '#888780',
               display: 'flex',
               flexWrap: 'wrap',
+              gap: 8,
               alignItems: 'center',
-              gap: '0 4px',
             }}
           >
-            {(() => {
-              const chunks: ReactNode[] = []
-              let first = true
-              for (const k of RELEV_ORDER) {
-                const n = resumoDiaStats.rel.get(k) ?? 0
-                if (n === 0) continue
-                const inlineDim =
-                  hoveredSubstancia === null &&
-                  hoveredRelevancia !== null &&
-                  hoveredRelevancia !== k
-                if (!first) {
-                  chunks.push(
-                    <span
-                      key={`sep-${k}`}
-                      style={{
-                        color: '#888780',
-                        opacity: inlineDim ? 0.3 : 1,
-                        transition: 'opacity 0.15s ease',
-                      }}
-                    >
-                      {' '}
-                      ·{' '}
-                    </span>,
-                  )
-                }
-                first = false
-                chunks.push(
-                  <span
-                    key={k}
-                    role="presentation"
-                    onMouseEnter={() => {
-                      setHoveredRelevancia(k)
-                      setHoveredSubstancia(null)
-                    }}
-                    onMouseLeave={() => setHoveredRelevancia(null)}
+            {ufsTopSample.length === 0 ? (
+              <span style={{ fontSize: INTEL_KP_SUB_FS, color: INTEL_KP_SUB_COLOR }}>—</span>
+            ) : (
+              ufsTopSample.map(({ uf, n }) => {
+                const sel = ufsSelecionadas.includes(uf)
+                return (
+                  <button
+                    key={uf}
+                    type="button"
+                    aria-pressed={sel}
+                    onClick={() =>
+                      setUfsSelecionadas((prev) => toggleUfNaLista(prev, uf))
+                    }
                     style={{
                       cursor: 'pointer',
-                      opacity: inlineDim ? 0.3 : 1,
-                      transition: 'opacity 0.15s ease',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '6px 12px',
+                      borderRadius: 6,
+                      border: `1px solid ${sel ? '#F59E0B' : '#3D3D3A'}`,
+                      backgroundColor: sel ? 'rgba(245, 158, 11, 0.12)' : '#2C2C2A',
+                      color: '#D3D1C7',
+                      fontSize: INTEL_KP_SUB_FS,
+                      fontFamily: 'inherit',
+                      lineHeight: 1.2,
+                      boxShadow: sel ? '0 0 0 1px rgba(245, 158, 11, 0.35)' : undefined,
                     }}
                   >
-                    <span style={{ color: RELEVANCIA_MAP[k].cor }} aria-hidden>
-                      ●
-                    </span>
-                    <span style={{ color: '#888780' }}>
-                      {` ${n} ${labelRelevResumoPalavra(k, n)}`}
-                    </span>
-                  </span>,
+                    <span style={{ fontWeight: 600 }}>{uf}</span>
+                    <span style={{ color: '#888780', fontWeight: 500 }}>·</span>
+                    <span style={{ color: '#888780', fontWeight: 500 }}>{n}</span>
+                  </button>
                 )
-              }
-              return chunks
-            })()}
+              })
+            )}
           </div>
+
+          <p
+            style={{
+              ...LABEL_SECTION,
+              marginTop: 20,
+              marginBottom: 0,
+            }}
+          >
+            Substâncias mais citadas
+          </p>
           <div
             style={{
-              marginTop: 16,
-              marginLeft: -20,
-              marginRight: -20,
-              height: 1,
-              backgroundColor: '#2C2C2A',
-              flexShrink: 0,
+              marginTop: 8,
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 8,
+              alignItems: 'center',
             }}
-            aria-hidden
-          />
-          {resumoDiaStats.topSub.length > 0 ? (
-            <>
-              <div
-                style={{
-                  marginTop: 16,
-                  fontSize: INTEL_KP_SUB_FS,
-                  fontWeight: 500,
-                  color: '#B4B2A9',
-                }}
-              >
-                Substâncias citadas:
-              </div>
-              <div
-                style={{
-                  marginTop: 8,
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: 8,
-                }}
-              >
-                {resumoDiaStats.topSub.map(([s]) => {
-                  const corSub = corSubstanciaOuUndefined(s) ?? '#5F5E5A'
-                  const match = normSubStr(s) === normSubStr(hoveredSubstancia ?? '')
-                  const badgeDim =
-                    hoveredSubstancia !== null && !match
-                  return (
-                    <span
-                      key={s}
-                      role="presentation"
-                      onMouseEnter={() => {
-                        setHoveredSubstancia(s)
-                        setHoveredRelevancia(null)
-                      }}
-                      onMouseLeave={() => setHoveredSubstancia(null)}
-                      style={{
-                        cursor: 'pointer',
-                        display: 'inline-block',
-                        opacity: badgeDim ? 0.4 : 1,
-                        transition: 'opacity 0.15s ease, box-shadow 0.15s ease',
-                        borderRadius: 4,
-                        boxShadow:
-                          hoveredSubstancia !== null && match
-                            ? `0 0 12px ${corSub}66, 0 0 2px ${corSub}`
-                            : undefined,
-                      }}
-                    >
-                      <BadgeSubstancia substancia={s} variant="intelTable" />
+          >
+            {topSubst.length === 0 ? (
+              <span style={{ fontSize: INTEL_KP_SUB_FS, color: INTEL_KP_SUB_COLOR }}>—</span>
+            ) : (
+              topSubst.map((row) => {
+                const s = row.substancia
+                const sel = substJaSelecionada(substanciasSelecionadas, s)
+                return (
+                  <button
+                    key={s}
+                    type="button"
+                    aria-pressed={sel}
+                    onClick={() =>
+                      setSubstanciasSelecionadas((prev) =>
+                        toggleSubstNaLista(prev, s),
+                      )
+                    }
+                    style={{
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '6px 10px',
+                      borderRadius: 6,
+                      border: `1px solid ${sel ? '#F59E0B' : '#3D3D3A'}`,
+                      backgroundColor: sel ? 'rgba(245, 158, 11, 0.12)' : '#2C2C2A',
+                      maxWidth: '100%',
+                      fontFamily: 'inherit',
+                      boxShadow: sel ? '0 0 0 1px rgba(245, 158, 11, 0.35)' : undefined,
+                    }}
+                  >
+                    <BadgeSubstancia substancia={s} variant="intelTable" />
+                    <span style={{ fontSize: 12, color: '#888780', fontWeight: 500 }}>
+                      ·
                     </span>
-                  )
-                })}
-              </div>
-            </>
-          ) : null}
+                    <span style={{ fontSize: 12, color: '#888780' }}>{row.qtd}</span>
+                  </button>
+                )
+              })
+            )}
+          </div>
         </div>
       )
     }
 
     const a = alertaSelecionado
+
+    if (alertaSelecionadoId && cargDetRadarEv && !detRadarEv) {
+      return (
+        <div
+          style={{
+            padding: mobile ? 16 : 20,
+            boxSizing: 'border-box',
+            color: INTEL_KP_SUB_COLOR,
+            fontSize: INTEL_KP_SUB_FS,
+          }}
+        >
+          Carregando detalhe...
+        </div>
+      )
+    }
+
+    const detOk = detRadarEv ?? null
+    const listaProcLinhas = extrairProcessosRadarDetalhe(detOk)
+    const totalProc = totalAfetadosDoDetalhe(detOk, listaProcLinhas.length)
     const rel = calcularRelevancia(a.nivel_impacto, tipoParaCalculo(a.tipo_impacto))
     const cfg = RELEVANCIA_MAP[rel]
     const bgRel = `${cfg.cor}1F`
+    const tituloPainel =
+      detOk &&
+      typeof detOk.titulo === 'string' &&
+      detOk.titulo.trim().length > 0
+        ? detOk.titulo.trim()
+        : a.titulo
+    const textoAnalise = analiseTextoPreferDet(detOk, a)
+    const textoPubLinha = textoLinhaPublicacaoDet(detOk, a)
+    const quandoPubLinha =
+      detOk &&
+      typeof detOk.publicado_em === 'string' &&
+      detOk.publicado_em.trim().length > 0
+        ? formatoDataEvtDetalhe(detOk.publicado_em)
+        : formatDataHoraPublicacaoPainel(a.data, a.hora)
+
+    let douHrefFinal: string | null = null
+    if (detOk) {
+      const uRaw = strRadarDet(detOk, 'url_dou').trim()
+      if (uRaw && /^https?:\/\//i.test(uRaw)) douHrefFinal = uRaw
+    }
+    if (!douHrefFinal) douHrefFinal = urlDouPublicacao(a)
+
+    const subsPainel = subsDoDetalhe(detOk, a)
+    const ufsPainel = ufsDoDetalhe(detOk)
 
     return (
       <div
         style={{
-          padding: 20,
+          padding: mobile ? 16 : 20,
           boxSizing: 'border-box',
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: 0,
+          flex: mobile ? undefined : 1,
+          overflowY: 'auto',
         }}
       >
-          <div
-            style={{
-              display: 'inline-block',
-              fontSize: 11,
-              fontWeight: 600,
-              letterSpacing: '0.5px',
-              color: cfg.cor,
-              backgroundColor: bgRel,
-              padding: '3px 10px',
-              borderRadius: 4,
-              textTransform: 'uppercase',
-            }}
-          >
-            {cfg.label}
-          </div>
-          <h2
-            style={{
-              margin: '12px 0 0 0',
-              fontSize: 15,
-              fontWeight: 500,
-              color: '#F1EFE8',
-              lineHeight: 1.4,
-            }}
-          >
-            {a.titulo}
-          </h2>
-          <div style={{ marginTop: 20 }}>
-            <div
-              style={{
-                ...LABEL_SECTION_DETAIL,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-              }}
-            >
-              Análise TERRADAR
-              <Sparkles size={16} color="#F1B85A" style={{ opacity: 0.8, flexShrink: 0 }} />
-            </div>
-            <div
-              style={{
-                marginTop: 8,
-                borderRadius: 6,
-                border: '1px solid #2C2C2A',
-                overflow: 'hidden',
-              }}
-            >
-              <div
-                style={{
-                  padding: '12px 16px',
-                  backgroundColor: '#0D0D0C',
-                  fontSize: INTEL_KP_SUB_FS,
-                  color: INTEL_KP_SUB_COLOR,
-                  lineHeight: 1.4,
-                }}
-              >
-                {analiseTexto(a)}
-              </div>
-              <div
-                style={{
-                  padding: '10px 16px',
-                  backgroundColor: `${cfg.cor}0A`,
-                  borderTop: '1px solid #2C2C2A',
-                }}
-              >
-                <p
-                  style={{
-                    margin: 0,
-                    fontSize: 12,
-                    color: '#888780',
-                    lineHeight: 1.5,
-                  }}
-                >
-                  {DISCLAIMER_RELEVANCIA[rel]}
-                </p>
-              </div>
-            </div>
-          </div>
-          <div
-            style={{
-              height: 1,
-              backgroundColor: '#2C2C2A',
-              marginTop: 16,
-              marginBottom: 16,
-            }}
-            aria-hidden
-          />
-          <div>
-            <div style={LABEL_SECTION_DETAIL}>Processos afetados</div>
-            <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {a.processos_afetados_ids.map((id) => {
-              const p = processoById.get(id)
-              const label = p?.numero ?? id
-              const riskScore = p?.risk_score ?? null
-              const corR = corRiscoProcesso(riskScore)
-              const tooltipText = tooltipProcessoRisk(label, riskScore)
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  title={tooltipText}
-                  onClick={() => navigateProcessoMapa(id)}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    backgroundColor: '#2C2C2A',
-                    borderWidth: 1,
-                    borderStyle: 'solid',
-                    borderColor: '#3D3D3A',
-                    color: '#D3D1C7',
-                    fontSize: 12,
-                    borderRadius: 4,
-                    padding: '3px 10px',
-                    cursor: 'pointer',
-                    transition: 'border-color 0.15s ease',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.borderColor = '#EF9F27'
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.borderColor = '#3D3D3A'
-                  }}
-                >
-                  <span
-                    style={{
-                      width: 6,
-                      height: 6,
-                      borderRadius: 999,
-                      backgroundColor: corR,
-                      flexShrink: 0,
-                    }}
-                    aria-hidden
-                  />
-                  {label}
-                </button>
-              )
-            })}
-            </div>
-          </div>
-          <div
-            style={{
-              height: 1,
-              backgroundColor: '#2C2C2A',
-              marginTop: 16,
-              marginBottom: 16,
-            }}
-            aria-hidden
-          />
-          <div>
-            <div style={LABEL_SECTION_DETAIL}>Substâncias afetadas</div>
-            <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {a.substancias_afetadas.map((s) => (
-                <BadgeSubstancia key={s} substancia={s} variant="intelTable" />
-              ))}
-            </div>
-          </div>
-          <div
-            style={{
-              height: 1,
-              backgroundColor: '#2C2C2A',
-              marginTop: 16,
-              marginBottom: 16,
-            }}
-            aria-hidden
-          />
-          <div>
-            <div style={LABEL_SECTION_DETAIL}>Publicação</div>
-            <div
-              style={{
-                marginTop: 8,
-                fontSize: INTEL_KP_LABEL_FS,
-                color: '#D3D1C7',
-              }}
-            >
-              {a.fonte_nome_completo}
-            </div>
-            <div
-              style={{
-                marginTop: 4,
-                fontSize: INTEL_KP_SUB_FS,
-                color: INTEL_KP_SUB_COLOR,
-              }}
-            >
-              {formatDataHoraPublicacaoPainel(a.data, a.hora)}
-            </div>
-          </div>
-        <button
-          type="button"
-          onClick={() => {
-            showToast('Disponível em produção')
-          }}
+        <div
           style={{
-            marginTop: 24,
-            width: '100%',
-            boxSizing: 'border-box',
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 8,
-            backgroundColor: 'transparent',
-            border: '1px solid #EF9F27',
-            color: '#EF9F27',
-            fontSize: 15,
-            fontWeight: 500,
-            borderRadius: 8,
-            padding: '12px',
-            cursor: 'pointer',
-            transition: 'background-color 0.15s ease, color 0.15s ease',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = 'rgba(239, 159, 39, 0.1)'
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = 'transparent'
+            display: 'inline-block',
+            fontSize: 11,
+            fontWeight: 600,
+            letterSpacing: '0.5px',
+            color: cfg.cor,
+            backgroundColor: bgRel,
+            padding: '3px 10px',
+            borderRadius: 4,
+            textTransform: 'uppercase',
           }}
         >
-          Ver no Diário
-          <ArrowUpRight size={16} aria-hidden />
-        </button>
-      </div>
-    )
-  }
+          {cfg.label}
+        </div>
 
-  if (carregando) {
-    return (
-      <div className="flex min-h-0 flex-1 flex-col" style={{ color: '#D3D1C7', padding: 24 }}>
-        Carregando alertas...
+        <h2
+          style={{
+            margin: '14px 0 0',
+            fontSize: 18,
+            fontWeight: 600,
+            color: '#F1EFE8',
+            lineHeight: 1.35,
+          }}
+        >
+          {tituloPainel}
+        </h2>
+
+        <div style={{ marginTop: 18 }}>
+          <div style={{ ...LABEL_SECTION_DETAIL, letterSpacing: 0.8 }}>
+            ANÁLISE TERRADAR
+          </div>
+          <div
+            style={{
+              marginTop: 8,
+              borderRadius: 6,
+              border: '1px solid #2C2C2A',
+              overflow: 'hidden',
+              backgroundColor: '#0D0D0C',
+            }}
+          >
+            <div
+              style={{
+                padding: '12px 16px',
+                fontSize: INTEL_KP_SUB_FS,
+                color: INTEL_KP_SUB_COLOR,
+                lineHeight: 1.45,
+              }}
+            >
+              {textoAnalise}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 18 }}>
+          <div style={{ ...LABEL_SECTION_DETAIL, letterSpacing: 0.8 }}>
+            PROCESSOS AFETADOS
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <SecaoProcAfetRadar
+              total={totalProc}
+              amostraLinhas={listaProcLinhas}
+              onAbrirModal={(tit) =>
+                abrirModalListaProcessos(tit, listaProcLinhas)
+              }
+            />
+          </div>
+        </div>
+
+        <div style={{ marginTop: 18 }}>
+          <div style={{ ...LABEL_SECTION_DETAIL, letterSpacing: 0.8 }}>
+            SUBSTÂNCIAS AFETADAS
+          </div>
+          <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {subsPainel.length > 0 ? (
+              subsPainel.map((s) => (
+                <BadgeSubstancia key={s} substancia={s} variant="intelTable" />
+              ))
+            ) : (
+              <span
+                style={{
+                  fontSize: INTEL_KP_SUB_FS,
+                  color: '#5F5E5A',
+                  fontStyle: 'italic',
+                }}
+              >
+                Não especificado
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 18 }}>
+          <div style={{ ...LABEL_SECTION_DETAIL, letterSpacing: 0.8 }}>
+            UFS AFETADAS
+          </div>
+          <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {ufsPainel.length > 0 ? (
+              ufsPainel.map((uf) => (
+                <span
+                  key={uf}
+                  style={{
+                    padding: '3px 8px',
+                    borderRadius: 4,
+                    border: '1px solid #3D3D3A',
+                    backgroundColor: '#2C2C2A',
+                    color: '#D3D1C7',
+                    fontSize: 12,
+                  }}
+                >
+                  {uf}
+                </span>
+              ))
+            ) : (
+              <span
+                style={{
+                  fontSize: INTEL_KP_SUB_FS,
+                  color: '#5F5E5A',
+                  fontStyle: 'italic',
+                }}
+              >
+                Não especificado
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 18 }}>
+          <div style={{ ...LABEL_SECTION_DETAIL, letterSpacing: 0.8 }}>Publicação</div>
+          <div style={{ marginTop: 8, fontSize: INTEL_KP_LABEL_FS, color: '#D3D1C7' }}>
+            {textoPubLinha}
+          </div>
+          <div
+            style={{ marginTop: 4, fontSize: INTEL_KP_SUB_FS, color: INTEL_KP_SUB_COLOR }}
+          >
+            {quandoPubLinha}
+          </div>
+        </div>
+
+        {douHrefFinal ? (
+          <a
+            href={douHrefFinal}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              marginTop: 22,
+              marginBottom: mobile ? 8 : 0,
+              width: '100%',
+              boxSizing: 'border-box',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              backgroundColor: 'transparent',
+              border: '1px solid #EF9F27',
+              color: '#EF9F27',
+              fontSize: 15,
+              fontWeight: 500,
+              borderRadius: 8,
+              padding: '12px',
+              cursor: 'pointer',
+              textDecoration: 'none',
+            }}
+          >
+            Ver no Diário Oficial <ArrowUpRight size={16} aria-hidden />
+          </a>
+        ) : (
+          <button
+            type="button"
+            disabled
+            style={{
+              marginTop: 22,
+              width: '100%',
+              boxSizing: 'border-box',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              backgroundColor: 'transparent',
+              border: '1px solid #5F5E5A',
+              color: '#5F5E5A',
+              fontSize: 15,
+              borderRadius: 8,
+              padding: '12px',
+              cursor: 'not-allowed',
+              opacity: 0.65,
+            }}
+          >
+            Ver no Diário Oficial <ArrowUpRight size={16} aria-hidden />
+          </button>
+        )}
       </div>
     )
   }
@@ -1133,7 +1630,7 @@ export function RadarAlertasSubtab({
   if (erro) {
     return (
       <div className="flex min-h-0 flex-1 flex-col" style={{ color: '#D3D1C7', padding: 24 }}>
-        Erro: {erro}. Mostrando dados mock.
+        Erro: {erro}
       </div>
     )
   }
@@ -1141,22 +1638,28 @@ export function RadarAlertasSubtab({
   return (
     <div
       className="flex min-h-0 flex-1 flex-col"
-      style={{ fontFamily: "'Helvetica Neue', Helvetica, Arial, sans-serif", minHeight: 0 }}
+      style={{
+        fontFamily: "'Helvetica Neue', Helvetica, Arial, sans-serif",
+        minHeight: 0,
+        height: 'calc(100vh - 280px)',
+        boxSizing: 'border-box',
+      }}
     >
       <div
         className="flex min-h-0 flex-1"
         style={{
           marginTop: 20,
           gap: 16,
-          minHeight: '50vh',
+          minHeight: 0,
+          flex: 1,
+          alignItems: 'stretch',
         }}
       >
         <div
-          ref={feedScrollRef}
-          className="terrae-intel-dashboard-scroll flex min-h-0 flex-1 flex-col overflow-y-auto"
+          className="flex min-h-0 flex-1 flex-col"
           style={{
-            flex: wide ? '7 1 0%' : '1 1 auto',
-            minWidth: wide ? 500 : 0,
+            flex: wide ? '1 1 0%' : '1 1 auto',
+            minWidth: wide ? 360 : 0,
             minHeight: 0,
             backgroundColor: 'rgba(26, 26, 24, 0.85)',
             backdropFilter: 'blur(34px)',
@@ -1165,8 +1668,24 @@ export function RadarAlertasSubtab({
             borderRadius: 8,
             position: 'relative',
             zIndex: 1,
+            overflow: 'hidden',
           }}
         >
+          {carregando ? (
+            <div
+              aria-hidden
+              className="terrae-radar-feed-loading-strip"
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                zIndex: 20,
+                overflow: 'hidden',
+                pointerEvents: 'none',
+              }}
+            />
+          ) : null}
           <div
             style={{
               position: 'sticky',
@@ -1224,6 +1743,12 @@ export function RadarAlertasSubtab({
               >
                 {alertasFiltrados.length}{' '}
                 {alertasFiltrados.length === 1 ? 'Alerta' : 'Alertas'}
+                {resumo != null && resumo.total > alertasFiltrados.length ? (
+                  <span style={{ color: '#5F5E5A', fontWeight: 400 }}>
+                    {' '}
+                    (de {resumo.total} no período)
+                  </span>
+                ) : null}
               </span>
               <span
                 style={{
@@ -1244,7 +1769,7 @@ export function RadarAlertasSubtab({
                   lineHeight: 1.25,
                 }}
               >
-                Atualizado há 3 min
+                Atualizado {atualizadoLabel}
               </span>
             </div>
             <div
@@ -1262,46 +1787,24 @@ export function RadarAlertasSubtab({
                 setAberto={setDdPeriodo}
                 reducedMotion={reducedMotion}
               />
-              {periodo === 'personalizar' ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                  <input
-                    type="date"
-                    value={customDe}
-                    onChange={(e) => setCustomDe(e.target.value)}
-                    style={{
-                      backgroundColor: '#0D0D0C',
-                      border: '1px solid #2C2C2A',
-                      borderRadius: 6,
-                      color: '#D3D1C7',
-                      padding: '8px 10px',
-                      fontSize: 13,
-                    }}
-                  />
-                  <span style={{ color: '#5F5E5A', fontSize: 12 }}>até</span>
-                  <input
-                    type="date"
-                    value={customAte}
-                    onChange={(e) => setCustomAte(e.target.value)}
-                    style={{
-                      backgroundColor: '#0D0D0C',
-                      border: '1px solid #2C2C2A',
-                      borderRadius: 6,
-                      color: '#D3D1C7',
-                      padding: '8px 10px',
-                      fontSize: 13,
-                    }}
-                  />
-                </div>
-              ) : null}
               <MultiSelectDropdown
-                prefix={prefixSub}
-                options={substOpcoes}
-                selected={substSel}
-                onChange={onSubstChange}
-                aberto={ddSub}
-                setAberto={setDdSub}
+                prefix={prefixCat}
+                options={CATEGORIAS_FILTRO_API as unknown as string[]}
+                selected={categoriasSelecionadas}
+                onChange={setCategoriasSelecionadas}
+                aberto={ddCat}
+                setAberto={setDdCat}
                 triggerStyle={RADAR_ALERTAS_FILTER_TRIGGER_STYLE}
-                formatOption={(o) => (o === TODAS_SUBST ? 'Todas' : o)}
+                formatOption={(o) => labelCategoriaFiltro(o)}
+              />
+              <MultiSelectDropdown
+                prefix={prefixUf}
+                options={BR_UFS_ALL as unknown as string[]}
+                selected={ufsSelecionadas}
+                onChange={setUfsSelecionadas}
+                aberto={ddUf}
+                setAberto={setDdUf}
+                triggerStyle={RADAR_ALERTAS_FILTER_TRIGGER_STYLE}
               />
               <div
                 style={{
@@ -1356,6 +1859,66 @@ export function RadarAlertasSubtab({
                 />
               </div>
             </div>
+            {substanciasSelecionadas.length > 0 ? (
+              <div
+                style={{
+                  width: '100%',
+                  flexBasis: '100%',
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                  gap: 8,
+                  marginTop: 2,
+                  paddingTop: 8,
+                  borderTop: '1px solid #2C2C2A',
+                  boxSizing: 'border-box',
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 500,
+                    color: '#888780',
+                    marginRight: 4,
+                  }}
+                >
+                  Filtros ativos:
+                </span>
+                {substanciasSelecionadas.map((sub) => (
+                  <button
+                    key={sub}
+                    type="button"
+                    onClick={() =>
+                      setSubstanciasSelecionadas((prev) =>
+                        prev.filter((s) => s !== sub),
+                      )
+                    }
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '4px 10px',
+                      borderRadius: 6,
+                      border: '1px solid #EF9F27',
+                      backgroundColor: 'rgba(245, 158, 11, 0.12)',
+                      color: '#FCD34D',
+                      fontSize: 12,
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                      lineHeight: 1.2,
+                      maxWidth: '100%',
+                    }}
+                    aria-label={`Remover filtro Substância: ${sub}`}
+                  >
+                    <span aria-hidden style={{ opacity: 0.85 }}>
+                      ×
+                    </span>
+                    Substância: {sub}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             </div>
           </div>
           <div
@@ -1368,7 +1931,34 @@ export function RadarAlertasSubtab({
             }}
             aria-hidden
           />
-            {alertasOrdenados.length === 0 ? (
+          <div
+            ref={feedScrollRef}
+            className="terrae-intel-dashboard-scroll flex min-h-0 flex-1 flex-col overflow-y-auto"
+            style={{
+              flex: '1 1 0%',
+              minHeight: 0,
+              position: 'relative',
+              opacity: carregando ? 0.7 : 1,
+              transition: 'opacity 0.2s ease',
+            }}
+          >
+            {carregando && alertasFiltrados.length === 0 ? (
+              <div
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: 24,
+                  boxSizing: 'border-box',
+                  color: INTEL_KP_SUB_COLOR,
+                  fontSize: INTEL_KP_SUB_FS,
+                }}
+              >
+                Carregando alertas...
+              </div>
+            ) : alertasFiltrados.length === 0 ? (
               <div
                 style={{
                   flex: 1,
@@ -1411,10 +2001,7 @@ export function RadarAlertasSubtab({
                   </div>
                   <button
                     type="button"
-                    onClick={() => {
-                      setPeriodo('30d')
-                      setDdPeriodo(false)
-                    }}
+                    onClick={limparFiltros}
                     style={{
                       marginTop: 20,
                       borderWidth: 1,
@@ -1437,12 +2024,12 @@ export function RadarAlertasSubtab({
                       e.currentTarget.style.borderColor = '#5F5E5A'
                     }}
                   >
-                    Ver últimos 30 dias
+                    Limpar filtros
                   </button>
                 </div>
               </div>
             ) : (
-              alertasOrdenados.map((a) => {
+              alertasPaginados.map((a) => {
                 const rel = calcularRelevancia(
                   a.nivel_impacto,
                   tipoParaCalculo(a.tipo_impacto),
@@ -1450,44 +2037,114 @@ export function RadarAlertasSubtab({
                 const corBolinha = COR_BOLINHA_RELEV[rel]
                 const corBordaSel = COR_BOLINHA_RELEV[rel]
                 const sel = alertaSelecionadoId === a.id
-                const matchSub =
-                  hoveredSubstancia !== null &&
-                  a.substancias_afetadas.some(
-                    (sub) => normSubStr(sub) === normSubStr(hoveredSubstancia),
-                  )
-                const matchRel =
-                  hoveredSubstancia === null &&
-                  hoveredRelevancia !== null &&
-                  rel === hoveredRelevancia
-                const crossHighlight = matchSub || matchRel
-                const crossDim =
-                  (hoveredSubstancia !== null && !matchSub) ||
-                  (hoveredSubstancia === null &&
-                    hoveredRelevancia !== null &&
-                    rel !== hoveredRelevancia)
-                const rowBg = sel
-                  ? 'rgba(239, 159, 39, 0.08)'
-                  : crossHighlight || feedRowHoveredId === a.id
-                    ? '#2C2C2A'
-                    : 'transparent'
+                const rowEnr = a as RadarEventoEnriquecido
+                const urgenteRow = isAlertaRowUrgenteVisual(rowEnr)
+
+                const rowBg = sel ? 'rgba(239, 159, 39, 0.08)' : 'transparent'
+
+                const bordaEsquerda = sel
+                  ? `4px solid ${corBordaSel}`
+                  : urgenteRow
+                    ? `4px solid ${BORDA_URGENTE_FEED}`
+                    : `3px solid transparent`
+
+                const corpoLinha = (
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 4,
+                      minWidth: 0,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 8,
+                        minWidth: 0,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: 999,
+                          backgroundColor: corBolinha,
+                          flexShrink: 0,
+                        }}
+                        aria-hidden
+                      />
+                      <span
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          fontSize: INTEL_KP_LABEL_FS,
+                          fontWeight: 500,
+                          color: INTEL_KP_LABEL_COLOR,
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                        }}
+                      >
+                        {a.titulo}
+                      </span>
+                      {isNovo7d(a.data) ? (
+                        <span
+                          style={{
+                            backgroundColor: 'rgba(239,159,39,0.12)',
+                            color: '#EF9F27',
+                            fontSize: 11,
+                            fontWeight: 600,
+                            textTransform: 'uppercase',
+                            letterSpacing: 0.4,
+                            padding: '3px 8px',
+                            borderRadius: 4,
+                            flexShrink: 0,
+                            lineHeight: 1.2,
+                          }}
+                        >
+                          NOVO
+                        </span>
+                      ) : null}
+                    </div>
+                    <div
+                      style={{
+                        marginLeft: 16,
+                        fontSize: INTEL_KP_SUB_FS,
+                        color: INTEL_KP_SUB_COLOR,
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      {a.fonte_nome_completo}
+                      <span> · </span>
+                      {formatDataHoraPublicacaoPainel(a.data, a.hora)}
+                    </div>
+                  </div>
+                )
+
                 return (
                   <button
                     key={a.id}
                     type="button"
                     data-radar-alerta-id={a.id}
+                    aria-current={sel ? 'true' : undefined}
                     onClick={() => onSelectAlerta(a.id)}
                     style={{
                       position: 'relative',
                       width: '100%',
-                      textAlign: 'left',
-                      cursor: 'pointer',
-                      padding: 0,
+                      display: 'block',
                       border: 'none',
-                      backgroundColor: 'transparent',
+                      background: 'transparent',
+                      padding: 0,
+                      margin: 0,
+                      cursor: 'pointer',
+                      font: 'inherit',
+                      color: 'inherit',
                       boxSizing: 'border-box',
-                      fontFamily: 'inherit',
-                      opacity: crossDim ? 0.4 : 1,
-                      transition: 'opacity 0.15s ease',
+                      textAlign: 'left',
+                      opacity: 1,
                     }}
                   >
                     <div
@@ -1502,7 +2159,6 @@ export function RadarAlertasSubtab({
                         pointerEvents: 'none',
                       }}
                     />
-                    {/* Fundo full-bleed até a borda direita do cartão (inclui faixa da scrollbar quando existir) */}
                     <div
                       aria-hidden
                       style={{
@@ -1511,9 +2167,7 @@ export function RadarAlertasSubtab({
                         top: 0,
                         bottom: 0,
                         width: 'var(--radar-feed-bleed-w, 100%)',
-                        borderLeft: sel
-                          ? `4px solid ${corBordaSel}`
-                          : '3px solid transparent',
+                        borderLeft: bordaEsquerda,
                         borderTop: sel ? '1px solid rgba(239, 159, 39, 0.15)' : 'none',
                         borderRight: sel
                           ? '1px solid rgba(239, 159, 39, 0.15)'
@@ -1535,138 +2189,169 @@ export function RadarAlertasSubtab({
                         zIndex: 1,
                         padding:
                           '12px max(10px, calc(20px - var(--radar-feed-scrollbar-w, 0px))) 12px 17px',
-                        transition: 'opacity 0.15s ease',
                         boxSizing: 'border-box',
                       }}
-                      onMouseEnter={() => {
-                        if (!sel) setFeedRowHoveredId(a.id)
-                      }}
-                      onMouseLeave={() => {
-                        setFeedRowHoveredId((prev) =>
-                          prev === a.id ? null : prev,
-                        )
-                      }}
                     >
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          gap: 8,
-                          minWidth: 0,
-                        }}
-                      >
-                        <div
-                          style={{
-                            flex: 1,
-                            minWidth: 0,
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: 4,
-                          }}
-                        >
-                          <div
-                            style={{
-                              display: 'flex',
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              gap: 8,
-                              minWidth: 0,
-                            }}
-                          >
-                            <span
-                              style={{
-                                width: 8,
-                                height: 8,
-                                borderRadius: 999,
-                                backgroundColor: corBolinha,
-                                flexShrink: 0,
-                              }}
-                              aria-hidden
-                            />
-                            <span
-                              style={{
-                                flex: 1,
-                                minWidth: 0,
-                                fontSize: INTEL_KP_LABEL_FS,
-                                fontWeight: 500,
-                                color: INTEL_KP_LABEL_COLOR,
-                                whiteSpace: 'nowrap',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                              }}
-                            >
-                              {a.titulo}
-                            </span>
-                          </div>
-                          <div
-                            style={{
-                              marginLeft: 16,
-                              fontSize: INTEL_KP_SUB_FS,
-                              color: INTEL_KP_SUB_COLOR,
-                              lineHeight: 1.4,
-                            }}
-                          >
-                            {a.fonte_nome_completo}
-                            <span> · </span>
-                            {formatDataHoraPublicacaoPainel(a.data, a.hora)}
-                          </div>
-                        </div>
-                        <div
-                          style={{
-                            display: 'flex',
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            gap: 8,
-                            flexShrink: 0,
-                          }}
-                        >
-                          {isNovo7d(a.data) ? (
-                            <span
-                              style={{
-                                backgroundColor: 'rgba(239,159,39,0.12)',
-                                color: '#EF9F27',
-                                fontSize: 11,
-                                fontWeight: 600,
-                                textTransform: 'uppercase',
-                                letterSpacing: 0.4,
-                                padding: '3px 8px',
-                                borderRadius: 4,
-                                flexShrink: 0,
-                                lineHeight: 1.2,
-                              }}
-                            >
-                              NOVO
-                            </span>
-                          ) : null}
-                          <ChevronRight
-                            size={18}
-                            color="#F1EFE8"
-                            style={{ flexShrink: 0 }}
-                            aria-hidden
-                          />
-                        </div>
-                      </div>
+                      {corpoLinha}
                     </div>
                   </button>
                 )
               })
             )}
+          </div>
+          {alertasFiltrados.length > 0 ? (
+            <div
+              style={{
+                flexShrink: 0,
+                borderTop: '1px solid #2C2C2A',
+                padding:
+                  '10px max(12px, calc(16px - var(--radar-feed-scrollbar-w, 0px)))',
+                backgroundColor: 'rgba(26, 26, 24, 0.98)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 12,
+                  color: '#888780',
+                  lineHeight: 1.35,
+                }}
+              >
+                Página {paginaFeed} de {totalPaginasFeed} ·{' '}
+                {primeiroIdxAlertaRodape > 0 && ultimoIdxAlertaRodape > 0
+                  ? `${primeiroIdxAlertaRodape}–${ultimoIdxAlertaRodape} de `
+                  : null}
+                {alertasFiltrados.length}{' '}
+                {alertasFiltrados.length === 1 ? 'alerta' : 'alertas'}
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                  gap: 10,
+                  rowGap: 8,
+                  justifyContent: 'space-between',
+                }}
+              >
+                <button
+                  type="button"
+                  disabled={paginaFeed <= 1}
+                  aria-label="Página anterior"
+                  onClick={() => setPaginaFeed((p) => Math.max(1, p - 1))}
+                  style={{
+                    border: '1px solid #3D3D3A',
+                    background: paginaFeed <= 1 ? '#1E1E1C' : 'transparent',
+                    color: paginaFeed <= 1 ? '#5F5E5A' : '#D3D1C7',
+                    fontSize: 12,
+                    borderRadius: 6,
+                    padding: '6px 10px',
+                    cursor: paginaFeed <= 1 ? 'not-allowed' : 'pointer',
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  ‹ Anterior
+                </button>
+                <div
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    flex: 1,
+                    minWidth: 0,
+                  }}
+                >
+                  {idxRodapePaginas.map((ix, ki) =>
+                    ix === 'ellipsis' ? (
+                      <span
+                        key={`e-${ki}`}
+                        style={{ color: '#5F5E5A', fontSize: 12, padding: '0 4px' }}
+                      >
+                        …
+                      </span>
+                    ) : (
+                      <button
+                        key={ix}
+                        type="button"
+                        aria-label={`Página ${ix}`}
+                        aria-current={ix === paginaFeed ? 'page' : undefined}
+                        onClick={() => setPaginaFeed(ix)}
+                        style={{
+                          minWidth: 30,
+                          height: 30,
+                          borderRadius: 4,
+                          border:
+                            ix === paginaFeed
+                              ? '1px solid #EF9F27'
+                              : '1px solid #3D3D3A',
+                          background:
+                            ix === paginaFeed
+                              ? 'rgba(239,159,39,0.14)'
+                              : 'transparent',
+                          color: ix === paginaFeed ? '#EF9F27' : '#D3D1C7',
+                          fontSize: 13,
+                          fontWeight: ix === paginaFeed ? 600 : 400,
+                          cursor: 'pointer',
+                          fontFamily: 'inherit',
+                          padding: '0 4px',
+                        }}
+                      >
+                        {ix}
+                      </button>
+                    ),
+                  )}
+                </div>
+                <button
+                  type="button"
+                  disabled={paginaFeed >= totalPaginasFeed}
+                  aria-label="Próxima página"
+                  onClick={() =>
+                    setPaginaFeed((p) =>
+                      Math.min(totalPaginasFeed, p + 1),
+                    )
+                  }
+                  style={{
+                    border: '1px solid #3D3D3A',
+                    background:
+                      paginaFeed >= totalPaginasFeed ? '#1E1E1C' : 'transparent',
+                    color:
+                      paginaFeed >= totalPaginasFeed ? '#5F5E5A' : '#D3D1C7',
+                    fontSize: 12,
+                    borderRadius: 6,
+                    padding: '6px 10px',
+                    cursor:
+                      paginaFeed >= totalPaginasFeed ? 'not-allowed' : 'pointer',
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  Próximo ›
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
 
         {wide ? (
           <div
             className="terrae-intel-dashboard-scroll flex min-h-0 flex-col overflow-y-auto"
             style={{
-              flex: '3 1 0%',
-              minWidth: 360,
+              flex: wide ? '0 0 420px' : '3 1 0%',
+              width: wide ? 420 : undefined,
+              maxWidth: wide ? 420 : undefined,
+              minWidth: wide ? 300 : 360,
               minHeight: 0,
+              alignSelf: 'stretch',
               backgroundColor: 'rgba(26, 26, 24, 0.85)',
               backdropFilter: 'blur(34px)',
               WebkitBackdropFilter: 'blur(34px)',
               border: '1px solid #2C2C2A',
               borderRadius: 8,
-              position: 'relative',
+              position: 'sticky',
+              top: 0,
               zIndex: 1,
             }}
           >
@@ -1735,6 +2420,222 @@ export function RadarAlertasSubtab({
           </div>
         </div>
       ) : null}
+
+      {typeof document !== 'undefined' && modalProcAberto
+        ? createPortal(
+            <TooltipProvider delayDuration={400}>
+              <div
+              role="presentation"
+              style={{
+                position: 'fixed',
+                inset: 0,
+                zIndex: 140,
+                backgroundColor: 'rgba(0,0,0,0.55)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: 16,
+                boxSizing: 'border-box',
+              }}
+              onClick={() => setModalProcAberto(false)}
+            >
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="radar-modal-proc-titulo"
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  width: 'min(560px, 100%)',
+                  maxHeight: 'min(580px, 88vh)',
+                  backgroundColor: '#1A1A18',
+                  borderRadius: 8,
+                  border: '1px solid #2C2C2A',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  overflow: 'hidden',
+                  boxShadow: '0 16px 48px rgba(0,0,0,0.45)',
+                }}
+              >
+                <div
+                  style={{
+                    flexShrink: 0,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 12,
+                    padding: '14px 16px',
+                    borderBottom: '1px solid #2C2C2A',
+                  }}
+                >
+                  <div
+                    id="radar-modal-proc-titulo"
+                    style={{
+                      fontSize: 15,
+                      fontWeight: 600,
+                      color: '#F1EFE8',
+                      minWidth: 0,
+                    }}
+                  >
+                    {modalProcTitulo}
+                  </div>
+                  <button
+                    type="button"
+                    aria-label="Fechar"
+                    onClick={() => setModalProcAberto(false)}
+                    style={{
+                      border: 'none',
+                      background: 'transparent',
+                      color: '#888780',
+                      cursor: 'pointer',
+                      padding: 4,
+                      flexShrink: 0,
+                    }}
+                  >
+                    <X size={22} />
+                  </button>
+                </div>
+                <div
+                  className="terrae-intel-dashboard-scroll"
+                  style={{
+                    flex: 1,
+                    minHeight: 0,
+                    overflowY: 'auto',
+                    padding: '12px 16px 16px',
+                    boxSizing: 'border-box',
+                  }}
+                >
+                  {modalProcSliceLista.length === 0 ? (
+                    <div
+                      style={{
+                        fontSize: INTEL_KP_SUB_FS,
+                        color: INTEL_KP_SUB_COLOR,
+                      }}
+                    >
+                      Nenhum processo na lista.
+                    </div>
+                  ) : (
+                    <ul
+                      style={{
+                        margin: 0,
+                        padding: 0,
+                        listStyle: 'none',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 8,
+                      }}
+                    >
+                      {modalProcSliceLista.map((row) => (
+                        <li
+                          key={row.id || row.numero}
+                          style={{
+                            padding: '8px 10px',
+                            borderRadius: 6,
+                            border: '1px solid #2C2C2A',
+                            backgroundColor: '#0D0D0C',
+                            cursor: 'default',
+                            listStyle: 'none',
+                          }}
+                        >
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span
+                                style={{
+                                  display: 'inline-flex',
+                                  maxWidth: '100%',
+                                  cursor: 'default',
+                                }}
+                              >
+                                {/* TODO Frente 2.E: click na pílula deve abrir processo no mapa com drawer */}
+                                <PilulaProcessoNeutral
+                                  numero={row.numero || row.id}
+                                />
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="top">
+                              Em breve: clique para abrir processo no mapa
+                            </TooltipContent>
+                          </Tooltip>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                {modalListaPaginas > 1 ? (
+                  <div
+                    style={{
+                      flexShrink: 0,
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 8,
+                      padding: '10px 16px',
+                      borderTop: '1px solid #2C2C2A',
+                      fontSize: 12,
+                      color: '#888780',
+                    }}
+                  >
+                    <span>
+                      Página {modalProcPagIdx} de {modalListaPaginas} ·{' '}
+                      {modalProcLista.length}{' '}
+                      {modalProcLista.length === 1 ? 'processo' : 'processos'}
+                    </span>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <button
+                        type="button"
+                        disabled={modalProcPagIdx <= 1}
+                        onClick={() =>
+                          setModalProcPagIdx((p) => Math.max(1, p - 1))
+                        }
+                        style={{
+                          border: '1px solid #3D3D3A',
+                          background: 'transparent',
+                          color: modalProcPagIdx <= 1 ? '#5F5E5A' : '#D3D1C7',
+                          fontSize: 12,
+                          borderRadius: 6,
+                          padding: '4px 10px',
+                          cursor: modalProcPagIdx <= 1 ? 'not-allowed' : 'pointer',
+                          fontFamily: 'inherit',
+                        }}
+                      >
+                        Anterior
+                      </button>
+                      <button
+                        type="button"
+                        disabled={modalProcPagIdx >= modalListaPaginas}
+                        onClick={() =>
+                          setModalProcPagIdx((p) =>
+                            Math.min(modalListaPaginas, p + 1),
+                          )
+                        }
+                        style={{
+                          border: '1px solid #3D3D3A',
+                          background: 'transparent',
+                          color:
+                            modalProcPagIdx >= modalListaPaginas
+                              ? '#5F5E5A'
+                              : '#D3D1C7',
+                          fontSize: 12,
+                          borderRadius: 6,
+                          padding: '4px 10px',
+                          cursor:
+                            modalProcPagIdx >= modalListaPaginas
+                              ? 'not-allowed'
+                              : 'pointer',
+                          fontFamily: 'inherit',
+                        }}
+                      >
+                        Próximo
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+            </TooltipProvider>,
+            document.body,
+          )
+        : null}
 
     </div>
   )

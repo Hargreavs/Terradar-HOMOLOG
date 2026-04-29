@@ -48,7 +48,7 @@ Grep `server/*.ts` não listou ficheiros com identificadores Radar/Prospecc rele
 ## 2. Tela inicial do Radar
 
 - **Componente raiz da aba Radar:** `src/components/dashboard/RadarDashboard.tsx`
-- **Dados consome:** `useMapStore((s) => s.processos)` (lista real/parcial vinda do mapa e API, não query Radar dedicada); alertas via `**RADAR_ALERTAS_MOCK*`*. Navegação: `useAppStore` (`pendingRadarAlertaId`, `radarAbrirHomeIntent`).
+- **Dados consome:** `useMapStore((s) => s.processos)` (lista real/parcial vinda do mapa e API, não query Radar dedicada); alertas via `**RADAR_ALERTAS_MOCK`**. Navegação: `useAppStore` (`pendingRadarAlertaId`, `radarAbrirHomeIntent`).
 
 **Router:** não há rota de URL. `App` escolhe o painel:
 
@@ -141,7 +141,7 @@ Grep `server/*.ts` não listou ficheiros com identificadores Radar/Prospecc rele
 
 Primeiras 100 (linhas 1–100):
 
-`ts import { create } from 'zustand' import { persist } from 'zustand/middleware' import { cloneFiltrosState } from '../lib/intelMapDrill' import { mapDbRowToMapProcesso } from '../lib/mapProcessoFromDbRow' import { processoEhInativoParaCamadaMapa } from '../lib/processoStatus' import { buscarProcessoPorNumero } from '../lib/processoApi' import {   type CamadaGeoId,   defaultCamadasGeo, } from '../lib/mapCamadasGeo' import { REGIME_LAYER_ORDER } from '../lib/regimes' import {   UF_FILTRO_NENHUM,   type FiltrosState,   type Processo,   type Regime, } from '../types'  export type { CamadaGeoId } from '../lib/mapCamadasGeo'  export type PendingNavigation =   | { type: 'processo'; payload: string; timestamp: number }   | { type: 'estado'; payload: string; timestamp: number }   | { type: 'regime'; payload: Regime; timestamp: number }   | { type: 'titular'; payload: string; timestamp: number }   | { type: 'substancia'; payload: string; timestamp: number }  const REGIMES: Regime[] = REGIME_LAYER_ORDER  /** Alinhado a `DEMO_NUMEROS` em `MapView.tsx` — mantidos fora do lote substitutivo do viewport. */ const NUMEROS_PROCESSO_SEED_MAPA: readonly string[] = [   '864.231/2017',   '860.232/1990', ] as const  function defaultCamadas(): Record<Regime, boolean> {   return REGIMES.reduce(     (acc, r) => {       acc[r] = true       return acc     },     {} as Record<Regime, boolean>,   ) }  function defaultFiltros(): FiltrosState {   return {     camadas: defaultCamadas(),     substancias: [],     periodo: [1960, 2026],     uf: null,     municipio: null,     riskScoreMin: 0,     riskScoreMax: 100,     searchQuery: '',     exibirProcessosAtivos: true,     exibirProcessosInativos: false,   } } // ...[270 linhas omitidas: interface MapStore, create, applyFilters, mergeViewportProcessos, seedDemoProcessos, etc.]...` 
+`ts import { create } from 'zustand' import { persist } from 'zustand/middleware' import { cloneFiltrosState } from '../lib/intelMapDrill' import { mapDbRowToMapProcesso } from '../lib/mapProcessoFromDbRow' import { processoEhInativoParaCamadaMapa } from '../lib/processoStatus' import { buscarProcessoPorNumero } from '../lib/processoApi' import {   type CamadaGeoId,   defaultCamadasGeo, } from '../lib/mapCamadasGeo' import { REGIME_LAYER_ORDER } from '../lib/regimes' import {   UF_FILTRO_NENHUM,   type FiltrosState,   type Processo,   type Regime, } from '../types'  export type { CamadaGeoId } from '../lib/mapCamadasGeo'  export type PendingNavigation =   | { type: 'processo'; payload: string; timestamp: number }   | { type: 'estado'; payload: string; timestamp: number }   | { type: 'regime'; payload: Regime; timestamp: number }   | { type: 'titular'; payload: string; timestamp: number }   | { type: 'substancia'; payload: string; timestamp: number }  const REGIMES: Regime[] = REGIME_LAYER_ORDER  /** Alinhado a` DEMO_NUMEROS`em`MapView.tsx `— mantidos fora do lote substitutivo do viewport. */ const NUMEROS_PROCESSO_SEED_MAPA: readonly string[] = [   '864.231/2017',   '860.232/1990', ] as const  function defaultCamadas(): Record<Regime, boolean> {   return REGIMES.reduce(     (acc, r) => {       acc[r] = true       return acc     },     {} as Record<Regime, boolean>,   ) }  function defaultFiltros(): FiltrosState {   return {     camadas: defaultCamadas(),     substancias: [],     periodo: [1960, 2026],     uf: null,     municipio: null,     riskScoreMin: 0,     riskScoreMax: 100,     searchQuery: '',     exibirProcessosAtivos: true,     exibirProcessosInativos: false,   } } // ...[270 linhas omitidas: interface MapStore, create, applyFilters, mergeViewportProcessos, seedDemoProcessos, etc.]...` 
 
 últimas 100 (linhas 426–525 aprox.):
 
@@ -159,7 +159,7 @@ Primeiras 100 (linhas 1–100):
 ## 8. Variáveis de ambiente e flags
 
 - Radar não lê `import.meta.env` / `process.env` diretamente. Mapa: `VITE_MAPBOX_TOKEN` em `MapView.tsx`.
-- Nenhuma feature flag `VITE_RADAR_`* encontrada.
+- Nenhuma feature flag `VITE_RADAR`_* encontrada.
 
 ## 9. TODOs e mocks (grep alvo oportunidade/radar)
 

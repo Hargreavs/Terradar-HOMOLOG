@@ -238,3 +238,42 @@ export function parsePibMunicipalMiFromTexto(raw: string): number {
   const n = parsePtBrNumeroFlex(t)
   return n != null && n > 0 ? n / 1_000_000 : 0
 }
+
+function textoFiscalAusente(raw: string): boolean {
+  const s = String(raw).trim()
+  if (!s) return true
+  if (/n[aã]o\s+dispon/i.test(s)) return true
+  const low = s.toLowerCase().replace(/\s/g, '')
+  if (
+    low === 'n.d.' ||
+    low === 'n.d' ||
+    low === 'nd' ||
+    low === 'n/e.' ||
+    low === 'n/e' ||
+    low === 'ne'
+  )
+    return true
+  return false
+}
+
+/** `null` quando o PDF/SICONFI não trouxe receita própria (distinto de R$ 0,00 válido). */
+export function parseReceitaPropriaMiFromTextoNullable(
+  raw: string,
+): number | null {
+  if (textoFiscalAusente(raw)) return null
+  return parseReceitaPropriaMiFromTexto(raw)
+}
+
+/** `null` quando indisponível; `0` apenas para «Sem dívida» explícito. */
+export function parseDividaMiFromTextoNullable(raw: string): number | null {
+  const s = String(raw)
+  if (/sem\s+d[ií]vida/i.test(s)) return 0
+  if (textoFiscalAusente(s)) return null
+  return parseDividaMiFromTexto(s)
+}
+
+/** `null` quando PIB municipal não disponível na série. */
+export function parsePibMunicipalMiFromTextoNullable(raw: string): number | null {
+  if (textoFiscalAusente(raw)) return null
+  return parsePibMunicipalMiFromTexto(raw)
+}

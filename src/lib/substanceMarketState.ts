@@ -18,14 +18,18 @@ function up(s: string | null | undefined): string {
   return (s ?? '').toUpperCase()
 }
 
-/** True se a master trouxe percentuais BR (inclui 0%). */
-function hasBrPctData(
+function isPctGt0(v: number | null | undefined): boolean {
+  return v != null && Number.isFinite(Number(v)) && Number(v) > 0
+}
+
+/** Ambos os percentuais oficiais ausentes (distinto de 0 declarado). */
+function ambosPctAusentes(
   r: number | null | undefined,
   p: number | null | undefined,
 ): boolean {
   return (
-    (r != null && Number.isFinite(Number(r))) ||
-    (p != null && Number.isFinite(Number(p)))
+    !(r != null && Number.isFinite(Number(r))) &&
+    !(p != null && Number.isFinite(Number(p)))
   )
 }
 
@@ -47,7 +51,8 @@ function isNaoProdutorCopy(fonteRes: string): boolean {
 }
 
 /**
- * Ordem: PROIBIDO → dados BR na master → SEM_FONTE → fallback não produtor.
+ * Ordem: PROIBIDO → ausência total SEM_FONTE → BR produtor (>0%) → marcadores texto
+ * → texto «não é produtor» → BR não produtor.
  */
 export function getSubstanceMarketState(
   input: SubstanceMarketInputs,
@@ -57,7 +62,15 @@ export function getSubstanceMarketState(
 
   if (fp.includes('PROIBIDO')) return 'PROIBIDO'
 
-  if (hasBrPctData(input.reservas_br_pct, input.producao_br_pct)) {
+  const rRaw = input.reservas_br_pct
+  const pRaw = input.producao_br_pct
+
+  /** Classificação de mercado só com percentuais crus da master; `null` ≠ `0`. */
+  if (ambosPctAusentes(rRaw, pRaw)) {
+    return 'SEM_FONTE'
+  }
+
+  if (isPctGt0(rRaw) || isPctGt0(pRaw)) {
     return 'BR_PRODUTOR'
   }
 

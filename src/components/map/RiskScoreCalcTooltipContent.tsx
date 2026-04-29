@@ -107,6 +107,11 @@ function linhaResultado(score: number) {
   )
 }
 
+function fmtMediaPonderada(v: number): string {
+  const r = Math.round(v * 100) / 100
+  return r % 1 === 0 ? String(r) : r.toFixed(2)
+}
+
 /** Conteúdo rico do tooltip de cálculo por dimensão (Risk Score). */
 export function RiskDimensionCalcTooltipContent({
   dim,
@@ -128,9 +133,6 @@ export function RiskDimensionCalcTooltipContent({
         {rowWeighted('Qualidade', 25, q)}
         {separadora()}
         {linhaResultado(scoreDim)}
-        <div style={{ marginTop: 8, color: META, lineHeight: 1.35 }}>
-          Geológico = Substância × 0.30 + Fase × 0.45 + Qualidade × 0.25
-        </div>
       </div>
     )
   }
@@ -145,9 +147,6 @@ export function RiskDimensionCalcTooltipContent({
           <div style={{ color: LABEL }}>Nenhuma restrição = 0</div>
           {separadora()}
           {linhaResultado(scoreDim)}
-          <div style={{ marginTop: 8, color: META, lineHeight: 1.35 }}>
-            Ambiental = soma dos fatores (teto 100)
-          </div>
         </div>
       )
     }
@@ -164,9 +163,6 @@ export function RiskDimensionCalcTooltipContent({
           </div>
         ) : null}
         {linhaResultado(scoreDim)}
-        <div style={{ marginTop: 8, color: META, lineHeight: 1.35 }}>
-          Ambiental = soma dos fatores (teto 100)
-        </div>
       </div>
     )
   }
@@ -186,10 +182,6 @@ export function RiskDimensionCalcTooltipContent({
         {rowWeighted('CAPAG', 20, cap)}
         {separadora()}
         {linhaResultado(scoreDim)}
-        <div style={{ marginTop: 8, color: META, lineHeight: 1.35 }}>
-          Social = IDH × 0.35 + Densidade × 0.20 + Comunidades × 0.25 + CAPAG ×
-          0.20
-        </div>
       </div>
     )
   }
@@ -207,10 +199,6 @@ export function RiskDimensionCalcTooltipContent({
       {rowWeighted('Caducidade', 20, c)}
       {separadora()}
       {linhaResultado(scoreDim)}
-      <div style={{ marginTop: 8, color: META, lineHeight: 1.35 }}>
-        Regulatório = Tempo × 0.30 + Pendências × 0.25 + Alertas × 0.25 +
-        Caducidade × 0.20
-      </div>
     </div>
   )
 }
@@ -225,7 +213,11 @@ export function RiskTotalCalcTooltipContent({
   const a = decomposicao.ambiental.score
   const s = decomposicao.social.score
   const r = decomposicao.regulatorio.score
-  const total = decomposicao.total
+  const finalRisk = decomposicao.total
+  const mediaPonderada = g * 0.25 + a * 0.3 + s * 0.25 + r * 0.2
+  const mediaStr = fmtMediaPonderada(mediaPonderada)
+  const corMedia = corFaixaRiscoValor(mediaPonderada)
+  const showAjuste = Math.abs(finalRisk - mediaPonderada) > 1e-6
   return (
     <div style={{ maxWidth: 280 }}>
       {rowWeighted('Geológico', 25, g)}
@@ -233,9 +225,35 @@ export function RiskTotalCalcTooltipContent({
       {rowWeighted('Social', 25, s)}
       {rowWeighted('Regulatório', 20, r)}
       {separadora()}
-      {linhaResultado(total)}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'baseline',
+          width: '100%',
+          fontWeight: 700,
+          marginTop: 2,
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        <span style={{ color: LABEL }}>=</span>
+        <span style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+          <span style={{ color: corMedia }}>{mediaStr}</span>
+          <span style={{ color: META, fontWeight: 400 }}>(média)</span>
+        </span>
+      </div>
+      {showAjuste ? (
+        <div style={{ marginTop: 8, fontSize: 12, color: '#888780' }}>
+          Risk Score final:{' '}
+          <strong style={{ color: '#F1EFE8' }}>{finalRisk}</strong>
+          {finalRisk > mediaPonderada
+            ? ' (piso aplicado por dimensão crítica)'
+            : ' (ajuste do consolidador)'}
+        </div>
+      ) : null}
       <div style={{ marginTop: 8, color: META, lineHeight: 1.35 }}>
-        Risk Score = Geo × 0.25 + Amb × 0.30 + Soc × 0.25 + Reg × 0.20
+        Média ponderada das 4 dimensões: Geo × 25% + Amb × 30% + Soc × 25% +
+        Reg × 20%
       </div>
     </div>
   )

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { parseProcessoUuid } from '../lib/processoUuid'
 import type { ScoreBreakdownPayload } from '../types/scoreBreakdown'
 
 const scoreBreakdownCache = new Map<string, ScoreBreakdownPayload>()
@@ -6,10 +7,11 @@ const scoreBreakdownCache = new Map<string, ScoreBreakdownPayload>()
 type Failure = { processoId: string; msg: string }
 
 export function useScoreBreakdown(processoId: string | null | undefined) {
-  const id =
+  const raw =
     typeof processoId === 'string' && processoId.trim() !== ''
       ? processoId.trim()
       : null
+  const id = raw ? parseProcessoUuid(raw) : null
 
   const [, bumpRender] = useState(0)
   const [failure, setFailure] = useState<Failure | null>(null)
@@ -17,6 +19,12 @@ export function useScoreBreakdown(processoId: string | null | undefined) {
   /** Leituras diretas ao Map garantem segundo consumidor sempre sincronizado. */
   const data = id ? scoreBreakdownCache.get(id) ?? null : null
   const [fetching, setFetching] = useState(false)
+
+  useEffect(() => {
+    if (raw && !id) {
+      console.warn('[useScoreBreakdown] processoId ignorado (não é UUID):', processoId)
+    }
+  }, [raw, id, processoId])
 
   /* eslint-disable react-hooks/set-state-in-effect -- estado de rede + cache sincrono em Map */
   useEffect(() => {

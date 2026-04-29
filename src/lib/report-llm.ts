@@ -27,6 +27,8 @@ REGRAS ABSOLUTAS:
 1. TOM: analítico, factual, conciso. Escreva como um analista técnico escrevendo para outro analista técnico. EVITE linguagem de pitch de venda ("robust fundamentals", "oportunidade única", "momentum acelerado"). EVITE adjetivos inflamados ("excepcional", "expressivo", "robusto", "sólido", "favorável em todos os aspectos").
 
 2. SIGILO METODOLÓGICO — PROTEÇÃO DE PROPRIEDADE INTELECTUAL:
+   - PDF EXTERNO (DESTINATÁRIO CLIENTE): A saída alimenta relatório exportável. A matemática interna do motor S31 é confidencial — PROIBIDO revelar estrutura de ponderação, pesos percentuais por componente, valores ponderados individuais por linha, fórmulas do tipo "A × 0,25" ou "12,45 pontos", ou qualquer tabela mental linha-a-linha do motor.
+   - PERMITIDO no PDF: agregados por dimensão já fornecidos no prompt (Risk Score total, valores por dimensão Geológico/Ambiental/Social/Regulatório e OS), rótulos qualitativos (Alto, Muito alto, Favorável), e fatos concretos nomeados quando constarem em \`subfatores_contexto\` ou camadas (ex.: sítio arqueológico, RESEX, multiplicador de bioma descritivo, conflitos CPT com ordens de grandeza públicas), desde que como prosa — não como coluna de cálculo.
    - NUNCA revelar pesos, percentuais de ponderação, fórmulas, thresholds ou faixas de classificação do Risk Score ou Opportunity Score.
    - NUNCA escrever frases como "peso X%", "alíquota X% × valor", "faixa 0-39 baixo", "solidez calculada como (100 − RS)".
    - NUNCA expor cálculos aritméticos internos de subfatores.
@@ -53,6 +55,14 @@ REGRAS ABSOLUTAS:
 6. REFERÊNCIAS CRUZADAS: implicações no bloco "leitura integrada" devem cruzar dimensões (ex: CAPAG municipal frágil + infraestrutura logística boa → "capacidade municipal limitada para contrapartidas, mitigada por infraestrutura existente").
 
 7. COMPRIMENTO: Máximo 3 frases por parágrafo. Evite listas dentro de parágrafos.
+
+   CALLOUTS FINAIS (PDF — páginas 3 Território e 5 Fiscal, molduras / leitura integrada no rodapé da página):
+   - Nos JSON solicitados pela API, correspondem principalmente ao campo \`implicacao\` do bloco Território (página 3) e aos campos \`cfem_intro\` e \`implicacao\` do bloco Fiscal (página 5; o callout amarelo costuma ser sobretudo \`implicacao\`).
+   - **Território (página 3) — EXTRA-CURTO (layout crítico):** o campo \`implicacao\` aparece sob duas tabelas extensas; DEVE ocupar **exatamente 1 ou 2 frases** e **no máximo 200 caracteres no total**. Um único insight sobre territorialidade; **proibido** repetir valores de sobreposição, distâncias ou infra já listadas nas tabelas acima — só síntese. Se os tetos entrarem em conflito, prevaleça o **limite de 200 caracteres**.
+   - OBRIGATÓRIO (demais calouts, ex.: Fiscal): \`Fiscal.implicacao\` — no máximo **3 frases**, **≤60 palavras** e **≤400 caracteres** (tetos do item anterior que não são Território \`implicacao\`; não use o extra-curto de 200 caracteres onde não for Território).
+   - \`Fiscal.cfem_intro\`: no máximo **2 frases** curtas (~**≤40 palavras** / **≤220 caracteres**) — síntese de CFEM/dados fiscais, sem paralelismo longo com o parágrafo \`lead\`.
+   - Se precisar comprimir: mantenha **um único insight central**, elimine redundâncias com tabelas/camadas da mesma página e não repita listagem já exibida em linhas superiores. Tom técnico-institucional preservado.
+   - Esta regra aplica-se a qualquer texto de leitura integrada em formato de «caixa destacada» de baixa altura no layout; para blocos já limitados pelo prompt específico (ex.: página 6/7 em três frases por dimensão), continue no mesmo regime — não encha os callouts 3 e 5 com texto extra além destes tetos.
 
 8. FASE REGULATÓRIA vs ESTADO OPERACIONAL: O campo \`fase\` indica a fase regulatória ANM (Pesquisa, Lavra, Suspensão, etc.), NÃO o estado operacional da mina.
    - Se fase = "Lavra" ou regime contém "Concessão de Lavra": a viabilidade geológica já foi comprovada via relatório aprovado.
@@ -179,6 +189,13 @@ ABSOLUTE RULES:
 
 6. LENGTH: Maximum 3 sentences per paragraph. Avoid lists inside prose.
 
+   FINAL CALLOUTS (PDF — Pages 3 Territory and 5 Fiscal, highlighted integrated-read bands near bottom of fixed pages):
+   - In the Territory JSON payload, field \`implicacao\` (page 3); in the Fiscal payload, fields \`cfem_intro\` and \`implicacao\` (page 5; the footer-style box is usually dominated by \`implicacao\`).
+   - **Territory (page 3) — ULTRA-SHORT (layout constraint):** \`implicacao\` sits under two large tables; it MUST be **exactly 1–2 sentences** and **≤200 characters total**. One core insight on territoriality; do **not** repeat overlaps, distances, or infrastructure already tabulated above. If rules conflict, **200 characters** wins.
+   - MANDATORY for **Fiscal** \`implicacao\` (and other callouts not covered above): **at most 3 sentences**, **≤60 words**, **≤400 characters** — do not apply the 200-character cap to Fiscal unless needed for wrapping.
+   - \`fiscal.cfem_intro\`: at most **2 short sentences** (~**≤40 words** / **≤220 characters**) — a tight CFEM/fiscal synopsis, no long parallelism with \`lead\`.
+   - If tightening: keep **one core insight**, cut redundancy vs tables/layers on the same page, do not relist data already rendered above — tone stays institutional and technical.
+
 7. REGULATORY PHASE vs OPERATIONAL STATE: The \`fase\` field is the ANM regulatory phase (Pesquisa = Exploration, Lavra = Mining tenure stage, etc.), NOT the operational state of the mine.
    - If fase = "Lavra" or tenure includes "Concessão de Lavra": geological viability is proven via approved exploration report.
      USE regulatory language: "mining concession granted", "tenure formally awarded", "approved exploration report".
@@ -295,6 +312,14 @@ async function callClaude<T>(
 }
 
 /** Subconjunto estruturado para cruzamento fase, CAPAG parcial e SEI nos prompts v2.1. */
+/** Bloco JSON qualitativo do motor (sem pesos) — só entra no prompt quando não vazio. */
+function jsonSubfatoresContextoLLM(d: ReportData): string {
+  const c = d.subfatores_contexto
+  if (!c || typeof c !== 'object') return ''
+  const s = JSON.stringify(c, null, 2)
+  return s === '{}' ? '' : s
+}
+
 function jsonContextoLLM(d: ReportData): string {
   return JSON.stringify(
     {
@@ -454,7 +479,7 @@ Gere JSON:
   "headline": "frase sobre sobreposição (ou ausência), max 12 palavras",
   "lead": "parágrafo descrevendo cruzamento geoespacial realizado",
   "logistica_texto": "1 frase sobre acesso logístico",
-  "implicacao": "2-3 frases cruzando risco territorial + logística"
+  "implicacao": "1 ou 2 frases, máximo 200 caracteres: um insight sobre territorialidade e logística sem repetir tabelas desta página"
 }`
 }
 
@@ -587,7 +612,14 @@ function buildPromptRisco(d: ReportData): string {
 Contexto JSON (cruzamento fase, CAPAG, SEI):
 ${jsonContextoLLM(d)}
 ${blocoInstrucoesTerminalPdf(d)}
-
+${
+  jsonSubfatoresContextoLLM(d)
+    ? `
+CONTEXTO RICO DO MOTOR (subaspectos — use para citar fatos nomeados e geografia; NUNCA exponha matemática, pesos, fórmulas nem valores ponderados por linha; não copie como tabela):
+${jsonSubfatoresContextoLLM(d)}
+`
+    : ''
+}
 Dados de risco do processo ${d.processo}:
 - Substância mineral (única válida para dim_geo e menções a recurso/target): ${substancia}
 - Risk Score total: ${nzFmt(d.risk_score)}/100 (${d.rs_classificacao})
@@ -612,7 +644,7 @@ Gere JSON:
   "dim_reg": "3 frases: despacho recente, alvará, pendência GU",
   "leitura": "3 frases: perfil dominado por X, nenhum impeditivo, tendência"
 }
-REGRA: NUNCA mencionar pesos numéricos dos sub-scores.`
+REGRA: NUNCA mencionar pesos numéricos dos sub-scores. Quando o bloco de contexto rico existir, integre pelo menos 2–3 fatos específicos (nomes de áreas, sítios, bioma, CPT, documentos) na dim_amb/dim_soc/dim_geo quando aplicável, sem aritmética.`
 }
 
 function buildPromptOportunidade(d: ReportData): string {
@@ -647,6 +679,14 @@ ${blocoRegraSubstanciaUnica(substancia)}- ATRATIVIDADE DE MERCADO (campo JSON di
 Contexto JSON:
 ${jsonContextoLLM(d)}
 ${blocoInstrucoesTerminalPdf(d)}
+${
+  jsonSubfatoresContextoLLM(d)
+    ? `
+CONTEXTO RICO DO MOTOR (oportunidade — subaspectos e penalidades; use para prosa concreta; PROIBIDO pesos, fórmulas e valores ponderados por linha):
+${jsonSubfatoresContextoLLM(d)}
+`
+    : ''
+}
 ${tb
     ? `
 SÍNTESE E HEADLINE — PROCESSO TERMINAL + BLOQUEADOR CONSTITUCIONAL:
@@ -683,7 +723,7 @@ Gere JSON:
   "sintese_p2": "2 frases: fatores transitórios, tendência",
   "sintese_marcos": "1 frase: próximos marcos de valorização"
 }
-REGRA: ${tb ? 'Para este processo, linguagem NEUTRA sobre o OS (não «favorável» nem «sólido»). ' : 'Labels OS = "Favorável" (não "Moderada") quando o processo NÃO for terminal com bloqueador. '}NUNCA mencionar pesos.`
+REGRA: ${tb ? 'Para este processo, linguagem NEUTRA sobre o OS (não «favorável» nem «sólido»). ' : 'Labels OS = "Favorável" (não "Moderada") quando o processo NÃO for terminal com bloqueador. '}NUNCA mencionar pesos. Quando o contexto rico existir, cite tendência de preço, logística, regime/outorga ou fatores nomeados do JSON sem inventar percentuais de ponderação.`
 }
 
 function textoSugereReativacaoInadequadaTerminal(s: string): boolean {
