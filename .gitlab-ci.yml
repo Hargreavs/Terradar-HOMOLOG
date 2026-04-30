@@ -1,14 +1,13 @@
-# .gitlab-ci.yml (ou append se já existe arquivo)
+# .gitlab-ci.yml
 
 stages:
   - radar
 
 radar_ingestao_classificacao:
   stage: radar
-  image: node:20-bookworm-slim   # tem tzdata + GNU coreutils prontos
+  image: node:20-bookworm-slim
   
   rules:
-    # Roda em pipeline agendado (cron via UI) e em trigger manual via web
     - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_PIPELINE_SOURCE == "web"
   
@@ -20,16 +19,15 @@ radar_ingestao_classificacao:
   
   script:
     - export TZ='America/Sao_Paulo'
+    - export NODE_OPTIONS='--dns-result-order=ipv4first'
+    - export DATABASE_URL="$VITE_DATABASE_URL"
+    - export SUPABASE_URL="$VITE_SUPABASE_URL"
     - export DATA_HOJE=$(date +%d-%m-%Y)
     - export DATA_ONTEM=$(date -d "1 day ago" +%d-%m-%Y)
     - echo "📅 Vai ingerir $DATA_ONTEM e $DATA_HOJE"
-    
-    # continue-on-error equivalente: || true (não interrompe pipeline)
     - npm run radar:ingestar -- "$DATA_ONTEM" || echo "⚠️ Falha ingest ontem"
     - npm run radar:ingestar -- "$DATA_HOJE" || echo "⚠️ Falha ingest hoje"
-    
     - npm run radar:classificar -- 100
-    
     - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     - echo "📊 RESUMO RADAR"
     - npx tsx server/scripts/radar/resumoRadarCi.ts
