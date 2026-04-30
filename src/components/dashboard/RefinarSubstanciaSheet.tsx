@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronRight, X } from 'lucide-react'
 import type { SubstanciasResponse, SubstanciaItem } from '../../lib/radar/api'
 import { TODAS_SUBST } from '../../lib/substancias'
@@ -53,6 +53,8 @@ export function RefinarSubstanciaSheet({
   const [openFamilies, setOpenFamilies] = useState<Record<string, boolean>>({})
   const [mounted, setMounted] = useState(open)
   const [visible, setVisible] = useState(false)
+  /** Medir o `<aside>` após commit React (fallback quando rAF era cedo demais). */
+  const asideRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     if (open) {
@@ -62,27 +64,44 @@ export function RefinarSubstanciaSheet({
   }, [open, proSubst])
 
   useEffect(() => {
-    if (open) {
-      setVisible(false)
-      setMounted(true)
-      // Dois rAF: primeiro frame com o painel ainda a translateX(100%) para o browser pintar
-      // o estado "fechado" antes de animar da direita para a esquerda.
-      let raf2 = 0
-      const raf1 = window.requestAnimationFrame(() => {
-        raf2 = window.requestAnimationFrame(() => {
+    let cancelled = false
+    let rafOpen1 = 0
+    let rafOpen2 = 0
+    let closeT = 0
+    // Igual ao RefinarFaseSheet: espera terminar commit/pinte intermédio antes de RAF,
+    // evitando omitir CSS transition quando o primeiro frame já aparece na posição final.
+    queueMicrotask(() => {
+      if (cancelled) return
+      if (open) {
+        setVisible(false)
+        setMounted(true)
+        if (reducedMotion) {
           setVisible(true)
+          return
+        }
+        rafOpen1 = window.requestAnimationFrame(() => {
+          // Força reflow com o transform em translate(100%) já aplicado antes de iniciar entrada.
+          void asideRef.current?.offsetHeight
+          rafOpen2 = window.requestAnimationFrame(() => {
+            if (!cancelled) setVisible(true)
+          })
         })
-      })
-      return () => {
-        window.cancelAnimationFrame(raf1)
-        if (raf2) window.cancelAnimationFrame(raf2)
+      } else {
+        setVisible(false)
+        closeT = window.setTimeout(
+          () => {
+            if (!cancelled) setMounted(false)
+          },
+          reducedMotion ? 0 : ANIM_CLOSE_MS,
+        )
       }
+    })
+    return () => {
+      cancelled = true
+      window.cancelAnimationFrame(rafOpen1)
+      if (rafOpen2) window.cancelAnimationFrame(rafOpen2)
+      window.clearTimeout(closeT)
     }
-    setVisible(false)
-    const t = window.setTimeout(() => {
-      setMounted(false)
-    }, reducedMotion ? 0 : ANIM_CLOSE_MS)
-    return () => window.clearTimeout(t)
   }, [open, reducedMotion])
 
   useEffect(() => {
@@ -212,6 +231,7 @@ export function RefinarSubstanciaSheet({
       />
 
       <aside
+        ref={asideRef}
         role="dialog"
         aria-modal="true"
         aria-label="Refinar substância"

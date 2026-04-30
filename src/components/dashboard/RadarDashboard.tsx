@@ -18,7 +18,13 @@ import { RefinarSubstanciaSheet } from './RefinarSubstanciaSheet'
 import { TerraeLogoLoading } from './animations/TerraeLogoLoading'
 import { useStaggeredEntrance } from '../../hooks/useStaggeredEntrance'
 import { type OpportunityResult, type PerfilRisco } from '../../lib/opportunityScore'
-import { MOTION_GROUP_FADE_MS } from '../../lib/motionDurations'
+import {
+  MOTION_DURATION,
+  MOTION_EASING,
+  MOTION_LOADING,
+  MOTION_STAGGER,
+  motionTransition,
+} from '../../lib/motion'
 import { TODAS_SUBST } from '../../lib/substancias'
 import type { FamiliasResponse, SubstanciasResponse } from '../../lib/radar/api'
 import {
@@ -476,8 +482,10 @@ export function RadarDashboard({
     const msgsLen = Math.max(1, loadingMsgs.length)
 
     let cancelled = false
+    /** Todos os timeouts desta corrida de loading/análise para limpar no teardown. */
+    const phaseTimers: number[] = []
     const tStarted = Date.now()
-    const MIN_VISIBLE_MS = 800
+    const MIN_VISIBLE_MS = MOTION_LOADING.minVisibleMs
 
     const msgId = window.setInterval(() => {
       setLoadMsgIdx((i) => (i + 1) % msgsLen)
@@ -488,34 +496,48 @@ export function RadarDashboard({
       if (cancelled) return
       const elapsed = Date.now() - tStarted
       const waitRemain = Math.max(0, MIN_VISIBLE_MS - elapsed)
-      window.setTimeout(
-        () => {
-          if (cancelled) return
-          clearInterval(msgId)
-          const rAtual = proRiscoRef.current
-          if (ok && rAtual) {
-            setUltimosFiltrosAnalise(
-              buildFiltrosSnapshot(proSubstRef.current, rAtual, proUfsRef.current, []),
-            )
-          }
-          setLoadOverlayOut(true)
-          window.setTimeout(
-            () => {
-              if (cancelled) return
-              setLoadingOverlayVisible(false)
+      phaseTimers.push(
+        window.setTimeout(
+          () => {
+            if (cancelled) return
+            clearInterval(msgId)
+            const rAtual = proRiscoRef.current
+            if (ok && rAtual) {
+              setUltimosFiltrosAnalise(
+                buildFiltrosSnapshot(proSubstRef.current, rAtual, proUfsRef.current, []),
+              )
+            }
+            if (reducedMotion) {
               setLoadOverlayOut(false)
+              setLoadingOverlayVisible(false)
               setViewState('resultados')
-            },
-            reducedMotion ? 0 : 300,
-          )
-        },
-        waitRemain,
+              return
+            }
+            const fadeMs = MOTION_LOADING.fadeOutMs
+            setLoadOverlayOut(true)
+            phaseTimers.push(
+              window.setTimeout(() => {
+                if (cancelled) return
+                setViewState('resultados')
+              }, fadeMs / 2),
+            )
+            phaseTimers.push(
+              window.setTimeout(() => {
+                if (cancelled) return
+                setLoadingOverlayVisible(false)
+                setLoadOverlayOut(false)
+              }, fadeMs),
+            )
+          },
+          waitRemain,
+        ),
       )
     })()
 
     return () => {
       cancelled = true
       clearInterval(msgId)
+      for (const t of phaseTimers) clearTimeout(t)
     }
   }, [loadingOverlayVisible, proRisco, reducedMotion, loadingMsgs.length])
 
@@ -524,8 +546,8 @@ export function RadarDashboard({
 
   const cardStaggerCount = resultados.length > 0 ? resultados.length : 1
   const cardVis = useStaggeredEntrance(cardStaggerCount, {
-    baseDelayMs: reducedMotion ? 0 : 200,
-    staggerMs: reducedMotion ? 0 : 80,
+    baseDelayMs: reducedMotion ? 0 : 100,
+    staggerMs: reducedMotion ? 0 : MOTION_STAGGER.comfortable,
     reducedMotion,
     skipAnimation: skipStaggerResultados,
   })
@@ -541,9 +563,9 @@ export function RadarDashboard({
       setBarsReady(true)
       return
     }
-    const n = Math.max(1, resultados.length)
-    const delayMs = 200 + (n - 1) * 80 + MOTION_GROUP_FADE_MS
-    const id = window.setTimeout(() => setBarsReady(true), delayMs)
+    setBarsReady(false)
+    /* Alinha com baseDelayMs do stagger; delays por cartão ficam em ProspeccaoResultados (barFillStyle). */
+    const id = window.setTimeout(() => setBarsReady(true), 100)
     return () => clearTimeout(id)
   }, [viewState, reducedMotion, resultados.length, skipStaggerResultados])
 
@@ -874,6 +896,15 @@ export function RadarDashboard({
                 border: 'none',
                 cursor: 'pointer',
                 transition: 'filter 0.15s ease-out, box-shadow 0.15s ease-out',
+                pointerEvents: viewState === 'transitioning-to-wizard' ? 'none' : 'auto',
+              }}
+              onMouseDown={(e) => {
+                e.currentTarget.style.transform = 'scale(0.97)'
+                e.currentTarget.style.transition =
+                  `${motionTransition('transform', MOTION_DURATION.instant, MOTION_EASING.standard)}, filter 0.15s ease-out, box-shadow 0.15s ease-out`
+              }}
+              onMouseUp={(e) => {
+                e.currentTarget.style.transform = 'scale(1)'
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.filter = 'brightness(1.1)'
@@ -882,6 +913,7 @@ export function RadarDashboard({
               onMouseLeave={(e) => {
                 e.currentTarget.style.filter = 'none'
                 e.currentTarget.style.boxShadow = 'none'
+                e.currentTarget.style.transform = 'scale(1)'
               }}
             >
               Iniciar Prospecção
@@ -964,7 +996,10 @@ export function RadarDashboard({
                   alignItems: 'center',
                   justifyContent: 'center',
                   opacity: loadOverlayOut ? 0 : 1,
-                  transition: reducedMotion ? undefined : 'opacity 300ms ease-in',
+                  transition:
+                    reducedMotion
+                      ? undefined
+                      : motionTransition('opacity', MOTION_LOADING.fadeOutMs, MOTION_EASING.accelerate),
                 }}
               >
                 <div style={{ marginBottom: 18 }}>
@@ -984,7 +1019,9 @@ export function RadarDashboard({
                     boxSizing: 'border-box',
                     whiteSpace: 'nowrap',
                     overflowX: 'auto',
-                    animation: reducedMotion ? undefined : 'terraeRadarFadeMsg 200ms ease-out',
+                    animation: reducedMotion
+                      ? undefined
+                      : `terraeRadarFadeMsg 200ms ${MOTION_EASING.decelerate}`,
                   }}
                 >
                   {loadingMsgs[
