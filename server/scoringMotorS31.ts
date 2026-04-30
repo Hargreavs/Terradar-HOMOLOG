@@ -987,6 +987,8 @@ export function dimSocial(
 
   ]
 
+  const adj = valor - sumW
+
   if (Math.abs(adj) > 1e-6) {
 
     sf.push({
