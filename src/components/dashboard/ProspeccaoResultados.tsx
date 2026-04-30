@@ -15,7 +15,18 @@ import { formatNumeroPt } from '../../lib/scoreBreakdownFormat'
 import type { SubfatorOutput } from '../../types/scoreBreakdown'
 import { useScoreBreakdown } from '../../hooks/useScoreBreakdown'
 import { SubfatorDecomposicaoRows } from '../map/SubfatorDecomposicaoRows'
-import { motionGroupStyle } from '../../lib/motionStyles'
+import {
+  MOTION_DURATION,
+  MOTION_EASING,
+  MOTION_STAGGER,
+  motionTransition,
+} from '../../lib/motion'
+import {
+  MOTION_BAR_STAGGER_MS,
+  MOTION_BAR_WIDTH_MS,
+  MOTION_GROUP_FADE_MS,
+  MOTION_GROUP_TRANSLATE_PX,
+} from '../../lib/motionDurations'
 import {
   CORES_DIMENSAO,
   PESOS_PERFIL,
@@ -42,6 +53,64 @@ const OPPORTUNITY_CARD_SELECTED_SHADOW = '0 0 12px rgba(239, 159, 39, 0.05)'
 
 function cn(...parts: (string | false | undefined)[]): string {
   return parts.filter(Boolean).join(' ')
+}
+
+/** Camadas frame / primary / secondary para cascata dentro do cartão da listagem. */
+function motionGroupStyle(
+  visible: boolean,
+  reduced: boolean,
+  layer: 'frame' | 'primary' | 'secondary' = 'frame',
+): CSSProperties {
+  if (reduced) return { opacity: 1, transform: 'translateY(0)' }
+  const delayMs = layer === 'primary' ? 80 : layer === 'secondary' ? 150 : 0
+  const d = MOTION_DURATION.emphasized
+  const e = MOTION_EASING.decelerate
+  const delayArg = delayMs > 0 ? delayMs : undefined
+
+  if (layer === 'frame') {
+    const op = motionTransition('opacity', d, e, delayArg)
+    const tr = motionTransition('transform', d, e, delayArg)
+    return {
+      opacity: visible ? 1 : 0,
+      transform: visible ? 'translateY(0)' : `translateY(${MOTION_GROUP_TRANSLATE_PX}px)`,
+      transition: `${op}, ${tr}`,
+    }
+  }
+
+  /* Primary/secondary: mesmo timing, sem translate (evita empilhar translateY com o frame). */
+  return {
+    opacity: visible ? 1 : 0,
+    transition: motionTransition('opacity', d, e, delayArg),
+  }
+}
+
+/** Preenchimento animado das mini-barras; `cardEntryDelayMs` desloca relativamente ao cartão na grelha. */
+function barFillStyle(
+  pct: number,
+  widthActive: boolean,
+  barIndex: number,
+  reduced: boolean,
+  backgroundColor: string,
+  cardEntryDelayMs = 0,
+): CSSProperties {
+  const w = clampBarPct(pct)
+  if (reduced) {
+    return {
+      width: `${w}%`,
+      height: '100%',
+      backgroundColor,
+      borderRadius: 3,
+    }
+  }
+  const totalDelay = cardEntryDelayMs + barIndex * MOTION_BAR_STAGGER_MS
+  const delayArg = totalDelay > 0 ? totalDelay : undefined
+  return {
+    width: widthActive ? `${w}%` : '0%',
+    height: '100%',
+    backgroundColor,
+    borderRadius: 3,
+    transition: motionTransition('width', MOTION_BAR_WIDTH_MS, MOTION_EASING.decelerate, delayArg),
+  }
 }
 
 function formatArea(ha: number): string {
@@ -78,14 +147,31 @@ function ehSubfatorParasita(v: { texto?: unknown; fonte?: unknown }): boolean {
   return padroes.some((p) => texto.includes(p))
 }
 
-function MiniBarra({ label, valor }: { label: string; valor: number }) {
+function MiniBarraAnimada({
+  label,
+  valor,
+  barIndex,
+  barsReady,
+  reduced,
+  cardIndex,
+}: {
+  label: string
+  valor: number
+  barIndex: number
+  barsReady: boolean
+  reduced: boolean
+  cardIndex: number
+}) {
   const cor = corMiniBarraValor(valor)
-  const widthPct = Math.max(0, Math.min(100, valor))
+  const cardEntryDelayMs = cardIndex * MOTION_STAGGER.comfortable + 150
   return (
     <div className="flex items-center gap-3">
       <span className="min-w-[76px] text-[12px] text-zinc-500">{label}</span>
       <div className="h-[5px] flex-1 overflow-hidden rounded-sm bg-zinc-900">
-        <div className="h-full rounded-sm" style={{ width: `${widthPct}%`, background: cor }} />
+        <div
+          className="h-full rounded-sm"
+          style={barFillStyle(valor, barsReady, barIndex, reduced, cor, cardEntryDelayMs)}
+        />
       </div>
       <span
         className="min-w-[24px] text-right text-[13px] font-medium tabular-nums"
@@ -100,11 +186,19 @@ function MiniBarra({ label, valor }: { label: string; valor: number }) {
 function CardResultado({
   r,
   ord,
+  cardMotionVisible,
+  barsReady,
+  reducedMotion,
+  cardIndex,
   onVerMapa,
   onVerCalculo,
 }: {
   r: OpportunityResult
   ord: number
+  cardMotionVisible: boolean
+  barsReady: boolean
+  reducedMotion: boolean
+  cardIndex: number
   onVerMapa: () => void
   onVerCalculo: () => void
 }) {
@@ -113,81 +207,106 @@ function CardResultado({
   const isLavra = (r.fase ?? '').toLowerCase().includes('lavra')
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5">
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="mb-1 flex items-baseline gap-2">
-            <span
-              className="text-[18px] font-medium tabular-nums leading-none"
-              style={{ color: '#EF9F27' }}
+      <div style={motionGroupStyle(cardMotionVisible, reducedMotion, 'primary')}>
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="mb-1 flex items-baseline gap-2">
+              <span
+                className="text-[18px] font-medium tabular-nums leading-none"
+                style={{ color: '#EF9F27' }}
+              >
+                #{ord}
+              </span>
+              <span className="text-[15px] font-medium tabular-nums text-zinc-100">
+                {r.numero ?? '—'}
+              </span>
+            </div>
+            <div
+              className="truncate text-[13px] leading-snug text-zinc-300"
+              title={r.titular ?? undefined}
             >
-              #{ord}
-            </span>
-            <span className="text-[15px] font-medium tabular-nums text-zinc-100">
-              {r.numero ?? '—'}
-            </span>
+              {r.titular?.trim() ? r.titular : '—'}
+            </div>
+            <div className="mt-0.5 text-[12px] text-zinc-500">
+              {[r.municipio, r.uf].filter(Boolean).join(', ')}
+              {r.areaHa != null && Number.isFinite(r.areaHa) ? ` · ${formatArea(r.areaHa)}` : ''}
+            </div>
           </div>
-          <div
-            className="truncate text-[13px] leading-snug text-zinc-300"
-            title={r.titular ?? undefined}
-          >
-            {r.titular?.trim() ? r.titular : '—'}
-          </div>
-          <div className="mt-0.5 text-[12px] text-zinc-500">
-            {[r.municipio, r.uf].filter(Boolean).join(', ')}
-            {r.areaHa != null && Number.isFinite(r.areaHa) ? ` · ${formatArea(r.areaHa)}` : ''}
+          <div className="flex flex-shrink-0 flex-col items-center gap-1">
+            <span
+              className="inline-flex items-center justify-center rounded-full text-[18px] font-medium tabular-nums"
+              style={{
+                width: 48,
+                height: 48,
+                border: `2px solid ${scoreCor}`,
+                color: scoreCor,
+              }}
+            >
+              {r.scoreTotal}
+            </span>
+            <span
+              className="whitespace-nowrap text-[10px] font-medium uppercase tracking-wider"
+              style={{ color: scoreCor }}
+            >
+              {scoreLabel}
+            </span>
           </div>
         </div>
-        <div className="flex flex-shrink-0 flex-col items-center gap-1">
-          <span
-            className="inline-flex items-center justify-center rounded-full text-[18px] font-medium tabular-nums"
-            style={{
-              width: 48,
-              height: 48,
-              border: `2px solid ${scoreCor}`,
-              color: scoreCor,
-            }}
-          >
-            {r.scoreTotal}
-          </span>
-          <span
-            className="whitespace-nowrap text-[10px] font-medium uppercase tracking-wider"
-            style={{ color: scoreCor }}
-          >
-            {scoreLabel}
-          </span>
+        <div className="mb-3 flex gap-2 border-t border-zinc-800 pt-3">
+          {r.substancia ? (
+            <span className="inline-flex items-center rounded bg-amber-500/10 px-2.5 py-1 text-[12px] font-medium text-amber-200">
+              {substanciaPillLabel(r.substancia)}
+            </span>
+          ) : null}
+          {r.fase ? (
+            <span
+              className={cn(
+                'inline-flex items-center rounded border px-2.5 py-1 text-[12px] font-medium',
+                isLavra
+                  ? 'border-green-500/20 bg-green-500/10 text-green-300'
+                  : 'border-zinc-800 bg-zinc-900 text-zinc-400',
+              )}
+            >
+              {r.fase}
+            </span>
+          ) : null}
+          {r.penalidades && r.penalidades.length > 0 ? (
+            <span
+              className="inline-flex items-center rounded border border-red-500/35 bg-red-500/10 px-2.5 py-1 text-[12px] font-medium text-red-200"
+              title={r.penalidades.join(' · ')}
+            >
+              Penalidades
+            </span>
+          ) : null}
         </div>
       </div>
-      <div className="mb-3 flex gap-2 border-t border-zinc-800 pt-3">
-        {r.substancia ? (
-          <span className="inline-flex items-center rounded bg-amber-500/10 px-2.5 py-1 text-[12px] font-medium text-amber-200">
-            {substanciaPillLabel(r.substancia)}
-          </span>
-        ) : null}
-        {r.fase ? (
-          <span
-            className={cn(
-              'inline-flex items-center rounded border px-2.5 py-1 text-[12px] font-medium',
-              isLavra
-                ? 'border-green-500/20 bg-green-500/10 text-green-300'
-                : 'border-zinc-800 bg-zinc-900 text-zinc-400',
-            )}
-          >
-            {r.fase}
-          </span>
-        ) : null}
-        {r.penalidades && r.penalidades.length > 0 ? (
-          <span
-            className="inline-flex items-center rounded border border-red-500/35 bg-red-500/10 px-2.5 py-1 text-[12px] font-medium text-red-200"
-            title={r.penalidades.join(' · ')}
-          >
-            Penalidades
-          </span>
-        ) : null}
-      </div>
-      <div className="mb-4 flex flex-col gap-1.5">
-        <MiniBarra label="Atratividade" valor={r.scoreAtratividade ?? 0} />
-        <MiniBarra label="Viabilidade" valor={r.scoreViabilidade ?? 0} />
-        <MiniBarra label="Segurança" valor={r.scoreSeguranca ?? 0} />
+      <div style={motionGroupStyle(cardMotionVisible, reducedMotion, 'secondary')}>
+        <div className="mb-4 flex flex-col gap-1.5">
+          <MiniBarraAnimada
+            label="Atratividade"
+            valor={r.scoreAtratividade ?? 0}
+            barIndex={0}
+            barsReady={barsReady}
+            reduced={reducedMotion}
+            cardIndex={cardIndex}
+          />
+          <MiniBarraAnimada
+            label="Viabilidade"
+            valor={r.scoreViabilidade ?? 0}
+            barIndex={1}
+            barsReady={barsReady}
+            reduced={reducedMotion}
+            cardIndex={cardIndex}
+          />
+          <MiniBarraAnimada
+            label="Segurança"
+            valor={r.scoreSeguranca ?? 0}
+            barIndex={2}
+            barsReady={barsReady}
+            reduced={reducedMotion}
+            cardIndex={cardIndex}
+          />
+        </div>
       </div>
       <div className="flex gap-2 border-t border-zinc-800 pt-3">
         <button
@@ -324,7 +443,11 @@ function DimensaoExpandivel({
     : 'transition-[grid-template-rows] duration-300 ease-in-out'
   const barStyle: CSSProperties = reducedMotion
     ? { width: `${clampBarPct(valor)}%`, background: cor }
-    : { width: `${clampBarPct(valor)}%`, background: cor, transition: 'width 0.35s ease-out' }
+    : {
+        width: `${clampBarPct(valor)}%`,
+        background: cor,
+        transition: `width 0.35s ${MOTION_EASING.decelerate}`,
+      }
   return (
     <div className="mb-4">
       <button
@@ -595,7 +718,7 @@ export function ProspeccaoResultados({
   selectedResultId,
   setSelectedResultId,
   cardVis,
-  barsReady: _barsReady,
+  barsReady,
   reducedMotion,
   navigateProcessoMapa,
   handleRefinarBusca,
@@ -633,13 +756,13 @@ export function ProspeccaoResultados({
   onAbrirRefinarFase: () => void
   onRemoverFiltroFase: (fase: string) => void
 }) {
-  void _barsReady
+  void MOTION_GROUP_FADE_MS /* legado disponível via motionDurations; timeline do card usa MOTION_DURATION.emphasized */
   const cardsGridRef = resultadosListRef
   const [drilldownOpen, setDrilldownOpen] = useState<string | null>(null)
   const drilldownOpenRef = useRef<string | null>(null)
   const [flipActiveId, setFlipActiveId] = useState<string | null>(null)
   const [flipOpaque, setFlipOpaque] = useState(true)
-  const flipTimersRef = useRef<ReturnType<typeof setTimeout>[]>([])
+  const flipTimersRef = useRef<number[]>([])
 
   useEffect(() => {
     drilldownOpenRef.current = drilldownOpen
@@ -1063,6 +1186,9 @@ export function ProspeccaoResultados({
             ) : null}
             {resultados.map((r, i) => {
               const isSelected = selectedResultId === r.processoId
+              const frameMotion = motionGroupStyle(cardVis[i] ?? true, reducedMotion)
+              const hoverTransitionLayers =
+                'border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease'
 
               const applyCardSurfaceAfterToggle = (
                 el: HTMLDivElement,
@@ -1109,7 +1235,7 @@ export function ProspeccaoResultados({
                     }
                   }}
                   style={{
-                    ...motionGroupStyle(cardVis[i] ?? true, reducedMotion),
+                    ...frameMotion,
                     backgroundColor: 'rgba(26, 26, 24, 0.85)',
                     backdropFilter: 'blur(8px)',
                     WebkitBackdropFilter: 'blur(8px)',
@@ -1119,7 +1245,11 @@ export function ProspeccaoResultados({
                     borderRadius: 12,
                     overflow: 'hidden',
                     cursor: 'pointer',
-                    transition: 'border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease',
+                    transition: reducedMotion
+                      ? hoverTransitionLayers
+                      : frameMotion.transition
+                        ? `${frameMotion.transition}, ${hoverTransitionLayers}`
+                        : hoverTransitionLayers,
                     boxShadow: isSelected ? OPPORTUNITY_CARD_SELECTED_SHADOW : 'none',
                   }}
                   onMouseEnter={(e) => {
@@ -1166,6 +1296,10 @@ export function ProspeccaoResultados({
                         <CardResultado
                           r={r}
                           ord={i + 1}
+                          cardMotionVisible={cardVis[i] ?? true}
+                          barsReady={barsReady}
+                          reducedMotion={reducedMotion}
+                          cardIndex={i}
                           onVerMapa={() => {
                             const n = (r.numero && String(r.numero).trim()) || ''
                             const uuid = parseProcessoUuid(r.processoId)
