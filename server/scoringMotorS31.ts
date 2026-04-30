@@ -271,6 +271,125 @@ function diasAteCaducidade(al: string | null, regime: string | null): number | n
   return Math.floor((v.getTime() - Date.now()) / MS_DIA)
 }
 
+/** Validade da GU: gradiente por dias até/ após vencimento (Mudança 1). */
+function c2GuValidade(guValidade: string | null | undefined): number {
+  if (guValidade == null || String(guValidade).trim() === '') return 50
+  const v = new Date(String(guValidade))
+  if (Number.isNaN(v.getTime())) return 50
+  const dias = Math.floor((v.getTime() - Date.now()) / MS_DIA)
+  if (dias < -90) return 25
+  if (dias < 0) return 35
+  if (dias < 90) return 60
+  if (dias <= 365) return 75
+  return 85
+}
+
+/** Qualidade cadastral a partir de CFEM, início de lavra e RAL (Mudança 4). */
+function scoreQualOperacaoReal(p: ProcessoMotorRow, cfemTotal: number): number {
+  let score = 30
+  if (cfemTotal > 1e6) score = 85
+  else if (cfemTotal > 0) score = 70
+  if (p.inicio_lavra_data != null && String(p.inicio_lavra_data).trim() !== '')
+    score = Math.max(score, 75)
+  const ralDias = diasDesde(p.ral_ultimo_data)
+  if (ralDias != null && ralDias < 365) score = Math.max(score, 70)
+  return score
+}
+
+/** Autuações: magnitude domina; reincidência até +30% (Mudança 2). */
+function aut0(n: number, t: number): number {
+  if (n === 0) return 0
+  let baseValor = 15
+  if (t >= 1e8) baseValor = 90
+  else if (t >= 1e7) baseValor = 70
+  else if (t >= 1e6) baseValor = 50
+  else if (t >= 1e5) baseValor = 30
+  const fatorN = Math.min(1.3, 1 + 0.05 * Math.min(Math.max(0, n - 1), 6))
+  return Math.min(100, Math.round(baseValor * fatorN))
+}
+
+/** Histórico de cumprimento / autuações para opSeg c3 (Mudança 3). */
+function c3HistoricoCumprimento(aut: { count: number; total: number }): number {
+  if (aut.count === 0) return 85
+  if (aut.total >= 1e7) return 20
+  if (aut.total >= 1e6) return 35
+  if (aut.count >= 3 && aut.total < 1e6) return 40
+  return 55
+}
+
+function b2ProfundidadeDado(p: ProcessoMotorRow, fase: string): number {
+  if (fase === 'lavra') return 80
+  if (fase === 'concessao') return 65
+  if (fase === 'pesquisa') {
+    const d = diasDesde(p.ultimo_evento_data)
+    if (d == null) return 40
+    if (d > 730) return 60
+    if (d > 365) return 50
+    return 35
+  }
+  if (fase === 'requerimento') return 25
+  return 30
+}
+
+/** Situação operacional com gradiente; `situacao` null trata como ativo regular (Mudança 6). */
+function b4SituacaoGradiente(p: ProcessoMotorRow, fase: string): number {
+  if (p.ativo_derivado === false || fase === 'encerrado') return 5
+  const raw = (p.situacao ?? '').toLowerCase()
+  if (!raw) return 90
+  if (raw.includes('bloqueio perma')) return 10
+  if (raw.includes('bloqueio prov')) return 25
+  if (raw.includes('bloquead')) return 40
+  if (raw.includes('suspens')) return 50
+  if (raw.includes('exig')) return 60
+  if (raw.includes('aguard')) return 70
+  return 90
+}
+
+function b7_v2(scoreB7: number | null): number {
+  if (scoreB7 == null) return 15
+  return Math.min(100, Math.max(0, scoreB7))
+}
+
+export type AlertaDirecionadoRow = { categoria: string; dias_desde: number }
+
+function sa2_v2(alertas: AlertaDirecionadoRow[]): number {
+  if (!alertas.length) return 0
+  const pesoCat = (cat: string): number => {
+    const u = cat.trim().toUpperCase()
+    if (u.includes('CRIT')) return 85
+    if (u.includes('DESFAVOR')) return 60
+    if (u.includes('NEUTRO')) return 0
+    if (u.includes('POSITIV')) return -20
+    if (u.includes('FAVOR')) return -10
+    return 0
+  }
+  let soma = 0
+  for (const a of alertas) {
+    const w = pesoCat(a.categoria)
+    let decay = 0
+    if (a.dias_desde <= 90) decay = 1
+    else if (a.dias_desde <= 365) decay = 0.5
+    else decay = 0
+    soma += w * decay
+  }
+  return Math.max(0, Math.min(100, soma))
+}
+
+function c4_v2(sa2: number): number {
+  return Math.max(0, Math.min(100, 50 - sa2 / 2))
+}
+
+/** CPT municipal severo/alto/moderado ou fallback UF (reformula dimSocial). */
+function scoreCptSocial(cptUf: number, cptMunicipio: string | null): number {
+  if (cptMunicipio != null) {
+    const m = cptMunicipio.trim().toLowerCase()
+    if (m === 'severo') return 90
+    if (m === 'alto') return 65
+    if (m === 'moderado') return 35
+  }
+  return Math.min(100, Math.max(0, 30 + 70 * (cptUf - 1)))
+}
+
 const SCORE_SUB: Record<string, number> = { OURO: 50, 'MINERIO DE OURO': 50, FERRO: 25, 'TERRAS RARAS': 68 }
 const SCORE_FASE_OS: Record<string, number> = {
   lavra: 100,
@@ -344,12 +463,23 @@ const ovl = (ls: LayerRow[], p: (l: LayerRow) => boolean, x: number) =>
 export function dimGeologico(
   p: ProcessoMotorRow,
   cfg: Record<string, unknown> | null,
+  cfemTotal: number,
   options?: { returnSubfatores?: boolean },
 ): number | DimensaoOutput {
   const scoreSubst = pickSubScore(p.substancia, cfg)
-  const scoreQual = 50
+  const scoreQual = scoreQualOperacaoReal(p, cfemTotal)
   const valor = Math.min(100, Math.round(0.5 * scoreSubst + scoreQual * 0.5))
   if (!options?.returnSubfatores) return valor
+  const txtQual =
+    cfemTotal > 1e6
+      ? `CFEM histórica elevada (${fmtBr1(cfemTotal)}); qualidade operacional mapeada em ${fmtKm(scoreQual)}.`
+      : cfemTotal > 0
+        ? `CFEM histórica positiva (${fmtBr1(cfemTotal)}); referência ${fmtKm(scoreQual)}.`
+        : p.inicio_lavra_data
+          ? `Início de lavra declarado; score qualidade ${fmtKm(scoreQual)} (RAL/CFEM quando aplicável).`
+          : diasDesde(p.ral_ultimo_data) != null && (diasDesde(p.ral_ultimo_data) ?? 999) < 365
+            ? `RAL recente; qualidade documental/operacional ${fmtKm(scoreQual)}.`
+            : `Qualidade da informação cadastral e produção declarada (CFEM ${fmtBr1(cfemTotal)}): ${fmtKm(scoreQual)}.`
   const sf: SubfatorOutput[] = [
     {
       nome: 'Substância mineral',
@@ -365,12 +495,9 @@ export function dimGeologico(
     },
     {
       nome: 'Qualidade da informação cadastral',
-      fonte: 'Baseline cadastro S31 (50)',
+      fonte: 'CFEM + início lavra + RAL (motor S31 v4)',
       label: classifyLabelRisk(scoreQual),
-      texto:
-        scoreQual >= 40
-          ? `Qualidade cadastral documental (${fmtKm(scoreQual)}) segundo o referencial uniforme do motor.`
-          : 'Qualidade documental granular indisponível; referência intermediária uniforme quando o detalhe não veio no extrato.',
+      texto: txtQual,
       valor: scoreQual * 0.5,
       peso_pct: 0.5,
       valor_bruto: scoreQual,
@@ -691,13 +818,20 @@ export async function dimAmbiental(
   return out
 }
 
-function cmu(p: ProcessoMotorRow, ls: LayerRow[]) {
-  if (p.amb_assentamento_sobrepoe) return 85
+/** Hierarquia TI/quilombola/assentamento e gradiente de distância (Mudança 10).
+ *  Proximidade a assentamento continua pela flag territorial; camada dedicada pode ser ligada depois.
+ */
+function cmu_v2(p: ProcessoMotorRow, ls: LayerRow[]) {
+  if (p.amb_ti_sobrepoe) return 95
+  if (p.amb_quilombola_sobrepoe) return 90
+  if (p.amb_assentamento_sobrepoe) return 80
+  const dTi = mine(ls, ti)
+  const dQx = mine(ls, qx)
+  if (dTi < 2 || dQx < 2) return 85
+  if (dTi < 5 || dQx < 5) return 65
   if (p.amb_assentamento_2km) return 60
-  const a = Math.min(mine(ls, ti) || 9e9, mine(ls, qx) || 9e9)
-  if (a < 5) return 65
-  if (a < 10) return 35
-  if (a < 20) return 15
+  if (dTi < 10 || dQx < 10) return 40
+  if (dTi < 20 || dQx < 20) return 20
   return 5
 }
 function idh0(x: number | null) {
@@ -726,12 +860,13 @@ function pib0(x: number | null) {
 export function dimSocial(
   p: ProcessoMotorRow,
   ls: LayerRow[],
-  cpt: number,
+  cptUf: number,
+  cptMunicipio: string | null,
   options?: { returnSubfatores?: boolean },
 ): number | DimensaoOutput {
-  const c1 = cmu(p, ls)
+  const c1 = cmu_v2(p, ls)
   const c2 = Math.round(0.5 * idh0(p.idh_municipio) + 0.5 * pib0(p.pib_pc_municipio))
-  const c3 = Math.min(100, Math.max(0, 30 + 70 * (cpt - 1)))
+  const c3 = scoreCptSocial(cptUf, cptMunicipio)
   const c4 = dns(p.densidade_demografica)
   const valor = Math.min(100, Math.round(c1 * 0.45 + c2 * 0.2 + c3 * 0.2 + c4 * 0.15))
   if (!options?.returnSubfatores) return valor
@@ -740,8 +875,25 @@ export function dimSocial(
   const v3 = c3 * 0.2
   const v4 = c4 * 0.15
   const sumW = v1 + v2 + v3 + v4
-  const adj = valor - sumW
   const ufS = (p.uf ?? '').trim()
+
+  const cptUfLabel = fmtKm(cptUf)
+  const munNorm = cptMunicipio != null ? cptMunicipio.trim().toLowerCase() : ''
+  const munTxt =
+    munNorm === 'severo'
+      ? 'CPT municipal em nível severo.'
+      : munNorm === 'alto'
+        ? 'CPT municipal em nível alto.'
+        : munNorm === 'moderado'
+          ? 'CPT municipal em nível moderado.'
+          : ''
+
+  const textoCpt =
+    munTxt.length > 0
+      ? `${munTxt} Incidências estaduais (multiplicador UF ${cptUfLabel}) entram como referência secundária.`
+      : ufS.length > 0
+        ? `Incidentes de conflitos no campo listados pelo CPT para o estado ${ufS.toUpperCase()} (multiplicador UF ${cptUfLabel}; sem nível municipal consolidado).`
+        : `Incidentes de conflitos no campo segundo cadastro CPT (UF não informada); multiplicador UF ${cptUfLabel}.`
 
   const den = p.densidade_demografica
 
@@ -801,17 +953,11 @@ export function dimSocial(
 
       nome: 'Conflitos territoriais (CPT)',
 
-      fonte: 'CPT — registros estaduais',
+      fonte: 'CPT — registros municipais e estaduais',
 
       label: classifyLabelRisk(c3),
 
-      texto:
-
-        ufS.length > 0
-
-          ? `Incidentes de conflitos no campo listados pelo CPT para o estado ${ufS.toUpperCase()}.`
-
-          : `Incidentes de conflitos no campo segundo cadastro CPT (UF não informada).`,
+      texto: textoCpt,
 
       valor: v3,
 
@@ -877,13 +1023,14 @@ function c0(d: number | null, r: string | null, f: string) {
   if (d <= 365) return 50
   return 10
 }
-function aut0(n: number, t: number) { return Math.min(100, n * 18 + Math.min(50, t / 5e4)) }
 
 export function dimRegul(
 
   p: ProcessoMotorRow,
 
   aut: { count: number; total: number },
+
+  alertas: AlertaDirecionadoRow[],
 
   options?: { returnSubfatores?: boolean },
 
@@ -905,13 +1052,15 @@ export function dimRegul(
 
   const sa = aut0(aut.count, aut.total)
 
-  const sa2 = 5
+  const sa2 = sa2_v2(alertas)
 
   const cp = capagScore(p.capag_nota)
 
   let v = sp * 0.25 + sc * 0.2 + sa * 0.2 + st * 0.1 + sa2 * 0.1 + cp * 0.15
 
-  if (sc >= 90 || sa >= 60) v = Math.max(v, 70)
+  if (sa >= 80 && sa2 >= 80) v = Math.max(v, 90)
+  else if (sc >= 95 || sa >= 90) v = Math.max(v, 85)
+  else if (sc >= 90 || sa >= 60) v = Math.max(v, 70)
 
   const valor = Math.min(100, Math.round(v * 10) / 10)
 
@@ -932,6 +1081,11 @@ export function dimRegul(
   const sumP = p1 + p2 + p3 + p4 + p5 + p6
 
   const adj = valor - sumP
+
+  const textoAlertasDou =
+    alertas.length === 0
+      ? 'Nenhum alerta DOU direto (citação explícita ou CNPJ) ligado a este processo no Radar IA na janela vigente.'
+      : `Alertas DOU diretos: ${alertas.length} evento(s); índice composto ${fmtKm(sa2)} com decaimento temporal por categoria.`
 
   const sf: SubfatorOutput[] = [
 
@@ -1009,15 +1163,13 @@ export function dimRegul(
 
     {
 
-      nome: 'Alertas Adoo',
+      nome: 'Alertas DOU',
 
-      fonte: 'Adoo / receita estadual (integrações)',
+      fonte: 'Radar IA (radar_eventos_processos + radar_eventos)',
 
-      label: '',
+      label: classifyLabelRisk(sa2),
 
-      texto:
-
-        'Integração aos alertas externos ainda em curso nesta pilha; nenhum alerta consolidado retornado pela conexão vigente.',
+      texto: textoAlertasDou,
 
       valor: p5,
 
@@ -1082,7 +1234,6 @@ export function dimRegul(
 }
 
 
-function b7(x: number | null) { if (x == null) return 15; if (x >= 3) return 90; if (x >= 2) return 70; if (x >= 1) return 45; return 15 }
 function b3(ls: LayerRow[]) {
   let b = 20
   const f = mine(ls, (l) => /ferrov|porto|hidrovi/i.test(l.tipo) || l.tipo.toUpperCase().includes('FERRO'))
@@ -1143,17 +1294,17 @@ function opAtr(
   }
   let t = Math.round(a1 * 0.25 + a2 * 0.25 + a3 * 0.2 + a4 * 0.15 + a5 * 0.15)
   const mc = !!sub?.mineral_critico_2025
-  if (mc) t = Math.min(100, t + 10)
+  const baseR = t
+  if (mc) t = Math.min(100, Math.round(t * 1.1))
   if (!options?.returnSubfatores) return t
   const w1 = a1 * 0.25
   const w2 = a2 * 0.25
   const w3 = a3 * 0.2
   const w4 = a4 * 0.15
   const w5 = a5 * 0.15
-  const baseR = Math.round(a1 * 0.25 + a2 * 0.25 + a3 * 0.2 + a4 * 0.15 + a5 * 0.15)
   const sumW = w1 + w2 + w3 + w4 + w5
   const adjBase = baseR - sumW
-  const bonus = mc ? Math.min(100, baseR + 10) - baseR : 0
+  const bonus = t - baseR
   const sf: SubfatorOutput[] = [
     {
       nome: 'Relevância da substância (A1)',
@@ -1218,10 +1369,10 @@ function opAtr(
       nome: 'Bônus mineral crítico',
       fonte: 'master_substancias.mineral_critico_2025',
       label: '',
-      texto: mc ? 'Substância marcada como mineral crítico 2025: +10 pontos (fora da média ponderada).' : 'Substância sem flag de criticidade: sem bônus.',
+      texto: mc ? 'Substância em mineral crítico 2025: fator multiplicativo +10% sobre o índice antes do bônus.' : 'Substância sem flag de criticidade: sem ajuste multiplicativo.',
       valor: bonus,
       peso_pct: null,
-      valor_bruto: mc ? 10 : 0,
+      valor_bruto: bonus,
     })
   const out: DimensaoOutput = { valor: t, subfatores: sf }
   warnCoerenciaDimensao('Atratividade', out)
@@ -1241,17 +1392,20 @@ function opVab(
   ls: LayerRow[],
   cf: number,
   bnd: boolean,
+  sub: SubData | null,
   options?: { returnSubfatores?: boolean },
 ): number | DimensaoOutput {
   const f = mapFase(p.fase ?? '')
   const b1 = SCORE_FASE_OS[f] ?? 25,
-    b2 = 50,
+    b2 = b2ProfundidadeDado(p, f),
     b3m = b3(ls),
-    b4 = p.ativo_derivado === false || f === 'encerrado' ? 5 : 90,
+    b4 = b4SituacaoGradiente(p, f),
     b5 = cf0(cf)
   const b6m = fiscalB6(p)
-  const b7Base = b7(p.incentivo_b7)
-  const b7n = Math.min(100, b7Base + (bnd ? 5 : 0))
+  const b7Base = b7_v2(p.incentivo_b7)
+  const mc = !!sub?.mineral_critico_2025
+  const multBndes = bnd && mc ? 1.3 : bnd ? 1.15 : mc ? 1.05 : 1
+  const b7n = Math.min(100, Math.round(b7Base * multBndes))
   const b8m = bm0(p.bioma_territorial)
   const b9m = ar0(p.area_ha)
   const valor = Math.round(
@@ -1281,9 +1435,9 @@ function opVab(
     },
     {
       nome: 'Profundidade do dado geológico (B2)',
-      fonte: 'parâmetros internos de profundidade',
+      fonte: 'fase + recência de eventos (motor S31 v4)',
       label: classifyLabelOpp(b2),
-      texto: 'Profundidade geológica conforme modelagem interna; referência central em 50 na escala adotada.',
+      texto: `Profundidade documental e de fase (${p.fase ?? '—'}): ${fmtKm(b2)}.`,
       valor: p2 + adj / 9,
       peso_pct: 0.15,
       valor_bruto: b2,
@@ -1299,9 +1453,12 @@ function opVab(
     },
     {
       nome: 'Situação atual (B4)',
-      fonte: 'ativo/situação',
+      fonte: 'ativo/situação declarada',
       label: classifyLabelOpp(b4),
-      texto: p.ativo_derivado === false || f === 'encerrado' ? 'Processo inativo ou encerrado.' : 'Processo ativo.',
+      texto:
+        b4 <= 5
+          ? 'Processo inativo ou encerrado; ou situação cadastral crítica.'
+          : `Situação operacional mapeada em gradiente (${fmtKm(b4)}); campo situação ainda neutro quando não preenchido.`,
       valor: p4 + adj / 9,
       peso_pct: 0.15,
       valor_bruto: b4,
@@ -1326,9 +1483,9 @@ function opVab(
     },
     {
       nome: 'Incentivos regionais (B7)',
-      fonte: 'config incentivo_b7 + linhas BNDES',
+      fonte: 'incentivos_uf.score_b7 + linhas BNDES + mineral crítico',
       label: classifyLabelOpp(b7n),
-      texto: `Incentivo estadual ${fmtKm(b7Base)}${bnd ? ' + bônus BNDES +5' : ''} → ${fmtKm(b7n)}.`,
+      texto: `Base estadual ${fmtKm(b7Base)}; multiplicador composto ${fmtBr1(multBndes)}× (BNDES e criticidade) → ${fmtKm(b7n)}.`,
       valor: p7 + adj / 9,
       peso_pct: 0.05,
       valor_bruto: b7n,
@@ -1360,15 +1517,38 @@ function opVab(
 function opSeg(
   risk: number,
   p: ProcessoMotorRow,
-  aut: { count: number },
+  aut: { count: number; total: number },
+  sa2: number,
   options?: { returnSubfatores?: boolean },
 ): number | DimensaoOutput {
   const c1 = 100 - risk,
-    c2 = p.gu_validade ? 75 : 50,
-    c3 = aut.count ? 50 : 75,
-    c4 = 50
+    c2 = c2GuValidade(p.gu_validade),
+    c3 = c3HistoricoCumprimento(aut),
+    c4 = c4_v2(sa2)
   const valor = Math.round(c1 * 0.5 + c2 * 0.25 + c3 * 0.2 + c4 * 0.05)
   if (!options?.returnSubfatores) return valor
+  const guTxt = (() => {
+    const g = p.gu_validade
+    if (g == null || String(g).trim() === '') return 'Sem data de validade da GU; referência neutra.'
+    const v = new Date(String(g))
+    if (Number.isNaN(v.getTime())) return 'Validade da GU não interpretada; referência neutra.'
+    const dias = Math.floor((v.getTime() - Date.now()) / MS_DIA)
+    if (dias < -90) return `GU expirada há mais de 90 dias (score ${fmtKm(c2)}).`
+    if (dias < 0) return `GU expirada há até 90 dias (score ${fmtKm(c2)}).`
+    if (dias < 90) return `GU vence em menos de 90 dias (score ${fmtKm(c2)}).`
+    if (dias <= 365) return `GU vigente entre 90 e 365 dias (score ${fmtKm(c2)}).`
+    return `GU com horizonte além de 365 dias (score ${fmtKm(c2)}).`
+  })()
+  const c3Txt =
+    aut.count === 0
+      ? 'Sem autuações mapeadas no recorte considerado; cumprimento aparente favorável.'
+      : aut.total >= 1e7
+        ? `Autuações com volume econômico elevado (${fmtBr1(aut.total)}); score ${fmtKm(c3)}.`
+        : aut.total >= 1e6
+          ? `Autuações com volume moderado (${fmtBr1(aut.total)}); score ${fmtKm(c3)}.`
+          : aut.count >= 3
+            ? `Três ou mais autuações com valores abaixo de R$ 1 mi; score ${fmtKm(c3)}.`
+            : `Histórico de autuações (${aut.count}); score ${fmtKm(c3)}.`
   const w1 = c1 * 0.5
   const w2 = c2 * 0.25
   const w3 = c3 * 0.2
@@ -1387,27 +1567,30 @@ function opSeg(
     },
     {
       nome: 'Estabilidade documental',
-      fonte: 'gu_validade',
+      fonte: 'gu_validade (gradiente temporal)',
       label: classifyLabelOpp(c2),
-      texto: p.gu_validade ? 'GU dentro da validade (75).' : 'GU ausente/expirada (50).',
+      texto: guTxt,
       valor: w2 + adj / 4,
       peso_pct: 0.25,
       valor_bruto: c2,
     },
     {
       nome: 'Histórico de cumprimento',
-      fonte: 'autuações/aut.count',
+      fonte: 'ANM autuações (valor + contagem)',
       label: classifyLabelOpp(c3),
-      texto: aut.count ? 'Há autuações registradas (50).' : 'Sem autuações mapeadas (75).',
+      texto: c3Txt,
       valor: w3 + adj / 4,
       peso_pct: 0.2,
       valor_bruto: c3,
     },
     {
-      nome: 'Bônus alertas Adoo',
-      fonte: 'Adoo/integration',
-      label: '',
-      texto: 'Integração pendente (placeholder 50).',
+      nome: 'Exposição a alertas DOU (Radar)',
+      fonte: 'sa2_v2 → c4',
+      label: classifyLabelOpp(c4),
+      texto:
+        sa2 <= 0
+          ? 'Sem carga de alertas DOU diretos; componente neutro-alinhado ao índice de oportunidade regulatória.'
+          : `Alertas diretos consolidam pressão ${fmtKm(sa2)}; ajuste fino ${fmtKm(c4)} na segurança da tese.`,
       valor: w4 + adj / 4,
       peso_pct: 0.05,
       valor_bruto: c4,
@@ -1424,11 +1607,18 @@ function pen(v: number, p: ProcessoMotorRow, risk: number, a: number, s: number,
   if (/bloqueio\s*perma|permanen/.test(t)) { o = Math.min(o, 10); if (first) rec.push('Bloqueio permanente (cap 10)') }
   if (f === 'encerrado' || p.ativo_derivado === false) { o = Math.min(o, 20); if (first) rec.push('Encerrado/inativo (cap 20)') }
   if (a >= 95 || s >= 95) { o = Math.min(o, 25); if (first) rec.push('Veto socioambiental (cap 25)') }
-  if (t.includes('bloqueio prov')) o *= 0.6
-  if (g >= 85) o *= 0.5
-  if (t.includes('bloquead')) o *= 0.7
-  if (risk >= 80) o *= 0.6
-  if (risk >= 90) o *= 0.5
+  const fatores: number[] = []
+  if (t.includes('bloqueio prov')) fatores.push(0.6)
+  if (g >= 85) fatores.push(0.5)
+  if (t.includes('bloquead')) fatores.push(0.7)
+  if (risk >= 80) fatores.push(0.6)
+  if (risk >= 90) fatores.push(0.5)
+  if (fatores.length > 0) {
+    const pior = Math.min(...fatores)
+    const penAcum = pior * 0.9 ** (fatores.length - 1)
+    o = o * penAcum
+    if (fatores.length > 1 && first) rec.push(`Multiplicadores compostos (${fatores.length} sinais, pior=${fmtKm(pior)})`)
+  }
   return Math.min(100, Math.round(o * 10) / 10)
 }
 
@@ -1508,6 +1698,33 @@ export async function loadCpt(uf: string | null) {
     return 1
   }
 }
+
+async function loadCptMunicipio(municipioIbge: string | null): Promise<string | null> {
+  if (municipioIbge == null || String(municipioIbge).trim() === '') return null
+  try {
+    const sx = getSql()
+    const r = (await sx`
+      SELECT indice_cpt_nivel FROM v_cpt_municipio_resumo WHERE municipio_ibge = ${String(municipioIbge).trim()} LIMIT 1
+    `) as { indice_cpt_nivel: string | null }[]
+    const raw = r[0]?.indice_cpt_nivel
+    return raw != null && String(raw).trim() !== '' ? String(raw).trim() : null
+  } catch {
+    return null
+  }
+}
+
+async function loadAlertasDirecionados(processoId: string): Promise<AlertaDirecionadoRow[]> {
+  const sx = getSql()
+  const rows = (await sx`
+    SELECT re.categoria, (CURRENT_DATE - re.data_evento)::int AS dias_desde
+    FROM radar_eventos_processos rep
+    JOIN radar_eventos re ON re.id = rep.evento_id
+    WHERE rep.processo_id = ${processoId}::uuid
+      AND rep.match_motivo IN ('CITADO_DIRETAMENTE', 'CNPJ')
+      AND re.data_evento IS NOT NULL
+  `) as { categoria: string; dias_desde: number }[]
+  return rows.map((r) => ({ categoria: String(r.categoria ?? ''), dias_desde: Number(r.dias_desde) }))
+}
 export async function loadCfem(numero: string) {
   const sx = getSql()
   const r = (await sx`
@@ -1561,7 +1778,7 @@ export async function runS31MotorAndPersist(
   sessionMassCaches = opts.massCaches ?? null
   const wantSub = opts.returnSubfatores === true
   const persist = opts.persist === true && !wantSub
-  const sfDefault = 's31_v3_20260427'
+  const sfDefault = 's31_v4_20260430'
   const sfRaw = opts.scoresFonte ?? sfDefault
   if (
     typeof sfRaw !== 'string' ||
@@ -1572,8 +1789,15 @@ export async function runS31MotorAndPersist(
   }
   const scoresFonte = sfRaw
   let p: ProcessoMotorRow | null
-  let ls: LayerRow[], sub: SubData | null, cpt: number, cfg: Record<string, unknown>, aut: { count: number; total: number }
-  let cfe: number, bnd: boolean
+  let ls: LayerRow[]
+  let sub: SubData | null
+  let cpt: number
+  let cptMun: string | null
+  let cfg: Record<string, unknown>
+  let aut: { count: number; total: number }
+  let cfe: number
+  let bnd: boolean
+  let alertas: AlertaDirecionadoRow[]
   try {
   p = await loadProcesso(processoId)
   if (!p) throw new Error('Processo nao encontrado: ' + processoId)
@@ -1581,33 +1805,33 @@ export async function runS31MotorAndPersist(
     const u = p.uf.trim()
     if (sessionMassCaches.incentivoB7ByUf.has(u)) p.incentivo_b7 = sessionMassCaches.incentivoB7ByUf.get(u) ?? null
   }
-  ;[ls, sub, cpt, cfg, aut, cfe, bnd] = await Promise.all([
-    loadLayers(processoId), loadSub(p.substancia), loadCpt(p.uf), loadConfigScores(),
-    loadAutu(p.numero), loadCfem(p.numero), loadBndes(p.substancia),
+  ;[ls, sub, cpt, cptMun, cfg, aut, cfe, bnd, alertas] = await Promise.all([
+    loadLayers(processoId), loadSub(p.substancia), loadCpt(p.uf), loadCptMunicipio(p.municipio_ibge), loadConfigScores(),
+    loadAutu(p.numero), loadCfem(p.numero), loadBndes(p.substancia), loadAlertasDirecionados(processoId),
   ])
-  const dgR = dimGeologico(p, cfg, { returnSubfatores: wantSub })
+  const dgR = dimGeologico(p, cfg, cfe, { returnSubfatores: wantSub })
   const dg = typeof dgR === 'number' ? dgR : dgR.valor
   const daR = await dimAmbiental(p, ls, { returnSubfatores: wantSub })
   const da = typeof daR === 'number' ? daR : daR.valor
-  const dsR = dimSocial(p, ls, cpt, { returnSubfatores: wantSub })
+  const dsR = dimSocial(p, ls, cpt, cptMun, { returnSubfatores: wantSub })
   const ds = typeof dsR === 'number' ? dsR : dsR.valor
-  const drR = dimRegul(p, aut, { returnSubfatores: wantSub })
+  const drR = dimRegul(p, aut, alertas, { returnSubfatores: wantSub })
   const dr = typeof drR === 'number' ? drR : drR.valor
+  const sa2Alertas = sa2_v2(alertas)
   let risk = dg * 0.25 + da * 0.3 + ds * 0.25 + dr * 0.2
 
-  // PISOs ambientais/sociais (mais restritivos primeiro)
   if (da >= 95 || ds >= 95) risk = Math.max(risk, 80)
-  else if (da >= 75 || ds >= 75) risk = Math.max(risk, 60)
+  else if (da >= 80 || ds >= 80) risk = Math.max(risk, 65)
+  else if (da >= 65 || ds >= 65) risk = Math.max(risk, 50)
 
-  // PISOs regulatórios (calibrado pós-smoke BEMISA 864.231/2017)
-  if (dr >= 95) risk = Math.max(risk, 75)
-  else if (dr >= 85) risk = Math.max(risk, 65)
-  else if (dr >= 70) risk = Math.max(risk, 55)
+  if (dr >= 90) risk = Math.max(risk, 75)
+  else if (dr >= 80) risk = Math.max(risk, 60)
+  else if (dr >= 70) risk = Math.max(risk, 50)
 
   risk = Math.min(100, Math.round(risk))
   const oaR = opAtr(p, sub, cfg, { returnSubfatores: wantSub })
-  const ovR = opVab(p, ls, cfe, bnd, { returnSubfatores: wantSub })
-  const osR = opSeg(risk, p, aut, { returnSubfatores: wantSub })
+  const ovR = opVab(p, ls, cfe, bnd, sub, { returnSubfatores: wantSub })
+  const osR = opSeg(risk, p, aut, sa2Alertas, { returnSubfatores: wantSub })
   const oa = typeof oaR === 'number' ? oaR : oaR.valor
   const ov = typeof ovR === 'number' ? ovR : ovR.valor
   const os0 = typeof osR === 'number' ? osR : osR.valor
@@ -1666,7 +1890,7 @@ export async function runS31MotorAndPersist(
     os_label_conservador: cL.l, os_label_moderado: mL.l, os_label_arrojado: aL.l,
     os_breakdown: { atratividade: oa, viabilidade: ov, seguranca: os0 },
     detail: {
-      scoreSubstancia: pickSubScore(p.substancia, null), scoreFase: SCORE_FASE_OS[mapFase(p.fase ?? '')] ?? 25, scoreQualidade: 50,
+      scoreSubstancia: pickSubScore(p.substancia, null), scoreFase: SCORE_FASE_OS[mapFase(p.fase ?? '')] ?? 25, scoreQualidade: scoreQualOperacaoReal(p, cfe),
       scoreComunidades: 0, scoreCAPAG_rs: 0, scoreCaducidade: 0, scoreRegTempo: 0, scoreRegPendencias: 0, scoreRegAlertas: 0,
       a1:0,a2:0,a3:0,a4:0,a5:0, b1:0,b2:0,b3:0,b4:0,b5:0,b6:0,b7:0, c1:0,c2:0,c3:0,c4:0,c5:0,c6:0,
     },
