@@ -234,7 +234,7 @@ export type S31MassCaches = {
 let sessionMassCaches: S31MassCaches | null = null
 
 const FASE_MAP: Record<string, string> = {
-  'CONCESSAO DE LAVRA': 'lavra',
+  'CONCESSAO DE LAVRA': 'concessao',
   LAVRA: 'lavra',
   'LAVRA GARIMPEIRA': 'lavra',
   'REQUERIMENTO DE LAVRA': 'concessao',
@@ -248,7 +248,8 @@ const FASE_MAP: Record<string, string> = {
 }
 
 function mapFase(f: string): string {
-  return FASE_MAP[f.toUpperCase().trim()] ?? 'requerimento'
+  const k = f.normalize('NFD').replace(/\p{Diacritic}/gu, '').toUpperCase().trim()
+  return FASE_MAP[k] ?? 'requerimento'
 }
 
 const MS_DIA = 86_400_000
@@ -1619,7 +1620,12 @@ function pen(v: number, p: ProcessoMotorRow, risk: number, a: number, s: number,
     const pior = Math.min(...fatores)
     const penAcum = pior * 0.9 ** (fatores.length - 1)
     o = o * penAcum
-    if (fatores.length > 1 && first) rec.push(`Multiplicadores compostos (${fatores.length} sinais, pior=${fmtKm(pior)})`)
+    if (first) {
+      const desc = fatores.length === 1
+        ? `Multiplicador aplicado (×${fmtKm(pior)})`
+        : `Multiplicadores compostos (${fatores.length} sinais, pior=${fmtKm(pior)})`
+      rec.push(desc)
+    }
   }
   return Math.min(100, Math.round(o * 10) / 10)
 }
