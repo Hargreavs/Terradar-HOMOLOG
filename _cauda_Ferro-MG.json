@@ -1,0 +1,73 @@
+{
+  "dimensoes_oportunidade": {
+    "seguranca": {
+      "valor": 29,
+      "subfatores": [
+        {
+          "nome": "Histórico de cumprimento",
+          "fonte": "ANM autuações (valor + contagem)",
+          "label": "Oportunidade baixa",
+          "texto": "Autuações com volume econômico elevado (330.903.922,5); score 20,0.",
+          "valor": 4,
+          "peso_pct": 0.2,
+          "valor_bruto": 20
+        },
+        {
+          "nome": "Exposição a alertas DOU (Radar)",
+          "fonte": "sa2_v2 → c4",
+          "label": "Oportunidade baixa",
+          "texto": "Alertas diretos consolidam pressão 100,0; ajuste fino 0,0 na segurança da tese.",
+          "valor": 0,
+          "peso_pct": 0.05,
+          "valor_bruto": 0
+        }
+      ]
+    },
+    "penalidades": [
+      "Multiplicador aplicado (×0,5)"
+    ]
+  },
+  "os_conservador": 21,
+  "os_moderado": 22,
+  "os_arrojado": 22,
+  "os_label_conservador": "Nao recomendado",
+  "os_label_moderado": "Nao recomendado",
+  "os_label_arrojado": "Nao recomendado",
+  "os_breakdown": {
+    "atratividade": 41,
+    "viabilidade": 64,
+    "seguranca": 29
+  },
+  "detail": {
+    "scoreSubstancia": 25,
+    "scoreFase": 80,
+    "scoreQualidade": 75,
+    "scoreComunidades": 0,
+    "scoreCAPAG_rs": 0,
+    "scoreCaducidade": 0,
+    "scoreRegTempo": 0,
+    "scoreRegPendencias": 0,
+    "scoreRegAlertas": 0,
+    "a1": 0,
+    "a2": 0,
+    "a3": 0,
+    "a4": 0,
+    "a5": 0,
+    "b1": 0,
+    "b2": 0,
+    "b3": 0,
+    "b4": 0,
+    "b5": 0,
+    "b6": 0,
+    "b7": 0,
+    "c1": 0,
+    "c2": 0,
+    "c3": 0,
+    "c4": 0,
+    "c5": 0,
+    "c6": 0
+  },
+  "fallbacks_usados": [
+    "s31_v4_20260430"
+  ]
+}

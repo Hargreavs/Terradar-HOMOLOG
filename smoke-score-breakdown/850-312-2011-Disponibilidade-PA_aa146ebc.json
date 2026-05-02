@@ -1,0 +1,431 @@
+{
+  "risk_score": 80,
+  "risk_label": "Risco alto",
+  "risk_cor": "#E24B4A",
+  "risk_breakdown": {
+    "geologico": 40,
+    "ambiental": 95,
+    "social": 55,
+    "regulatorio": 17.8
+  },
+  "dimensoes_risco": {
+    "geologico": {
+      "valor": 40,
+      "subfatores": [
+        {
+          "nome": "Substância mineral",
+          "fonte": "ANM/config_scores (2_RS_GEOLOGICO)",
+          "label": "Risco médio",
+          "texto": "Substância declarada: \"MINÉRIO DE OURO\". Índice de relevância minerária 50,0.",
+          "valor": 25,
+          "peso_pct": 0.5,
+          "valor_bruto": 50
+        },
+        {
+          "nome": "Qualidade da informação cadastral",
+          "fonte": "CFEM + início lavra + RAL (motor S31 v4)",
+          "label": "Risco baixo",
+          "texto": "Qualidade da informação cadastral e produção declarada (CFEM 0): 30,0.",
+          "valor": 15,
+          "peso_pct": 0.5,
+          "valor_bruto": 30
+        }
+      ]
+    },
+    "ambiental": {
+      "valor": 95,
+      "subfatores": [
+        {
+          "nome": "Proximidade a Terra Indígena",
+          "fonte": "FUNAI/territorial_layers",
+          "label": "Risco médio",
+          "texto": "Baú a 1.3 km (≤ 5 km).",
+          "valor": 50,
+          "peso_pct": 1,
+          "valor_bruto": 50
+        },
+        {
+          "nome": "APP hídrica",
+          "fonte": "flags processo/motor",
+          "label": "Risco baixo",
+          "texto": "Sobreposição com APP identificada no cadastro.",
+          "valor": 8,
+          "peso_pct": 1,
+          "valor_bruto": 8
+        },
+        {
+          "nome": "Aquífero subjacente",
+          "fonte": "ANA/camadas hidrogeológicas",
+          "label": "Risco baixo",
+          "texto": "Sobreposição com aquífero.",
+          "valor": 15,
+          "peso_pct": 1,
+          "valor_bruto": 15
+        },
+        {
+          "nome": "Multiplicador de bioma",
+          "fonte": "IBGE/bioma_territorial",
+          "label": "",
+          "texto": "Amazônia: multiplicador 1,3× sobre os pontos ambientais brutos (antes do teto aplicado).",
+          "valor": 22,
+          "peso_pct": null,
+          "valor_bruto": 1.3
+        }
+      ]
+    },
+    "social": {
+      "valor": 55,
+      "subfatores": [
+        {
+          "nome": "Comunidades vulneráveis",
+          "fonte": "FUNAI/INCRA/ICMBio — malhas territoriais",
+          "label": "Risco alto",
+          "texto": "Proximidade ou sobreposição com terras indígenas, quilombolas e demais territórios em situação de vulnerabilidade institucional, segundo distâncias calculadas sobre a malha vigente.",
+          "valor": 36,
+          "peso_pct": 0.45,
+          "valor_bruto": 80
+        },
+        {
+          "nome": "Socioeconômico do município",
+          "fonte": "IBGE — IDH municipal e PIB/hab.",
+          "label": "Risco baixo",
+          "texto": "Condição socioeconômica sintetizada pelo IDH municipal e pela renda per capita oficialmente divulgada.",
+          "valor": 5.6000000000000005,
+          "peso_pct": 0.2,
+          "valor_bruto": 28
+        },
+        {
+          "nome": "Conflitos territoriais (CPT)",
+          "fonte": "CPT — registros municipais e estaduais",
+          "label": "Risco médio",
+          "texto": "CPT municipal em nível alto. Incidências estaduais (multiplicador UF 1,3) entram como referência secundária.",
+          "valor": 13,
+          "peso_pct": 0.2,
+          "valor_bruto": 65
+        },
+        {
+          "nome": "Densidade demográfica",
+          "fonte": "IBGE — densidade municipal",
+          "label": "Risco baixo",
+          "texto": "Densidade municipal não declarada ao motor; cenário tratado aqui como adensamento baixo‑moderado.",
+          "valor": 0.75,
+          "peso_pct": 0.15,
+          "valor_bruto": 5
+        },
+        {
+          "nome": "Ajuste consolidador social",
+          "fonte": "arredondamento do índice da dimensão",
+          "label": "",
+          "texto": "Diferença de -0,4 para reconciliar o índice exibido com o arredondamento aplicado à combinação anterior (55,4).",
+          "valor": -0.3500000000000014,
+          "peso_pct": null,
+          "valor_bruto": -0.3500000000000014
+        }
+      ]
+    },
+    "regulatorio": {
+      "valor": 17.8,
+      "subfatores": [
+        {
+          "nome": "Pendências abertas",
+          "fonte": "cadastro público da ANM",
+          "label": "Risco baixo",
+          "texto": "Sem pendências administrativas em aberto no retrato atual do cadastro.",
+          "valor": 1.25,
+          "peso_pct": 0.25,
+          "valor_bruto": 5
+        },
+        {
+          "nome": "Caducidade documental",
+          "fonte": "eventos públicos — licença/alvará",
+          "label": "Risco baixo",
+          "texto": "Prazos de validade incompletos no cadastro ou sem data objetiva aqui — situação examinada com o regime declarado.",
+          "valor": 1,
+          "peso_pct": 0.2,
+          "valor_bruto": 5
+        },
+        {
+          "nome": "Autuações e débitos",
+          "fonte": "ANM — autuações",
+          "label": "Risco baixo",
+          "texto": "Autuações registradas (0); volume econômico associado (0,0).",
+          "valor": 0,
+          "peso_pct": 0.2,
+          "valor_bruto": 0
+        },
+        {
+          "nome": "Tempo do processo",
+          "fonte": "último movimento público",
+          "label": "Risco alto",
+          "texto": "Última movimentação pública há cerca de 3993 dias segundo o último evento disponível.",
+          "valor": 8,
+          "peso_pct": 0.1,
+          "valor_bruto": 80
+        },
+        {
+          "nome": "Alertas DOU",
+          "fonte": "Radar IA (radar_eventos_processos + radar_eventos)",
+          "label": "Risco baixo",
+          "texto": "Nenhum alerta DOU direto (citação explícita ou CNPJ) ligado a este processo no Radar IA na janela vigente.",
+          "valor": 0,
+          "peso_pct": 0.1,
+          "valor_bruto": 0
+        },
+        {
+          "nome": "CAPAG do município",
+          "fonte": "Tesouro Nacional — CAPAG",
+          "label": "Risco médio",
+          "texto": "Situação fiscal municipal segundo nota declarada (C) nos critérios oficiais de capacidade de pagamento do ente.",
+          "valor": 7.5,
+          "peso_pct": 0.15,
+          "valor_bruto": 50
+        },
+        {
+          "nome": "Ajuste consolidador regulatório",
+          "fonte": "arredondamento do índice da dimensão",
+          "label": "",
+          "texto": "Diferença de 0,1 entre a combinação numérica imediatamente anterior (17,8) e o valor exibido (17,8) após arredondar a uma casa decimal.",
+          "valor": 0.05000000000000071,
+          "peso_pct": null,
+          "valor_bruto": 0.05000000000000071
+        }
+      ]
+    }
+  },
+  "dimensoes_oportunidade": {
+    "atratividade": {
+      "valor": 69,
+      "subfatores": [
+        {
+          "nome": "Relevância da substância (A1)",
+          "fonte": "ANM/config_scores master_substâncias",
+          "label": "Oportunidade alta",
+          "texto": "Substância MINÉRIO DE OURO mapeada com índice sintético 50,0 no quadro atual.",
+          "valor": 12.45,
+          "peso_pct": 0.25,
+          "valor_bruto": 50
+        },
+        {
+          "nome": "Espaço de mercado (gap) (A2)",
+          "fonte": "master_substancias.gap_pp",
+          "label": "Oportunidade média",
+          "texto": "Gap de mercado (1.4 p.p.) entre substância e benchmark interno.",
+          "valor": 9.95,
+          "peso_pct": 0.25,
+          "valor_bruto": 40
+        },
+        {
+          "nome": "Preço de mercado (A3)",
+          "fonte": "séries mercado interno",
+          "label": "Oportunidade muito alta",
+          "texto": "Preço médio monitorado (R$ 785.285.828,32/t).",
+          "valor": 18.95,
+          "peso_pct": 0.2,
+          "valor_bruto": 95
+        },
+        {
+          "nome": "Tendência de demanda (A4)",
+          "fonte": "curvas de mercado",
+          "label": "Oportunidade muito alta",
+          "texto": "Tendência de mercado registrada: Alta.",
+          "valor": 13.45,
+          "peso_pct": 0.15,
+          "valor_bruto": 90
+        },
+        {
+          "nome": "Valor da reserva por hectare (A5)",
+          "fonte": "val_reserva × área",
+          "label": "Oportunidade muito alta",
+          "texto": "Valor reserva/ha × área (2944821856.20 × 10000.05 ha).",
+          "valor": 14.2,
+          "peso_pct": 0.15,
+          "valor_bruto": 95
+        },
+        {
+          "nome": "Bônus mineral crítico",
+          "fonte": "master_substancias.mineral_critico_2025",
+          "label": "",
+          "texto": "Substância sem flag de criticidade: sem ajuste multiplicativo.",
+          "valor": 0,
+          "peso_pct": null,
+          "valor_bruto": 0
+        }
+      ]
+    },
+    "viabilidade": {
+      "valor": 31,
+      "subfatores": [
+        {
+          "nome": "Fase do processo (B1)",
+          "fonte": "ANM/fase",
+          "label": "Oportunidade baixa",
+          "texto": "Fase declarada Disponibilidade; posição no quadro de fases 5,0.",
+          "valor": 1.0277777777777777,
+          "peso_pct": 0.2,
+          "valor_bruto": 5
+        },
+        {
+          "nome": "Profundidade do dado geológico (B2)",
+          "fonte": "fase + recência de eventos (motor S31 v4)",
+          "label": "Oportunidade média",
+          "texto": "Profundidade documental e de fase (Disponibilidade): 30,0.",
+          "valor": 4.527777777777778,
+          "peso_pct": 0.15,
+          "valor_bruto": 30
+        },
+        {
+          "nome": "Infraestrutura logística (B3)",
+          "fonte": "IBGE/ports + malha logística",
+          "label": "Oportunidade baixa",
+          "texto": "Nenhuma ferrovia, porto ou hidrovia identificada na malha listada; distância de referência neutra usada (20 em escala interna).; posição infraestrutural 20,0 no mesmo quadro.",
+          "valor": 3.0277777777777777,
+          "peso_pct": 0.15,
+          "valor_bruto": 20
+        },
+        {
+          "nome": "Situação atual (B4)",
+          "fonte": "ativo/situação declarada",
+          "label": "Oportunidade baixa",
+          "texto": "Processo inativo ou encerrado; ou situação cadastral crítica.",
+          "valor": 0.7777777777777778,
+          "peso_pct": 0.15,
+          "valor_bruto": 5
+        },
+        {
+          "nome": "CFEM histórica produzida (B5)",
+          "fonte": "ANM/CFEM",
+          "label": "Oportunidade baixa",
+          "texto": "CFEM acumulada 0,0 → faixa 20,0.",
+          "valor": 2.0277777777777777,
+          "peso_pct": 0.1,
+          "valor_bruto": 20
+        },
+        {
+          "nome": "Autonomia fiscal do município (B6)",
+          "fonte": "RGF/receitas",
+          "label": "Oportunidade muito alta",
+          "texto": "Indicadores de autonomia e dívida consolidada.",
+          "valor": 9.027777777777779,
+          "peso_pct": 0.1,
+          "valor_bruto": 90
+        },
+        {
+          "nome": "Incentivos regionais (B7)",
+          "fonte": "incentivos_uf.score_b7 + linhas BNDES + mineral crítico",
+          "label": "Oportunidade muito alta",
+          "texto": "Base estadual 90,0; multiplicador composto 1× (BNDES e criticidade) → 90,0.",
+          "valor": 4.527777777777778,
+          "peso_pct": 0.05,
+          "valor_bruto": 90
+        },
+        {
+          "nome": "Bioma operacional (B8)",
+          "fonte": "IBGE/bioma",
+          "label": "Oportunidade média",
+          "texto": "Bioma Amazônia → 30,0.",
+          "valor": 1.5277777777777777,
+          "peso_pct": 0.05,
+          "valor_bruto": 30
+        },
+        {
+          "nome": "Área do processo (B9)",
+          "fonte": "declarada ANM",
+          "label": "Oportunidade muito alta",
+          "texto": "Área 10000.05 ha.",
+          "valor": 4.527777777777778,
+          "peso_pct": 0.05,
+          "valor_bruto": 90
+        }
+      ]
+    },
+    "seguranca": {
+      "valor": 42,
+      "subfatores": [
+        {
+          "nome": "Solidez geral (100 − Risk)",
+          "fonte": "consolidador risk_score",
+          "label": "Oportunidade baixa",
+          "texto": "Risco consolidado 80,0 → complemento 20,0.",
+          "valor": 10,
+          "peso_pct": 0.5,
+          "valor_bruto": 20
+        },
+        {
+          "nome": "Estabilidade documental",
+          "fonte": "gu_validade (gradiente temporal)",
+          "label": "Oportunidade alta",
+          "texto": "Sem data de validade da GU; referência neutra.",
+          "valor": 12.5,
+          "peso_pct": 0.25,
+          "valor_bruto": 50
+        },
+        {
+          "nome": "Histórico de cumprimento",
+          "fonte": "ANM autuações (valor + contagem)",
+          "label": "Oportunidade muito alta",
+          "texto": "Sem autuações mapeadas no recorte considerado; cumprimento aparente favorável.",
+          "valor": 17,
+          "peso_pct": 0.2,
+          "valor_bruto": 85
+        },
+        {
+          "nome": "Exposição a alertas DOU (Radar)",
+          "fonte": "sa2_v2 → c4",
+          "label": "Oportunidade alta",
+          "texto": "Sem carga de alertas DOU diretos; componente neutro-alinhado ao índice de oportunidade regulatória.",
+          "valor": 2.5,
+          "peso_pct": 0.05,
+          "valor_bruto": 50
+        }
+      ]
+    },
+    "penalidades": [
+      "Encerrado/inativo (cap 20)",
+      "Veto socioambiental (cap 25)",
+      "Multiplicador aplicado (×0,6)"
+    ]
+  },
+  "os_conservador": 12,
+  "os_moderado": 12,
+  "os_arrojado": 12,
+  "os_label_conservador": "Nao recomendado",
+  "os_label_moderado": "Nao recomendado",
+  "os_label_arrojado": "Nao recomendado",
+  "os_breakdown": {
+    "atratividade": 69,
+    "viabilidade": 31,
+    "seguranca": 42
+  },
+  "detail": {
+    "scoreSubstancia": 50,
+    "scoreFase": 5,
+    "scoreQualidade": 30,
+    "scoreComunidades": 0,
+    "scoreCAPAG_rs": 0,
+    "scoreCaducidade": 0,
+    "scoreRegTempo": 0,
+    "scoreRegPendencias": 0,
+    "scoreRegAlertas": 0,
+    "a1": 0,
+    "a2": 0,
+    "a3": 0,
+    "a4": 0,
+    "a5": 0,
+    "b1": 0,
+    "b2": 0,
+    "b3": 0,
+    "b4": 0,
+    "b5": 0,
+    "b6": 0,
+    "b7": 0,
+    "c1": 0,
+    "c2": 0,
+    "c3": 0,
+    "c4": 0,
+    "c5": 0,
+    "c6": 0
+  },
+  "fallbacks_usados": [
+    "s31_v4_20260430"
+  ]
+}

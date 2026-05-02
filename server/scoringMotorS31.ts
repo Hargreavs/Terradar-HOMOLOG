@@ -157,13 +157,52 @@ function getSql() {
   if (!_sql) {
     _sql = postgres(dbUrl, {
       max: 20,
-      idle_timeout: 0,
-      connect_timeout: 60,
+      idle_timeout: 30,
+      max_lifetime: 60 * 5,
+      connect_timeout: 30,
       prepare: false,
       ssl: /supabase|amazonaws/i.test(dbUrl) ? 'require' : false,
+      connection: {
+        statement_timeout: '60000',
+        idle_in_transaction_session_timeout: '60000',
+        application_name: 'batch-scores-v4',
+      },
     })
   }
   return _sql
+}
+
+/** URL Postgres direct (5432) para batch; fallback conserva CI quando só DATABASE_URL existe. */
+const batchDbUrl =
+  process.env.DATABASE_URL_BATCH ??
+  process.env.DATABASE_URL ??
+  process.env.VITE_DATABASE_URL
+let _sqlBatch: ReturnType<typeof postgres> | null = null
+
+/**
+ * Pool dedicado ao batch (ligação direct ao PostgreSQL, não transaction pooler 6543).
+ * Usar só em `batch-scores.ts` via `runS31MotorAndPersist(..., { sqlClient: getSqlBatch() })`.
+ */
+export function getSqlBatch() {
+  if (!batchDbUrl)
+    throw new Error(
+      'DATABASE_URL_BATCH or DATABASE_URL or VITE_DATABASE_URL required for batch SQL',
+    )
+  if (!_sqlBatch) {
+    _sqlBatch = postgres(batchDbUrl, {
+      max: 10,
+      idle_timeout: 60,
+      connect_timeout: 30,
+      max_lifetime: 60 * 30,
+      ssl: /supabase|amazonaws/i.test(batchDbUrl) ? 'require' : false,
+      connection: {
+        statement_timeout: '60000',
+        idle_in_transaction_session_timeout: '60000',
+        application_name: 'batch-scores-direct',
+      },
+    })
+  }
+  return _sqlBatch
 }
 
 export type ProcessoMotorRow = {
@@ -401,10 +440,12 @@ const SCORE_FASE_OS: Record<string, number> = {
 }
 
 let cfgCache: Record<string, unknown> | null = null
-export async function loadConfigScores(): Promise<Record<string, unknown>> {
+export async function loadConfigScores(
+  sql?: ReturnType<typeof postgres>,
+): Promise<Record<string, unknown>> {
   if (sessionMassCaches) return sessionMassCaches.configByAba
   if (cfgCache) return cfgCache
-  const s = getSql()
+  const s = sql ?? getSql()
   const rows = await s`SELECT aba, dados FROM config_scores`
   cfgCache = {}
   for (const r of rows as unknown as { aba: string; dados: unknown }[]) {
@@ -512,11 +553,11 @@ export function dimGeologico(
 export async function dimAmbiental(
   p: ProcessoMotorRow,
   ls: LayerRow[],
-  options?: { returnSubfatores?: boolean },
+  options?: { returnSubfatores?: boolean; sql?: ReturnType<typeof postgres> },
 ): Promise<number | DimensaoOutput> {
   const want = !!options?.returnSubfatores
   const subs: SubfatorOutput[] = []
-  const s = getSql()
+  const s = options?.sql ?? getSql()
   const t1 = ls.find(ti)
   const q1 = ls.find(qx)
   const ucp = ls.filter(ucpi)
@@ -1644,8 +1685,11 @@ function oLab(n: number, ativo: boolean) {
   return { l: 'Nao recomendado', c: '#E24B4A' }
 }
 
-export async function loadProcesso(id: string): Promise<ProcessoMotorRow | null> {
-  const s = getSql()
+export async function loadProcesso(
+  id: string,
+  sql?: ReturnType<typeof postgres>,
+): Promise<ProcessoMotorRow | null> {
+  const s = sql ?? getSql()
   const rows = (await s`
     SELECT
       p.id, p.numero, p.uf, p.municipio_ibge, p.substancia, p.substancia_familia, p.fase, p.regime,
@@ -1672,26 +1716,35 @@ export async function loadProcesso(id: string): Promise<ProcessoMotorRow | null>
   `) as ProcessoMotorRow[]
   return rows[0] ?? null
 }
-export async function loadLayers(id: string) {
-  const s2 = getSql()
+export async function loadLayers(
+  id: string,
+  sql?: ReturnType<typeof postgres>,
+) {
+  const s2 = sql ?? getSql()
   return (await s2`
     SELECT tipo, nome, distancia_km, sobreposicao_pct FROM territorial_layers WHERE processo_id = ${id}
   `) as LayerRow[]
 }
-export async function loadSub(n: string | null) {
+export async function loadSub(
+  n: string | null,
+  sql?: ReturnType<typeof postgres>,
+) {
   if (!n?.trim()) return null
   const k = n.trim().toUpperCase()
   if (sessionMassCaches?.subByUpper.size) {
     return sessionMassCaches.subByUpper.get(k) ?? null
   }
-  const sx = getSql()
+  const sx = sql ?? getSql()
   const r = (await sx`
     SELECT gap_pp, preco_brl, preco_usd, tendencia, val_reserva_brl_ha, mineral_critico_2025
     FROM master_substancias WHERE UPPER(substancia_anm) = UPPER(${n}) LIMIT 1
   `) as SubData[]
   return r[0] ?? null
 }
-export async function loadCpt(uf: string | null) {
+export async function loadCpt(
+  uf: string | null,
+  sql?: ReturnType<typeof postgres>,
+) {
   if (!uf?.trim()) return 1
   const u = uf.trim()
   if (sessionMassCaches?.cptByUf.has(u)) {
@@ -1699,7 +1752,7 @@ export async function loadCpt(uf: string | null) {
     return m != null && Number.isFinite(m) ? m : 1
   }
   try {
-    const sx = getSql()
+    const sx = sql ?? getSql()
     const r = (await sx`SELECT public.fn_cpt_multiplicador_uf(${uf}::text) AS m`) as { m: string }[]
     return r[0]?.m != null ? Number(r[0].m) : 1
   } catch {
@@ -1707,10 +1760,13 @@ export async function loadCpt(uf: string | null) {
   }
 }
 
-async function loadCptMunicipio(municipioIbge: string | null): Promise<string | null> {
+async function loadCptMunicipio(
+  municipioIbge: string | null,
+  sql?: ReturnType<typeof postgres>,
+): Promise<string | null> {
   if (municipioIbge == null || String(municipioIbge).trim() === '') return null
   try {
-    const sx = getSql()
+    const sx = sql ?? getSql()
     const r = (await sx`
       SELECT indice_cpt_nivel FROM v_cpt_municipio_resumo WHERE municipio_ibge = ${String(municipioIbge).trim()} LIMIT 1
     `) as { indice_cpt_nivel: string | null }[]
@@ -1721,8 +1777,11 @@ async function loadCptMunicipio(municipioIbge: string | null): Promise<string | 
   }
 }
 
-async function loadAlertasDirecionados(processoId: string): Promise<AlertaDirecionadoRow[]> {
-  const sx = getSql()
+async function loadAlertasDirecionados(
+  processoId: string,
+  sql?: ReturnType<typeof postgres>,
+): Promise<AlertaDirecionadoRow[]> {
+  const sx = sql ?? getSql()
   const rows = (await sx`
     SELECT re.categoria, (CURRENT_DATE - re.data_evento)::int AS dias_desde
     FROM radar_eventos_processos rep
@@ -1733,15 +1792,21 @@ async function loadAlertasDirecionados(processoId: string): Promise<AlertaDireci
   `) as { categoria: string; dias_desde: number }[]
   return rows.map((r) => ({ categoria: String(r.categoria ?? ''), dias_desde: Number(r.dias_desde) }))
 }
-export async function loadCfem(numero: string) {
-  const sx = getSql()
+export async function loadCfem(
+  numero: string,
+  sql?: ReturnType<typeof postgres>,
+) {
+  const sx = sql ?? getSql()
   const r = (await sx`
     SELECT COALESCE(SUM(valor_recolhido),0)::float8 AS t FROM cfem_arrecadacao WHERE processo_numero = ${numero}
   `) as { t: string }[]
   return Number(r[0]?.t ?? 0)
 }
-export async function loadAutu(num: string) {
-  const sx = getSql()
+export async function loadAutu(
+  num: string,
+  sql?: ReturnType<typeof postgres>,
+) {
+  const sx = sql ?? getSql()
   const r = (await sx`
     SELECT COUNT(*)::int AS c, COALESCE(SUM(COALESCE(valor,0)),0)::float8 AS t FROM cfem_autuacao
     WHERE processo_minerario = ${num} AND (ano_publicacao IS NULL OR ano_publicacao >= EXTRACT(YEAR FROM NOW())::int - 2)
@@ -1757,12 +1822,15 @@ function bndesRowMatch(sub: string, row: BndesRow): boolean {
   if (row.linha != null && String(row.linha).toLowerCase().includes(low)) return true
   return false
 }
-export async function loadBndes(sub: string | null) {
+export async function loadBndes(
+  sub: string | null,
+  sql?: ReturnType<typeof postgres>,
+) {
   if (!sub?.trim()) return false
   if (sessionMassCaches?.linhasBndes.length) {
     return sessionMassCaches.linhasBndes.some((r) => bndesRowMatch(sub, r))
   }
-  const sx = getSql()
+  const sx = sql ?? getSql()
   const t = await sx`
     SELECT 1 FROM linhas_bndes WHERE
       (minerais_elegiveis IS NOT NULL AND minerais_elegiveis ILIKE ${'%' + sub + '%'})
@@ -1779,6 +1847,8 @@ export async function runS31MotorAndPersist(
     massCaches?: S31MassCaches
     returnSubfatores?: boolean
     scoresFonte?: string
+    /** Cliente Postgres direct (batch) ou default pooler; usado em TODAS as queries SQL do motor quando definido. */
+    sqlClient?: ReturnType<typeof postgres>
   } = {},
 ): Promise<ScoreResult> {
   const prevSess = sessionMassCaches
@@ -1796,6 +1866,7 @@ export async function runS31MotorAndPersist(
     throw new Error('scoresFonte invalido')
   }
   const scoresFonte = sfRaw
+  const sMotor = opts.sqlClient ?? getSql()
   let p: ProcessoMotorRow | null
   let ls: LayerRow[]
   let sub: SubData | null
@@ -1807,19 +1878,26 @@ export async function runS31MotorAndPersist(
   let bnd: boolean
   let alertas: AlertaDirecionadoRow[]
   try {
-  p = await loadProcesso(processoId)
+  p = await loadProcesso(processoId, sMotor)
   if (!p) throw new Error('Processo nao encontrado: ' + processoId)
   if (sessionMassCaches?.incentivoB7ByUf.size && p.uf) {
     const u = p.uf.trim()
     if (sessionMassCaches.incentivoB7ByUf.has(u)) p.incentivo_b7 = sessionMassCaches.incentivoB7ByUf.get(u) ?? null
   }
   ;[ls, sub, cpt, cptMun, cfg, aut, cfe, bnd, alertas] = await Promise.all([
-    loadLayers(processoId), loadSub(p.substancia), loadCpt(p.uf), loadCptMunicipio(p.municipio_ibge), loadConfigScores(),
-    loadAutu(p.numero), loadCfem(p.numero), loadBndes(p.substancia), loadAlertasDirecionados(processoId),
+    loadLayers(processoId, sMotor),
+    loadSub(p.substancia, sMotor),
+    loadCpt(p.uf, sMotor),
+    loadCptMunicipio(p.municipio_ibge, sMotor),
+    loadConfigScores(sMotor),
+    loadAutu(p.numero, sMotor),
+    loadCfem(p.numero, sMotor),
+    loadBndes(p.substancia, sMotor),
+    loadAlertasDirecionados(processoId, sMotor),
   ])
   const dgR = dimGeologico(p, cfg, cfe, { returnSubfatores: wantSub })
   const dg = typeof dgR === 'number' ? dgR : dgR.valor
-  const daR = await dimAmbiental(p, ls, { returnSubfatores: wantSub })
+  const daR = await dimAmbiental(p, ls, { returnSubfatores: wantSub, sql: sMotor })
   const da = typeof daR === 'number' ? daR : daR.valor
   const dsR = dimSocial(p, ls, cpt, cptMun, { returnSubfatores: wantSub })
   const ds = typeof dsR === 'number' ? dsR : dsR.valor
@@ -1856,16 +1934,15 @@ export async function runS31MotorAndPersist(
   const dimO = { atratividade: { valor: oa, subfatores: [] }, viabilidade: { valor: ov, subfatores: [] }, seguranca: { valor: os0, subfatores: [] }, penalidades: R }
   const dimRJson = JSON.parse(JSON.stringify(dimR)) as JSONValue
   const dimOJson = JSON.parse(JSON.stringify(dimO)) as JSONValue
-  const s = getSql()
   if (persist) {
-    const ex = (await s`SELECT scores_fonte FROM scores WHERE processo_id = ${processoId} LIMIT 1`) as { scores_fonte: string | null }[]
+    const ex = (await sMotor`SELECT scores_fonte FROM scores WHERE processo_id = ${processoId} LIMIT 1`) as { scores_fonte: string | null }[]
     const skip = ex[0]?.scores_fonte?.startsWith('manual_') ?? false
     if (!skip) {
-      await s`
+      await sMotor`
         INSERT INTO scores (processo_id, risk_score, risk_label, risk_cor, os_conservador, os_moderado, os_arrojado, os_label, os_classificacao,
           dimensoes_risco, dimensoes_oportunidade, calculated_at, scores_fonte)
         VALUES (${processoId}::uuid, ${risk}, ${rI.l}, ${rI.c}, ${ocI}, ${omI}, ${oa2I}, ${osU}, ${osU},
-          ${s.json(dimRJson)}::jsonb, ${s.json(dimOJson)}::jsonb, NOW(), ${scoresFonte})
+          ${sMotor.json(dimRJson)}::jsonb, ${sMotor.json(dimOJson)}::jsonb, NOW(), ${scoresFonte})
         ON CONFLICT (processo_id) DO UPDATE SET
           risk_score = EXCLUDED.risk_score, risk_label = EXCLUDED.risk_label, risk_cor = EXCLUDED.risk_cor,
           os_conservador = EXCLUDED.os_conservador, os_moderado = EXCLUDED.os_moderado, os_arrojado = EXCLUDED.os_arrojado,
