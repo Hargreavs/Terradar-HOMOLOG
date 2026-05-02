@@ -7,6 +7,7 @@ import mapRouter from './routes/map'
 import processosViewportRouter from './routes/processos-viewport'
 import radarRouter from './routes/radar'
 import { scoreBreakdownRouter } from './routes/scoreBreakdown'
+import { satelliteRouter } from './routes/satellite'
 import { POST } from '../app/api/generate-report/route'
 import { supabase } from './supabase'
 import { pool } from './pool'
@@ -35,6 +36,7 @@ app.use(mapRouter)
 app.use(processosViewportRouter)
 app.use(radarRouter)
 app.use(scoreBreakdownRouter)
+app.use(satelliteRouter)
 
 function hasManualRiskScore(
   scores: Record<string, unknown> | null,

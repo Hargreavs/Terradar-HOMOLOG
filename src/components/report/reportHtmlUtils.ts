@@ -151,13 +151,13 @@ export function fmtValorInsituUsdMiPerHa(n: number): string {
 }
 
 /**
- * Preço spot USD no PDF: `master_substancias.preco_usd` já está na unidade de
- * `preco_unidade_label` (kg, t, oz, …) — não converter a partir de USD/t canónico.
- * Fallback: `preco_brl` / câmbio quando `preco_usd` vier vazio.
+ * Preço spot no PDF: usa `preco_oz_usd` vindo de `buildReportData` — já na escala
+ * certa para o rótulo (USD/oz quando `unidade_preco` é oz com master em USD/t;
+ * USD/t para demais unidades). Fallback: `preco_brl` / ptax.
  */
 export function formatUsdSpotDeclaradoMaster(
   data: {
-    preco_usd_por_t: number | null
+    preco_oz_usd: number
     preco_brl_por_t: number | null
     ptax: number
     preco_unidade_label: string
@@ -165,10 +165,8 @@ export function formatUsdSpotDeclaradoMaster(
   lang: 'pt' | 'en',
 ): string {
   let usd =
-    data.preco_usd_por_t != null &&
-    Number.isFinite(data.preco_usd_por_t) &&
-    data.preco_usd_por_t > 0
-      ? data.preco_usd_por_t
+    Number.isFinite(data.preco_oz_usd) && data.preco_oz_usd > 0
+      ? data.preco_oz_usd
       : null
   if (
     usd == null &&

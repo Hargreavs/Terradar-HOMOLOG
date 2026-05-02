@@ -11,9 +11,14 @@ if (!supabaseUrl || !serviceRoleKey) {
   )
 }
 
-const FETCH_TIMEOUT_MS = Number(
+const rawFetchTimeout = Number(
   process.env.SUPABASE_FETCH_TIMEOUT_MS ?? '30000',
 )
+/** Evita TimeoutNegativeWarning se o .env tiver valor inválido (ex.: número negativo). */
+const FETCH_TIMEOUT_MS =
+  Number.isFinite(rawFetchTimeout) && rawFetchTimeout >= 0
+    ? Math.floor(rawFetchTimeout)
+    : 30_000
 
 /**
  * Fetch com timeout via AbortController próprio.

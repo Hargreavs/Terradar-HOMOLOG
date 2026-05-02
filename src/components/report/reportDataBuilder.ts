@@ -23,9 +23,11 @@ import type { ScoreBreakdownPayload, SubfatorOutput } from '../../types/scoreBre
 import {
   fetchProcessoCompleto,
   fetchScoreBreakdownForReport,
+  fetchTerritorialAmbiental,
   type AnaliseTerritorial,
   type ScoreAutoResult,
 } from '../../lib/processoApi'
+import type { TerritorialAmbientalResponse } from '../../types/territorialAmbiental'
 import {
   capagIndicadorResolvido,
   fonteDividaExibicao,
@@ -743,6 +745,50 @@ function dedupeLayersByTerritorialKey(layers: LayerData[]): LayerData[] {
   return out
 }
 
+/**
+ * Por categoria (`tipo`): se há sobreposição, lista até **2** sobrepostos (maior `pct_sobreposicao`, desempate `distancia_km`); caso contrário, só o mais próximo.
+ * Compacta a tabela da pág. 3 (PDF) preservando aquíferos múltiplos sobrepostos e sítios não sobrepostos mais distantes.
+ */
+function reduzirLayersMaisProximoPorCategoria(
+  layers: LayerData[],
+): LayerData[] {
+  const grupos = new Map<string, LayerData[]>()
+  for (const l of layers) {
+    const k = String(l.tipo ?? '').trim()
+    if (k === '') continue
+    if (!grupos.has(k)) grupos.set(k, [])
+    grupos.get(k)!.push(l)
+  }
+
+  const out: LayerData[] = []
+  for (const [, itens] of grupos) {
+    if (itens.length === 0) continue
+    const sobrepostos = itens.filter((i) => i.sobreposto === true)
+    if (sobrepostos.length > 0) {
+      const top2 = [...sobrepostos]
+        .sort((a, b) => {
+          const pctA = a.pct_sobreposicao ?? 0
+          const pctB = b.pct_sobreposicao ?? 0
+          if (pctA !== pctB) return pctB - pctA
+          return a.distancia_km - b.distancia_km
+        })
+        .slice(0, 2)
+      out.push(...top2)
+    } else {
+      const maisProx = itens.reduce((a, b) =>
+        a.distancia_km <= b.distancia_km ? a : b,
+      )
+      out.push(maisProx)
+    }
+  }
+
+  out.sort((a, b) => {
+    if (a.sobreposto !== b.sobreposto) return a.sobreposto ? -1 : 1
+    return a.distancia_km - b.distancia_km
+  })
+  return out
+}
+
 function normalizeTipoLayer(raw: unknown): string {
   const k = (typeof raw === 'string' ? raw : String(raw ?? '')).trim()
   switch (k) {
@@ -785,6 +831,9 @@ function buildLayersFromApi(
         sobreposto,
         tag_class: sobreposto ? 'ta' : 'tg',
         tag_label: sobreposto ? tagSobre : tagNao,
+        ...(sobreposto && Number.isFinite(sobrePct) && sobrePct > 0
+          ? { pct_sobreposicao: sobrePct }
+          : {}),
       }
     }),
   )
@@ -818,6 +867,56 @@ function keepClosestPerKey<T extends { distancia_km: number }>(
     if (seen.has(k)) continue
     seen.add(k)
     out.push(item)
+  }
+  return out
+}
+
+/**
+ * Sítios arqueológicos e APP hídrica (`fn_territorial_analysis_ambiental`) → linhas
+ * da tabela Sobreposições do PDF (fn_territorial_analysis sozinha não as inclui).
+ */
+function layersAmbientalParaPdf(
+  ambiental: TerritorialAmbientalResponse | null | undefined,
+  tagSobre: string,
+  tagNao: string,
+): LayerData[] {
+  if (!ambiental) return []
+  const out: LayerData[] = []
+  for (const sa of ambiental.sitios_arqueologicos ?? []) {
+    if (sa == null) continue
+    const distancia_km = Number(sa.distancia_km)
+    if (!Number.isFinite(distancia_km)) continue
+    const sobreposto = distancia_km <= 0.5
+    const nomeRaw = sa.nome?.trim()
+    const nome = nomeRaw && nomeRaw !== '' ? nomeRaw : `Sítio ${sa.id}`
+    const detalhes =
+      [sa.classificacao, sa.tipo_bem]
+        .filter((x) => x != null && String(x).trim() !== '')
+        .map(String)
+        .join(' · ') || 'IPHAN'
+    out.push({
+      tipo: 'Sítio arqueológico',
+      nome,
+      detalhes,
+      distancia_km,
+      sobreposto,
+      tag_class: sobreposto ? 'ta' : 'tg',
+      tag_label: sobreposto ? tagSobre : tagNao,
+    })
+  }
+  const app = ambiental.app_hidrica
+  if (app != null && Number(app.overlap_pct ?? 0) > 0) {
+    const pct = Number(app.overlap_pct)
+    out.push({
+      tipo: 'APP hídrica',
+      nome: 'Sobreposição com APP',
+      detalhes: `${pct.toFixed(1)}% da área`,
+      distancia_km: 0,
+      sobreposto: true,
+      tag_class: 'ta',
+      tag_label: tagSobre,
+      pct_sobreposicao: pct,
+    })
   }
   return out
 }
@@ -1232,7 +1331,10 @@ export async function buildReportData(
     return x === '' ? t.nd : x
   }
 
-  const api = await fetchProcessoCompleto(numeroProcesso)
+  const [api, ambiental] = await Promise.all([
+    fetchProcessoCompleto(numeroProcesso),
+    fetchTerritorialAmbiental(numeroProcesso).catch((): null => null),
+  ])
   const pendenciasOrdenadas = [...(api.pendencias ?? [])].sort((a, b) => {
     const pa = a.status === 'CRITICA' ? 0 : 1
     const pb = b.status === 'CRITICA' ? 0 : 1
@@ -1877,18 +1979,22 @@ export async function buildReportData(
     cfem_estimada_ha: cfemEstimadaHaFinal,
 
     mapa_base64: mapBase64 && mapBase64.length > 20 ? mapBase64 : '',
-    layers:
-      analise != null
-        ? buildLayersFromPostGIS(analise, t.tagSobreposto, t.tagNao)
-        : Array.isArray(api.territorial?.layers) &&
-            api.territorial.layers.length > 0
-          ? buildLayersFromApi(
-              api.territorial.layers as Record<string, unknown>[],
-              nd,
-              t.tagSobreposto,
-              t.tagNao,
-            )
-          : [],
+    layers: reduzirLayersMaisProximoPorCategoria(
+      dedupeLayersByTerritorialKey([
+        ...(analise != null
+          ? buildLayersFromPostGIS(analise, t.tagSobreposto, t.tagNao)
+          : Array.isArray(api.territorial?.layers) &&
+              api.territorial.layers.length > 0
+            ? buildLayersFromApi(
+                api.territorial.layers as Record<string, unknown>[],
+                nd,
+                t.tagSobreposto,
+                t.tagNao,
+              )
+            : []),
+        ...layersAmbientalParaPdf(ambiental, t.tagSobreposto, t.tagNao),
+      ]),
+    ),
     infraestrutura: appendSedeInfraRow(
       analise,
       Array.isArray(api.territorial?.infra) && api.territorial.infra.length > 0
