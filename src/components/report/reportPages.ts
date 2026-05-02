@@ -388,15 +388,15 @@ export function buildPage3_Territorio(
   <div class="ptag">TERRADAR ${sanitizeReportText(data.processo)}</div>
   <h1>${sanitizeReportText(t.p3Tag)}</h1>
   <div class="hl">${sanitizeReportText(llm.headline)}</div>
-  <p class="lead">${paragraphsFromLLM(llm.lead)}</p>
+  <p class="lead lead-p3-tight">${paragraphsFromLLM(llm.lead)}</p>
   ${mapBlock}
-  <h2 style="margin-top:20px;">${sanitizeReportText(t.sobreposicoes)}</h2>
+  <h2>${sanitizeReportText(t.sobreposicoes)}</h2>
   <table style="table-layout:fixed;">
     <thead><tr><th style="width:18%;">${sanitizeReportText(t.thAreaProt)}</th><th style="width:42%;">${sanitizeReportText(t.thMaisProxima)}</th><th style="width:16%;">${sanitizeReportText(t.thDistancia)}</th><th style="width:24%;">${sanitizeReportText(t.thSobreposicao)}</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>
 
-  <h2 style="margin-top:20px;">${sanitizeReportText(t.logisticaTitulo)}</h2>
+  <h2>${sanitizeReportText(t.logisticaTitulo)}</h2>
   <p style="font-size:8pt;color:var(--text-light);margin-bottom:3px;">${paragraphsFromLLM(llm.logistica_texto)}</p>
 
   <table style="table-layout:fixed;">
@@ -491,7 +491,7 @@ export function buildPage4_Mercado(
       <div class="kpi-val gold">${sanitizeReportText(
         formatUsdSpotDeclaradoMaster(
           {
-            preco_usd_por_t: data.preco_usd_por_t,
+            preco_oz_usd: data.preco_oz_usd,
             preco_brl_por_t: data.preco_brl_por_t,
             ptax: data.ptax,
             preco_unidade_label: data.preco_unidade_label,

@@ -280,18 +280,212 @@ nouns (company, municipality, program, and BNDES line names) in Portuguese.
   return ''
 }
 
+type CptHintForValidation = {
+  qtd_total?: number
+  nivel?: string
+  categorias_causou?: string[]
+}
+
+function extrairCptHintMeta(d: ReportData): CptHintForValidation | null {
+  const c = d.subfatores_contexto
+  if (!c) return null
+  const chunks: string[] = []
+  const h = c.conflitos_cpt_hint
+  if (typeof h === 'string' && h.trim()) chunks.push(h)
+  for (const item of c.riscoPorDim?.social ?? []) {
+    const t = item.texto?.trim()
+    if (t) chunks.push(t)
+  }
+  const blob = chunks.join('\n')
+  if (!blob.trim()) return null
+
+  let qtd_total: number | undefined
+  const m1 = blob.match(/\b(\d{1,3})\s+conflitos?\b/i)
+  if (m1) qtd_total = parseInt(m1[1], 10)
+  if (qtd_total == null) {
+    const m2 = blob.match(
+      /\bconflitos?\s+(?:CPT|territoriais)?[^.;\d\n]{0,50}(\d{1,3})\b/i,
+    )
+    if (m2) qtd_total = parseInt(m2[1], 10)
+  }
+  if (qtd_total == null) {
+    const m3 = blob.match(/\b(\d{1,3})\s+(?:casos?|registros?)\b/i)
+    if (m3 && /CPT|territorial/i.test(blob)) qtd_total = parseInt(m3[1], 10)
+  }
+
+  let nivel: string | undefined
+  const mn = blob.match(/\bn[ií]vel\s+(alto|moderad[oa]|baix[oa])\b/i)
+  if (mn) nivel = mn[1].toLowerCase()
+  if (!nivel) {
+    const mn2 = blob.match(
+      /\bCPT[^.;\n]{0,120}\b(alto|moderad[oa]|baix[oa])\b/i,
+    )
+    if (mn2) nivel = mn2[1].toLowerCase()
+  }
+  if (!nivel) {
+    const mn3 = blob.match(
+      /\b(alto|moderad[oa]|baix[oa])\s+(?:nível|nivel)\s+CPT\b/i,
+    )
+    if (mn3) nivel = mn3[1].toLowerCase()
+  }
+
+  const categorias_causou: string[] = []
+  if (/minerad/i.test(blob)) categorias_causou.push('Mineradora')
+
+  if (
+    qtd_total == null &&
+    !nivel &&
+    categorias_causou.length === 0
+  ) {
+    return null
+  }
+  return {
+    qtd_total,
+    nivel,
+    ...(categorias_causou.length ? { categorias_causou } : {}),
+  }
+}
+
+const NUM_EXTENSO_EN: Record<number, string> = {
+  1: 'one',
+  2: 'two',
+  3: 'three',
+  4: 'four',
+  5: 'five',
+  6: 'six',
+  7: 'seven',
+  8: 'eight',
+  9: 'nine',
+  10: 'ten',
+  11: 'eleven',
+  12: 'twelve',
+}
+
+function extensoPtVariants(n: number): string[] {
+  const words: Record<number, string> = {
+    1: 'um',
+    2: 'dois',
+    3: 'três',
+    4: 'quatro',
+    5: 'cinco',
+    6: 'seis',
+    7: 'sete',
+    8: 'oito',
+    9: 'nove',
+    10: 'dez',
+    11: 'onze',
+    12: 'doze',
+  }
+  const w = words[n]
+  if (!w) return []
+  return w === 'três' ? ['três', 'tres'] : [w]
+}
+
+function nivelPresenteNoTexto(
+  lower: string,
+  nivel: string,
+  lang: ReportLang,
+): boolean {
+  const n = nivel.toLowerCase()
+  if (lower.includes(n)) return true
+  if (n === 'moderado' || n === 'moderada') {
+    if (lower.includes('moderad')) return true
+  }
+  if (lang !== 'en') return false
+  const map: Record<string, string[]> = {
+    alto: ['high'],
+    moderado: ['moderate'],
+    moderada: ['moderate'],
+    baixo: ['low'],
+    baixa: ['low'],
+  }
+  for (const alt of map[n] ?? []) {
+    if (lower.includes(alt)) return true
+  }
+  return false
+}
+
+function validarDimSocCPT(
+  dimSoc: string,
+  hint: CptHintForValidation | null,
+  lang: ReportLang,
+  processo: string,
+): void {
+  if (
+    !hint ||
+    hint.qtd_total == null ||
+    hint.nivel == null ||
+    String(hint.nivel).trim() === ''
+  ) {
+    return
+  }
+  const missing: string[] = []
+  const text = String(dimSoc ?? '')
+  const lower = text.toLowerCase()
+
+  const numLiteral = String(hint.qtd_total)
+  const extensoCandidates =
+    lang === 'en'
+      ? ([NUM_EXTENSO_EN[hint.qtd_total]].filter(Boolean) as string[])
+      : extensoPtVariants(hint.qtd_total)
+  const hasNum =
+    lower.includes(numLiteral) ||
+    extensoCandidates.some((w) => lower.includes(w.toLowerCase()))
+  if (!hasNum) missing.push('qtd_total')
+
+  if (!nivelPresenteNoTexto(lower, hint.nivel, lang)) {
+    missing.push('nivel')
+  }
+
+  if (
+    Array.isArray(hint.categorias_causou) &&
+    hint.categorias_causou.some((c) => /minerad/i.test(c)) &&
+    !/minerad|mining companies|mining company/i.test(lower)
+  ) {
+    missing.push('mineradora')
+  }
+
+  if (
+    /distância segura|distancia segura|safe distance|embora[^.]{0,120}distant|although[^.]{0,120}distant/i.test(
+      text,
+    )
+  ) {
+    missing.push('atenuacao_proibida')
+  }
+
+  if (missing.length > 0) {
+    console.warn(
+      '[CPT] dim_soc não conformidade:',
+      missing,
+      'processo:',
+      processo,
+    )
+  }
+}
+
+type ClaudeCallOptions = {
+  retries?: number
+  temperature?: number
+  max_tokens?: number
+}
+
 async function callClaude<T>(
   userPrompt: string,
   system: string,
   lang: ReportLang = 'pt',
-  retries = 2,
+  options: ClaudeCallOptions = {},
 ): Promise<T | null> {
+  const retries = options.retries ?? 2
+  const maxTokens = options.max_tokens ?? 1000
   const finalUser = langUserPrefix(lang) + userPrompt
   for (let i = 0; i <= retries; i++) {
     try {
       const response = await anthropic.messages.create({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
+        max_tokens: maxTokens,
+        ...(options.temperature != null
+          ? { temperature: options.temperature }
+          : {}),
         system,
         messages: [{ role: 'user', content: finalUser }],
       })
@@ -419,6 +613,36 @@ function substanciaDeclarada(d: ReportData): string {
   return s || 'a substância declarada no cadastro ANM'
 }
 
+/** UF extraída de `municipio` no formato "Cidade/UF" (cadastro / PDF). */
+function ufExtraidaDoMunicipioReport(d: ReportData): string {
+  const m = String(d.municipio ?? '').match(/\/([A-Z]{2})\s*$/)
+  return m ? m[1] : ''
+}
+
+function blocoAncoraLocalizacaoProcesso(d: ReportData): string {
+  const uf = ufExtraidaDoMunicipioReport(d)
+  const loc =
+    uf !== ''
+      ? `município ${d.municipio}, UF ${uf}`
+      : `município ${d.municipio}`
+  return `- LOCALIZAÇÃO DO PROCESSO (ÂNCORA OBRIGATÓRIA): ${loc}.
+- PROIBIDO citar outras UFs ou estados que não ${uf !== '' ? `«${uf}» (única UF válida neste processo)` : 'a UF indicada no sufixo Cidade/UF do cadastro ANM'}. NUNCA inferir UF pelo nome do município (ex.: "Minaçu" não é Minas Gerais).
+- Quando mencionar incentivos regionais, programas estaduais ou contexto territorial dependente de estado, referir-se APENAS ${uf !== '' ? `ao estado da UF ${uf}` : 'à UF do processo conforme cadastro ANM'}.
+
+`
+}
+
+function blocoIdiomaObrigatorio(lang: ReportLang): string {
+  if (lang === 'en') {
+    return `LANGUAGE (mandatory): English (US). The entire response must be in English. Do not use Portuguese or other languages in prose (e.g. "embora", "contudo", "porém"). Use only English connectors such as "while", "however", "although", "whereas".
+
+`
+  }
+  return `IDIOMA OBRIGATÓRIO: Português brasileiro. A resposta inteira deve estar em português. PROIBIDO usar palavras em inglês ou outros idiomas em prosa (ex.: "while", "however", "although", "whereas", "though"). Use apenas conectores em português: "embora", "contudo", "porém", "enquanto", "ao passo que", "todavia".
+
+`
+}
+
 /**
  * Regras compartilhadas: uma única substância; proibir outras commodities; ferrovia ≠ ferro.
  * Inserir no início dos prompts que geram texto sobre geologia, mercado ou recurso mineral.
@@ -433,7 +657,8 @@ function blocoRegraSubstanciaUnica(substancia: string): string {
 
 function buildPromptSumario(d: ReportData): string {
   const substancia = substanciaDeclarada(d)
-  return `Dados do processo:
+  const lang: ReportLang = d.lang ?? 'pt'
+  return `${blocoIdiomaObrigatorio(lang)}Dados do processo:
 ${blocoRegraSubstanciaUnica(substancia)}
 - Processo: ${d.processo}, Substância: ${d.substancia_anm}
 - Município: ${d.municipio}, Área: ${d.area_ha} ha
@@ -458,6 +683,7 @@ Gere JSON:
 
 function buildPromptTerritorio(d: ReportData): string {
   const substancia = substanciaDeclarada(d)
+  const lang: ReportLang = d.lang ?? 'pt'
   const layersText = d.layers
     .map(
       (l) =>
@@ -468,7 +694,12 @@ function buildPromptTerritorio(d: ReportData): string {
     .map((i) => `${i.tipo}: ${i.nome} ${i.detalhes}, ${i.distancia_km} km`)
     .join('\n')
 
-  return `${blocoRegraSubstanciaUnica(substancia)}Camadas territoriais:
+  return `${blocoIdiomaObrigatorio(lang)}
+REGRAS ESPECÍFICAS PARA TERRITÓRIO:
+
+${blocoRegraSubstanciaUnica(substancia)}${blocoAncoraLocalizacaoProcesso(d)}- PROSA vs TABELA: Se as camadas abaixo listarem «Sítio arqueológico» ou «APP hídrica», os campos lead, logistica_texto e implicacao devem estar alinhados a essas linhas (não contradizer a tabela).
+
+Camadas territoriais:
 ${layersText}
 
 Infraestrutura:
@@ -485,6 +716,7 @@ Gere JSON:
 
 function buildPromptMercado(d: ReportData): string {
   const substancia = substanciaDeclarada(d)
+  const lang: ReportLang = d.lang ?? 'pt'
   const tb = terminalComBloqueadorConstitucional(d)
   const semCtxGlobal = isSemFonteOficialReservaProducaoGlobal(d.fonte_res_prod)
   const linhasResProd = semCtxGlobal
@@ -501,7 +733,7 @@ function buildPromptMercado(d: ReportData): string {
   const linhaArea = tb
     ? `- Área do processo: ${d.area_ha} ha (não usar para multiplicar CFEM nem projetar receita nos parágrafos narrativos)`
     : `- Área do processo: ${d.area_ha} ha`
-  return `${blocoRegraSubstanciaUnica(substancia)}${blocoInstrucoesTerminalPdf(d)}${blocoNarrativaMercadoFiscalTerminalPdf(d)}Dados de mercado da substância ${d.substancia_anm}:
+  return `${blocoIdiomaObrigatorio(lang)}${blocoRegraSubstanciaUnica(substancia)}${blocoInstrucoesTerminalPdf(d)}${blocoNarrativaMercadoFiscalTerminalPdf(d)}Dados de mercado da substância ${d.substancia_anm}:
 ${precoLinha}
 - Tendência (rótulo master): ${d.mercado_tendencia}
 - Variação 12 meses: ${d.var_12m_pct}%
@@ -525,6 +757,7 @@ Gere JSON:
 }
 
 function buildPromptFiscal(d: ReportData): string {
+  const lang: ReportLang = d.lang ?? 'pt'
   const fonteDivida = d.divida_fonte
   const regraFonteDivida =
     fonteDivida === 'passivo_nao_circulante'
@@ -538,9 +771,9 @@ function buildPromptFiscal(d: ReportData): string {
   const linhaCfemFiscal = tb
     ? `- Alíquota CFEM aplicável: ${d.cfem_aliquota_pct}% sobre faturamento de lavra realizada (terminal + bloqueador: NÃO projetar receita monetária; só contexto regional qualitativo)`
     : `- Alíquota CFEM aplicável: ${d.cfem_aliquota_pct}% (não projetar receita monetária; CFEM depende de lavra realizada)`
-  return `${blocoRegraSubstanciaUnica(substancia)}${blocoInstrucoesTerminalPdf(d)}${blocoNarrativaMercadoFiscalTerminalPdf(d)}REGRAS ESPECÍFICAS PARA FISCAL:
+  return `${blocoIdiomaObrigatorio(lang)}${blocoRegraSubstanciaUnica(substancia)}${blocoInstrucoesTerminalPdf(d)}${blocoNarrativaMercadoFiscalTerminalPdf(d)}REGRAS ESPECÍFICAS PARA FISCAL:
 
-- CAPAG com indicadores parciais: Se capag_nota = "n.d." mas indicadores existem, exibir no campo capag_classificacao_equiv:
+${blocoAncoraLocalizacaoProcesso(d)}- CAPAG com indicadores parciais: Se capag_nota = "n.d." mas indicadores existem, exibir no campo capag_classificacao_equiv:
   "Indicadores sugerem classificação equivalente a [pior_nota] (determinada pela [nome_do_pior_indicador])"
   em destaque narrativo coerente com os dados (o PDF aplica cor âmbar a esse campo).
 
@@ -580,6 +813,7 @@ Gere JSON:
 
 function buildPromptRisco(d: ReportData): string {
   const substancia = substanciaDeclarada(d)
+  const lang: ReportLang = d.lang ?? 'pt'
   const layersText = d.layers
     .map((l) => `${l.tipo}: ${l.nome}, ${l.distancia_km} km, sobreposto: ${l.sobreposto}`)
     .join('\n')
@@ -589,7 +823,7 @@ function buildPromptRisco(d: ReportData): string {
       ? `- Pendências regulatórias ATIVAS (lista literal, não inferir):\n${d.pendencias.map((p) => `  • ${p}`).join('\n')}`
       : `- Pendências regulatórias ativas: nenhuma`
 
-  return `${blocoRegraSubstanciaUnica(substancia)}REGRAS ESPECÍFICAS PARA RISCO:
+  return `${blocoIdiomaObrigatorio(lang)}${blocoRegraSubstanciaUnica(substancia)}REGRAS ESPECÍFICAS PARA RISCO:
 
 - RISCO GEOLÓGICO (campo JSON dim_geo): Tratar EXCLUSIVAMENTE o «target» e os parâmetros geológicos relativos a «${substancia}». Proibido exemplificar com outra commodity. Verificar data.fase antes de redigir.
   Se fase = "Lavra": "viabilidade geológica comprovada, risco concentrado na continuidade de teores em profundidade" + mencionar ausência de NI 43-101/JORC se aplicável.
@@ -599,6 +833,59 @@ function buildPromptRisco(d: ReportData): string {
   Se existirem valores numéricos: citar valores exatos + notas + implicação (ex: "endividamento controlado mas margem fiscal limitada").
   Se TODOS forem null/n.d.: aí sim dizer "dados CAPAG indisponíveis".
   SEMPRE incluir IDH (data.idh) e distância a comunidades tradicionais se disponíveis nas camadas.
+
+${
+  lang === 'en'
+    ? `
+- CPT (TERRITORIAL CONFLICTS — CPT) — TEMPLATE TO FILL:
+  Use subfatores_contexto (conflitos_cpt_hint prose + riscoPorDim.social) as the only source.
+  If a clear CPT signal exists in that JSON (non-empty conflitos_cpt_hint or social text citing CPT with a count and level):
+    The field dim_soc MUST contain, in one of its sentences, this structure (filled with real values, in ENGLISH):
+    "The municipality records {qtd_total} territorial conflicts according to CPT, at {nivel} level{qualificador_mineradora}."
+    Where:
+    - {qtd_total} = literal number from the hint (e.g. "9", "2", "12")
+    - {nivel} = English level: map alto→high, moderado→moderate, baixo→low (from the Portuguese hint)
+    - {qualificador_mineradora} = if the hint mentions mining companies as causers (e.g. "Mineradora"), add ", including mining companies among the registered causing categories" before the final period; otherwise empty string
+    Example (qtd=9, level high, mining as causer): "The municipality records 9 territorial conflicts according to CPT, at high level, including mining companies among the registered causing categories."
+    FORBIDDEN in dim_soc:
+    - Attenuating adverbs tied to CPT ("only", "although", "however, ... safe distance")
+    - Subordinating CPT to distance of Indigenous/Quilombola communities
+    - Omitting the numeric quantity
+    - Omitting the mining-causer qualification when the hint mentions Mineradora / mining as causer
+  If NO such hint exists or the block is empty:
+    Single sentence: "CPT data were not identified for the municipality in the analyzed period."
+`
+    : `
+- CPT (CONFLITOS TERRITORIAIS) — TEMPLATE A PREENCHER:
+  Use apenas o JSON de subfatores_contexto (conflitos_cpt_hint em prosa e, se útil, riscoPorDim.social) como fonte.
+  Se existir sinal CPT claro nesse JSON (conflitos_cpt_hint não vazio ou texto social citando CPT com quantidade e nível):
+    O campo dim_soc DEVE conter, em uma das suas frases, a seguinte estrutura textual (preenchida com os valores reais):
+
+    "O município registra {qtd_total} conflitos territoriais segundo a CPT, em nível {nivel}{qualificador_mineradora}."
+
+    Onde:
+    - {qtd_total} = número literal extraído do hint (ex.: "9", "2", "12")
+    - {nivel} = string literal do hint ("alto", "moderado" ou "baixo")
+    - {qualificador_mineradora} = se "Mineradora" (ou equivalente claro na prosa) estiver entre causadores, adicionar ", incluindo Mineradora entre os causadores registrados" antes do ponto final. Caso contrário, string vazia.
+
+    Exemplo (qtd=9, nivel=alto, com Mineradora entre causadores):
+    "O município registra 9 conflitos territoriais segundo a CPT, em nível alto, incluindo Mineradora entre os causadores registrados."
+
+    PROIBIDO no campo dim_soc:
+    - Usar advérbios atenuantes ligados a CPT ("apenas", "embora", "contudo, ...distância segura")
+    - Subordinar CPT à distância de TI/Quilombola (ex.: "embora as comunidades estejam distantes")
+    - Omitir o quantitativo numérico
+    - Omitir a qualificação "Mineradora" quando ela está no hint
+
+  Se o hint NÃO existir ou estiver vazio:
+    Frase única: "Dados CPT não foram identificados para o município no período analisado."
+`
+}
+
+- SÍTIOS ARQUEOLÓGICOS — REGRA OBRIGATÓRIA:
+  Se subfatores_contexto.sitios_arqueologicos existir como lista não vazia:
+    OBRIGATÓRIO mencionar em dim_amb (distância ou proximidade se constar na prosa do contexto).
+    NUNCA mencionar pela primeira vez só na "leitura integrada" sem preparar em dim_amb.
 
 - RISCO REGULATÓRIO: Verificar data.dados_sei.
   Se portaria + licença + certidão existem e estão vigentes: "arcabouço regulatório completo".
@@ -639,8 +926,8 @@ Gere JSON:
   "headline": "frase: risco X, principal incerteza Y",
   "lead": "1 frase sobre as 4 dimensões + score obtido",
   "dim_geo": "3 frases: incerteza geológica e target apenas em «${substancia}»; teores e continuidade — sem citar outras commodities",
-  "dim_amb": "3 frases: sobreposição, aquífero, diferencial",
-  "dim_soc": "3 frases: IDH, densidade, CAPAG como componente",
+  "dim_amb": "3 frases: sobreposição, aquífero, sítios arqueológicos ou APP quando constarem no contexto rico ou nas camadas, diferencial",
+  "dim_soc": "3 frases: incluir OBRIGATORIAMENTE a frase CPT no template acima (quantitativo + nível + Mineradora se no hint); depois IDH; comunidades tradicionais por distância nas camadas; CAPAG. CPT e distância de TI/Quilombola são sinais independentes",
   "dim_reg": "3 frases: despacho recente, alvará, pendência GU",
   "leitura": "3 frases: perfil dominado por X, nenhum impeditivo, tendência"
 }
@@ -648,6 +935,7 @@ REGRA: NUNCA mencionar pesos numéricos dos sub-scores. Quando o bloco de contex
 }
 
 function buildPromptOportunidade(d: ReportData): string {
+  const lang: ReportLang = d.lang ?? 'pt'
   const infraOp = infraestruturaComOperacaoDeclarada(d.infraestrutura)
   const ferroviaOperacional = infraOp.find((i) => i.tipo === 'Ferrovia')
   const ferroviaLinhaPrompt =
@@ -663,9 +951,9 @@ function buildPromptOportunidade(d: ReportData): string {
       ? `- Pendências regulatórias ATIVAS (lista literal):\n${d.pendencias.map((p) => `  • ${p}`).join('\n')}`
       : `- Pendências regulatórias ativas: nenhuma`
 
-  return `REGRAS ESPECÍFICAS PARA OPORTUNIDADE:
+  return `${blocoIdiomaObrigatorio(lang)}REGRAS ESPECÍFICAS PARA OPORTUNIDADE:
 
-${blocoRegraSubstanciaUnica(substancia)}- ATRATIVIDADE DE MERCADO (campo JSON dim_merc): narrar APENAS o mercado de «${substancia}» (preço, demanda, gap reserva-produção). Adaptar a gramática («mercado de ${substancia}», etc.).
+${blocoRegraSubstanciaUnica(substancia)}${blocoAncoraLocalizacaoProcesso(d)}- ATRATIVIDADE DE MERCADO (campo JSON dim_merc): narrar APENAS o mercado de «${substancia}» (preço, demanda, gap reserva-produção). Adaptar a gramática («mercado de ${substancia}», etc.).
 
 - SEGURANÇA DO INVESTIMENTO: Verificar data.capag_endiv e data.capag_poupcorr.
   Se existirem indicadores parciais: "indicadores CAPAG parciais (endividamento nota X, poupança corrente nota Y) indicam município com dívida controlada mas margem fiscal limitada para investimentos em infraestrutura de apoio."
@@ -921,7 +1209,10 @@ export async function generateReportLLM(data: ReportData): Promise<ReportLLMResu
       callClaude<TerritorioLLM>(buildPromptTerritorio(data), sys, lang),
       callClaude<MercadoLLM>(buildPromptMercado(data), sys, lang),
       callClaude<FiscalLLM>(buildPromptFiscal(data), sys, lang),
-      callClaude<RiscoLLM>(buildPromptRisco(data), sys, lang),
+      callClaude<RiscoLLM>(buildPromptRisco(data), sys, lang, {
+        temperature: 0.3,
+        max_tokens: 1500,
+      }),
       callClaude<OportunidadeLLM>(buildPromptOportunidade(data), sys, lang),
     ])
 
@@ -934,9 +1225,17 @@ export async function generateReportLLM(data: ReportData): Promise<ReportLLMResu
     oportunidade: oportunidade ?? fb.oportunidade,
   }
 
+  let out: ReportLLMResult = merged
   if (precisaFallbackTerminalBloqueador(data, merged)) {
-    return aplicarFallbackTerminalBloqueador(data, merged)
+    out = aplicarFallbackTerminalBloqueador(data, merged)
   }
 
-  return merged
+  validarDimSocCPT(
+    out.risco.dim_soc,
+    extrairCptHintMeta(data),
+    lang,
+    data.processo,
+  )
+
+  return out
 }
