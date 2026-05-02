@@ -14,7 +14,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { supabase } from '../supabase'
 import { type ScoreInput, type ScoreResult } from '../scoreEngine'
-import { runS31MotorAndPersist } from '../scoringMotorS31'
+import { getSqlBatch, runS31MotorAndPersist } from '../scoringMotorS31'
 import {
   getCapag,
   getFiscal,
@@ -26,6 +26,18 @@ import {
 } from '../db'
 import { parseCliArgs } from './utils/cli-args'
 import pLimit from 'p-limit'
+
+process.on('SIGTERM', () => {
+  console.error('[batch-scores] SIGTERM recebido, encerrando.')
+  process.exit(1)
+})
+process.on('uncaughtException', (err) => {
+  console.error(
+    '[batch-scores] uncaughtException:',
+    err instanceof Error ? (err.stack ?? err.message) : err,
+  )
+  process.exit(1)
+})
 
 // ══════════════════════════════════════════════════
 // SHAPE EXPORTADO PARA `scores.dimensoes_*`
@@ -814,6 +826,7 @@ async function runOne(numero: string, force: boolean, scoresFonte: string) {
   const result = await runS31MotorAndPersist(id, {
     persist: true,
     scoresFonte,
+    sqlClient: getSqlBatch(),
   })
 
   const rb = result.risk_breakdown

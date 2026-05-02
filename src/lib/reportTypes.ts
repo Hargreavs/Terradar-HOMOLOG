@@ -20,6 +20,8 @@ export interface LayerData {
   sobreposto: boolean
   tag_class: string
   tag_label: string
+  /** % de sobreposição com o perímetro do processo (quando conhecido; ex.: APP, camadas API). */
+  pct_sobreposicao?: number
 }
 
 export interface InfraData {

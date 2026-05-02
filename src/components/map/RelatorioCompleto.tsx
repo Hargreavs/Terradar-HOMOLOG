@@ -1,6 +1,7 @@
 import { createPortal } from 'react-dom'
 import {
   Fragment,
+  startTransition,
   useCallback,
   useEffect,
   useMemo,
@@ -9,7 +10,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from 'react'
-import { Ban, Info, Loader2, Sparkles } from 'lucide-react'
+import { Ban, Info, Loader2, Satellite, Sparkles } from 'lucide-react'
 import { relatoriosMock } from '../../data/relatorio.mock'
 import type {
   DadosANM,
@@ -36,8 +37,7 @@ import {
   formatarValorProducaoBrBrl,
   isTipoMercadoBrOnly,
 } from '../../lib/formatContextoBrasilIntel'
-import { REGIME_LABELS } from '../../lib/regimes'
-import { RegimeBadge } from '../ui/RegimeBadge'
+import { REGIME_COLORS_MAP, REGIME_LABELS } from '../../lib/regimes'
 import { CardAlertasRegulatorios } from '../drawer/CardAlertasRegulatorios'
 import { ConflitosTerritoriaisCard } from '../drawer/territorio/ConflitosTerritoriaisCard'
 import { CamadaTooltipHover } from '../filters/CamadaTooltipHover'
@@ -58,6 +58,7 @@ import type {
   Regime,
 } from '../../types'
 import { ExportReportButton } from '../report/ExportReportButton'
+import { ImagemSateliteModal } from '../report/ImagemSateliteModal'
 import { fmtCfemEstimadaBrlMiPerHa } from '../report/reportHtmlUtils'
 import { fraseDeterminadaPeloIndicadorCapag } from '../../lib/capagPiorIndicador'
 import { normalizeCapagNotaDisplay } from '../../lib/fiscalDisplay'
@@ -1988,6 +1989,21 @@ export function RelatorioCompleto({
     useState<PerfilOportunidadeOSKey>('conservador')
   const [hoverPerfilOportunidade, setHoverPerfilOportunidade] =
     useState<PerfilOportunidadeOSKey | null>(null)
+  const [sateliteModalAberto, setSateliteModalAberto] = useState(false)
+
+  const fecharRelatorioDrawer = useCallback(() => {
+    setSateliteModalAberto(false)
+    onFechar()
+  }, [onFechar])
+
+  /* Fecha modal de satélite quando o drawer é ocultado pelo mapa sem passar pelo ✕ */
+  useEffect(() => {
+    if (!aberto) {
+      startTransition(() => {
+        setSateliteModalAberto(false)
+      })
+    }
+  }, [aberto])
 
   useEffect(() => {
     if (aberto) setAba(abaInicial)
@@ -2089,6 +2105,7 @@ export function RelatorioCompleto({
   // entre o drawer "spinner" e o drawer "completo".
   if (loadingApi || erroApi) {
     return (
+      <>
       <div
         className="pointer-events-auto"
         style={{
@@ -2120,19 +2137,45 @@ export function RelatorioCompleto({
             gap: 12,
           }}
         >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              flexWrap: 'wrap',
-              gap: 8,
-              minWidth: 0,
-              flex: 1,
-            }}
-          >
-            <RegimeBadge regime={regimeDrawerUi} variant="drawer" />
-            {/* <DrawerRegulatoryBadges processo={processo} /> */}
-          </div>
+            <button
+              type="button"
+              onClick={() => setSateliteModalAberto(true)}
+              className="cursor-pointer"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+                boxSizing: 'border-box',
+                minHeight: 28,
+                borderWidth: 1,
+                borderStyle: 'solid',
+                borderColor: '#5F5E5A',
+                borderRadius: 6,
+                padding: '4px 12px',
+                backgroundColor: 'transparent',
+                fontSize: FS.md,
+                fontWeight: 400,
+                color: '#B4B2A9',
+                cursor: 'pointer',
+                flexShrink: 0,
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = '#F1EFE8'
+                e.currentTarget.style.borderColor = '#888780'
+                e.currentTarget.style.backgroundColor =
+                  'rgba(241, 239, 232, 0.08)'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = '#B4B2A9'
+                e.currentTarget.style.borderColor = '#5F5E5A'
+                e.currentTarget.style.backgroundColor = 'transparent'
+              }}
+            >
+              <Satellite size={16} aria-hidden />
+              Ver imagem por satélite
+            </button>
+          <div style={{ flex: 1, minWidth: 0 }} aria-hidden />
           <div
             style={{
               display: 'flex',
@@ -2154,7 +2197,7 @@ export function RelatorioCompleto({
             />
             <button
               type="button"
-              onClick={onFechar}
+              onClick={fecharRelatorioDrawer}
               aria-label="Fechar relatório"
               className="cursor-pointer border-0 bg-transparent p-0"
               style={{
@@ -2210,6 +2253,12 @@ export function RelatorioCompleto({
           )}
         </div>
       </div>
+      <ImagemSateliteModal
+        processo={processo}
+        aberto={aberto && sateliteModalAberto}
+        onFechar={() => setSateliteModalAberto(false)}
+      />
+      </>
     )
   }
 
@@ -2552,6 +2601,7 @@ export function RelatorioCompleto({
   ]
 
   return (
+    <>
     <div
       className="pointer-events-auto"
       style={{
@@ -2583,19 +2633,45 @@ export function RelatorioCompleto({
           gap: 12,
         }}
       >
-        <div
+        <button
+          type="button"
+          onClick={() => setSateliteModalAberto(true)}
+          className="cursor-pointer"
           style={{
-            display: 'flex',
+            display: 'inline-flex',
             alignItems: 'center',
-            flexWrap: 'wrap',
-            gap: 8,
-            minWidth: 0,
-            flex: 1,
+            justifyContent: 'center',
+            gap: 6,
+            boxSizing: 'border-box',
+            minHeight: 28,
+            borderWidth: 1,
+            borderStyle: 'solid',
+            borderColor: '#5F5E5A',
+            borderRadius: 6,
+            padding: '4px 12px',
+            backgroundColor: 'transparent',
+            fontSize: FS.md,
+            fontWeight: 400,
+            color: '#B4B2A9',
+            cursor: 'pointer',
+            flexShrink: 0,
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = '#F1EFE8'
+            e.currentTarget.style.borderColor = '#888780'
+            e.currentTarget.style.backgroundColor =
+              'rgba(241, 239, 232, 0.08)'
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = '#B4B2A9'
+            e.currentTarget.style.borderColor = '#5F5E5A'
+            e.currentTarget.style.backgroundColor = 'transparent'
           }}
         >
-          <RegimeBadge regime={regimeDrawerUi} variant="drawer" />
-          {/* <DrawerRegulatoryBadges processo={processo} /> */}
-        </div>
+          <Satellite size={16} aria-hidden />
+          Ver imagem por satélite
+        </button>
+        <div style={{ flex: 1, minWidth: 0 }} aria-hidden />
         <div
           style={{
             display: 'flex',
@@ -2604,50 +2680,50 @@ export function RelatorioCompleto({
             gap: 8,
           }}
         >
-          <ExportReportButton numeroProcesso={processo.numero} />
-          <div
-            style={{
-              width: 1,
-              height: 16,
-              backgroundColor: '#2C2C2A',
-              margin: '0 12px',
-              flexShrink: 0,
-            }}
-            aria-hidden
-          />
-          <button
-            type="button"
-            onClick={onFechar}
-            aria-label="Fechar relatório"
-            className="cursor-pointer border-0 bg-transparent p-0"
-            style={{
-              fontSize: 18,
-              lineHeight: 1,
-              color: '#888780',
-              flexShrink: 0,
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.color = '#D3D1C7'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.color = '#888780'
-            }}
-          >
-            ✕
-          </button>
-        </div>
-      </header>
+            <ExportReportButton numeroProcesso={processo.numero} />
+            <div
+              style={{
+                width: 1,
+                height: 16,
+                backgroundColor: '#2C2C2A',
+                margin: '0 12px',
+                flexShrink: 0,
+              }}
+              aria-hidden
+            />
+            <button
+              type="button"
+              onClick={fecharRelatorioDrawer}
+              aria-label="Fechar relatório"
+              className="cursor-pointer border-0 bg-transparent p-0"
+              style={{
+                fontSize: 18,
+                lineHeight: 1,
+                color: '#888780',
+                flexShrink: 0,
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = '#D3D1C7'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = '#888780'
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        </header>
 
-      <div
-        style={{
-          flex: 1,
-          minHeight: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          position: 'relative',
-        }}
-      >
-        <nav
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            position: 'relative',
+          }}
+        >
+          <nav
           style={{
             height: 44,
             flexShrink: 0,
@@ -2831,6 +2907,19 @@ export function RelatorioCompleto({
                   )
                 })()}
               </div>
+              <p
+                style={{
+                  fontSize: FS.h2,
+                  fontWeight: 600,
+                  letterSpacing: '0.5px',
+                  textTransform: 'uppercase',
+                  color: REGIME_COLORS_MAP[regimeDrawerUi] ?? '#888780',
+                  margin: '0 0 18px 0',
+                  lineHeight: 1.3,
+                }}
+              >
+                {regimeExibicao.toLocaleUpperCase('pt-BR')}
+              </p>
               <div
                 style={{
                   display: 'grid',
@@ -2851,8 +2940,8 @@ export function RelatorioCompleto({
                       substanciaFormatada != null
                         ? apresentarSubstanciaLabel(processo.substancia)
                         : '—',
+                    span: 2,
                   },
-                  { label: 'Regime', value: regimeExibicao },
                   { label: 'Área', value: areaExibicao },
                   {
                     label: 'UF',
@@ -7532,5 +7621,11 @@ export function RelatorioCompleto({
         </div>
       </div>
     </div>
+    <ImagemSateliteModal
+      processo={processo}
+      aberto={aberto && sateliteModalAberto}
+      onFechar={() => setSateliteModalAberto(false)}
+    />
+    </>
   )
 }

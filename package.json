@@ -26,6 +26,7 @@
     "ingest:tier1": "npm run ingest:autuacao && npm run ingest:tah && npm run ingest:cfem",
     "ingest:eventos": "tsx server/scripts/ingest-processo-eventos.ts",
     "batch:scores": "tsx server/scripts/batch-scores.ts",
+    "batch:territorial-layers": "tsx server/scripts/batch-territorial-layers.ts",
     "s30:geog": "tsx server/scripts/s30-backfill-processos-geog.ts",
     "s30:backfill": "tsx server/scripts/s30-run-backfill.ts",
     "s31:ingest-assentamentos": "node scripts/s31_ingest_assentamentos.mjs",
