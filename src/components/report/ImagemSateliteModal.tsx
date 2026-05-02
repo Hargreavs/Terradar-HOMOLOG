@@ -1,22 +1,41 @@
 import { Loader2, Satellite, X } from 'lucide-react'
-import { useCallback, useEffect, useId, useRef, useState, startTransition } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useState,
+  startTransition,
+} from 'react'
 import { createPortal } from 'react-dom'
-import { gerarUrlSateliteParaProcesso } from '../../lib/satelliteStaticUrl'
+import {
+  buscarImagemSateliteProcesso,
+  montarFooter,
+} from '../../lib/satelliteSentinel'
 import type { Processo } from '../../types'
+import { PolygonOverlaySvg } from './PolygonOverlaySvg'
 
-type FaseModal = 'idle' | 'sem_geom' | 'carregando' | 'ok' | 'erro'
+type FaseModal =
+  | 'idle'
+  | 'sem_geom'
+  | 'carregando'
+  | 'ok'
+  | 'erro_generico'
+  | 'erro_rate'
+  | 'erro_sem_imagem'
 
 const OVERLAY_Z = 2147483640 as const
 
-function formatarDataHoraFooter(d: Date): string {
-  return d.toLocaleString('pt-BR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  })
+function geometriaOverlay(
+  p: Processo,
+): GeoJSON.Polygon | GeoJSON.MultiPolygon | null {
+  const g = p.geojson?.geometry as
+    | GeoJSON.Polygon
+    | GeoJSON.MultiPolygon
+    | undefined
+    | null
+  if (!g) return null
+  if (g.type !== 'Polygon' && g.type !== 'MultiPolygon') return null
+  return g
 }
 
 export function ImagemSateliteModal({
@@ -31,30 +50,69 @@ export function ImagemSateliteModal({
   const titleId = useId()
   const [fase, setFase] = useState<FaseModal>('idle')
   const [imgUrl, setImgUrl] = useState<string | null>(null)
-  const [footerLinha, setFooterLinha] = useState<string>(
-    'Imagem: Mapbox Satellite · Carregando imagem...',
-  )
-  const tentativaRef = useRef(0)
+  const [footerLinha, setFooterLinha] = useState('')
+  const [bboxUsado, setBboxUsado] = useState<
+    [number, number, number, number] | null
+  >(null)
+  const [imgW, setImgW] = useState(0)
+  const [imgH, setImgH] = useState(0)
 
-  const iniciarCarregamento = useCallback(() => {
-    tentativaRef.current += 1
-    const bust = String(tentativaRef.current)
-    const url = gerarUrlSateliteParaProcesso(processo, { cacheBust: bust })
-    if (url == null) {
+  const geomOverlay = geometriaOverlay(processo)
+
+  const iniciarCarregamento = useCallback(async () => {
+    if (!geomOverlay) {
       setFase('sem_geom')
       setImgUrl(null)
-      setFooterLinha('Imagem: Mapbox Satellite')
+      setFooterLinha('')
       return
     }
     setFase('carregando')
-    setImgUrl(url)
-    setFooterLinha('Imagem: Mapbox Satellite · Carregando imagem...')
-  }, [processo])
+    setImgUrl(null)
+    setBboxUsado(null)
+    setImgW(0)
+    setImgH(0)
+    setFooterLinha('A carregar imagem…')
+
+    const r = await buscarImagemSateliteProcesso(processo.id)
+    if (!r.ok) {
+      setFooterLinha('')
+      if (r.error === 'sem_geom') {
+        setFase('sem_geom')
+        return
+      }
+      if (r.error === 'sem_imagem_disponivel') {
+        setFase('erro_sem_imagem')
+        return
+      }
+      if (r.error === 'rate_limit') {
+        setFase('erro_rate')
+        return
+      }
+      setFase('erro_generico')
+      return
+    }
+
+    setBboxUsado(r.bbox_usado)
+    setImgW(r.imagem_largura)
+    setImgH(r.imagem_altura)
+    setFooterLinha(montarFooter(r))
+    setImgUrl(r.url)
+  }, [geomOverlay, processo.id])
 
   useEffect(() => {
-    if (!aberto) return
+    if (!aberto) {
+      startTransition(() => {
+        setFase('idle')
+        setImgUrl(null)
+        setFooterLinha('')
+        setBboxUsado(null)
+        setImgW(0)
+        setImgH(0)
+      })
+      return
+    }
     startTransition(() => {
-      iniciarCarregamento()
+      void iniciarCarregamento()
     })
   }, [aberto, iniciarCarregamento])
 
@@ -71,6 +129,13 @@ export function ImagemSateliteModal({
   }, [aberto, onFechar])
 
   if (!aberto || typeof document === 'undefined') return null
+
+  const mostrarOverlaySvg =
+    fase === 'ok' &&
+    geomOverlay &&
+    bboxUsado &&
+    imgW > 0 &&
+    imgH > 0
 
   return createPortal(
     <div
@@ -183,7 +248,68 @@ export function ImagemSateliteModal({
             </p>
           ) : null}
 
-          {fase === 'erro' ? (
+          {fase === 'erro_sem_imagem' ? (
+            <p
+              style={{
+                margin: 24,
+                fontSize: 15,
+                color: '#D3D1C7',
+                textAlign: 'center',
+                lineHeight: 1.5,
+                maxWidth: 420,
+              }}
+            >
+              Não há imagem de satélite disponível com cobertura de nuvem
+              aceitável nos últimos 90 dias para esta região. Tente novamente em
+              alguns dias.
+            </p>
+          ) : null}
+
+          {fase === 'erro_rate' ? (
+            <div
+              style={{
+                padding: 24,
+                textAlign: 'center',
+                maxWidth: 400,
+              }}
+            >
+              <p
+                style={{
+                  margin: '0 0 16px',
+                  fontSize: 15,
+                  color: '#D3D1C7',
+                  lineHeight: 1.5,
+                }}
+              >
+                Limite temporário do serviço de imagens atingido. Tente
+                novamente em alguns minutos.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  void iniciarCarregamento()
+                }}
+                className="cursor-pointer"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  minHeight: 36,
+                  padding: '8px 16px',
+                  borderRadius: 6,
+                  border: '1px solid #5F5E5A',
+                  backgroundColor: 'transparent',
+                  color: '#F1EFE8',
+                  fontSize: 14,
+                  fontWeight: 500,
+                }}
+              >
+                Tentar de novo
+              </button>
+            </div>
+          ) : null}
+
+          {fase === 'erro_generico' ? (
             <div
               style={{
                 padding: 24,
@@ -204,7 +330,9 @@ export function ImagemSateliteModal({
               </p>
               <button
                 type="button"
-                onClick={iniciarCarregamento}
+                onClick={() => {
+                  void iniciarCarregamento()
+                }}
                 className="cursor-pointer"
                 style={{
                   display: 'inline-flex',
@@ -226,7 +354,14 @@ export function ImagemSateliteModal({
           ) : null}
 
           {(fase === 'carregando' || fase === 'ok') && imgUrl ? (
-            <>
+            <div
+              style={{
+                position: 'relative',
+                display: 'inline-block',
+                maxWidth: '100%',
+                lineHeight: 0,
+              }}
+            >
               {fase === 'carregando' ? (
                 <div
                   style={{
@@ -249,27 +384,41 @@ export function ImagemSateliteModal({
               ) : null}
               <img
                 src={imgUrl}
-                alt={`Satélite do processo ${processo.numero}`}
+                alt={`Imagem de satélite do processo ${processo.numero}`}
+                width={imgW || undefined}
+                height={imgH || undefined}
                 style={{
                   display: 'block',
                   maxWidth: '100%',
-                  maxHeight: 'min(72vh, 820px)',
-                  width: 'auto',
                   height: 'auto',
-                  objectFit: 'contain',
+                  verticalAlign: 'top',
                 }}
                 onLoad={() => {
                   setFase('ok')
-                  setFooterLinha(
-                    `Imagem: Mapbox Satellite · gerada em ${formatarDataHoraFooter(new Date())}`,
-                  )
                 }}
                 onError={() => {
-                  setFase('erro')
-                  setFooterLinha('Imagem: Mapbox Satellite')
+                  setFase('erro_generico')
+                  setFooterLinha('')
                 }}
               />
-            </>
+              {mostrarOverlaySvg ? (
+                <PolygonOverlaySvg
+                  geometry={geomOverlay}
+                  bbox_usado={bboxUsado}
+                  imagem_largura={imgW}
+                  imagem_altura={imgH}
+                />
+              ) : null}
+            </div>
+          ) : null}
+
+          {fase === 'carregando' && !imgUrl ? (
+            <Loader2
+              size={40}
+              color="#D4A843"
+              style={{ animation: 'terraeSpin 0.9s linear infinite' }}
+              aria-label="Carregando"
+            />
           ) : null}
         </div>
 
@@ -289,7 +438,7 @@ export function ImagemSateliteModal({
               lineHeight: 1.45,
             }}
           >
-            {footerLinha}
+            {footerLinha || '\u00A0'}
           </p>
         </div>
       </div>
