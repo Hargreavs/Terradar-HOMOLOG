@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import { Pool } from 'pg'
 import { computeScoresAuto } from '../server/db'
-import type { S31MassCaches, SubData } from '../server/scoringMotorS31'
+import type { S31MassCaches, SubData, LayerExtrasRow, TahStatusRow } from '../server/scoringMotorS31'
 
 const dbUrl = process.env.DATABASE_URL ?? process.env.VITE_DATABASE_URL
 if (!dbUrl) {
@@ -18,7 +18,7 @@ const pool = new Pool({
 
 async function buildMassCaches(): Promise<S31MassCaches> {
   const t0 = Date.now()
-  const [cfgR, subR, cptR, incR, bndR] = await Promise.all([
+  const [cfgR, subR, cptR, incR, bndR, extrasR, tahR] = await Promise.all([
     pool.query<{ aba: string; dados: unknown }>(`SELECT aba, dados FROM config_scores`),
     pool.query<Record<string, unknown>>(
       `SELECT substancia_anm, gap_pp, preco_brl, preco_usd, tendencia, val_reserva_brl_ha, mineral_critico_2025
@@ -35,6 +35,26 @@ async function buildMassCaches(): Promise<S31MassCaches> {
     pool.query<{ minerais_elegiveis: string | null; linha: string | null }>(
       `SELECT minerais_elegiveis, linha FROM linhas_bndes`,
     ),
+    pool.query<Record<string, unknown>>(`
+      SELECT processo_id::text AS pid,
+        sitio_id, sitio_nome, sitio_distancia_km, sitio_tipo, sitio_natureza, sitio_sobreposicao_pct,
+        assent_id, assent_nome, assent_distancia_km, assent_sobreposicao_pct
+      FROM processos_territorial_extras
+    `),
+    pool.query<{
+      processo_numero: string
+      pct_pago: string | null
+      qtd_pagamentos: string | number
+      qtd_nao_pagos: string | number
+    }>(`
+      SELECT processo_numero,
+        ROUND(100.0 * SUM(COALESCE(valor_pago, 0)) / NULLIF(SUM(COALESCE(valor_total, 0)), 0), 2) AS pct_pago,
+        COUNT(*)::int AS qtd_pagamentos,
+        COUNT(*) FILTER (WHERE COALESCE(valor_pago, 0) = 0 OR valor_pago IS NULL)::int AS qtd_nao_pagos
+      FROM tah_pagamentos
+      GROUP BY processo_numero
+      HAVING SUM(COALESCE(valor_total, 0)) > 0
+    `),
   ])
   const configByAba: Record<string, unknown> = {}
   for (const r of cfgR.rows) {
@@ -70,8 +90,45 @@ async function buildMassCaches(): Promise<S31MassCaches> {
     minerais_elegiveis: r.minerais_elegiveis,
     linha: r.linha,
   }))
-  console.log(`[s31] Caches carregados em ${Date.now() - t0}ms`)
-  return { configByAba, subByUpper, cptByUf, incentivoB7ByUf, linhasBndes }
+  const extrasByProcessoId = new Map<string, LayerExtrasRow>()
+  for (const r of extrasR.rows) {
+    const pid = String(r.pid ?? '')
+    if (!pid) continue
+    extrasByProcessoId.set(pid, {
+      sitio_id: r.sitio_id != null ? Number(r.sitio_id) : null,
+      sitio_nome: r.sitio_nome != null ? String(r.sitio_nome) : null,
+      sitio_distancia_km: r.sitio_distancia_km != null ? Number(r.sitio_distancia_km) : null,
+      sitio_tipo: r.sitio_tipo != null ? String(r.sitio_tipo) : null,
+      sitio_natureza: r.sitio_natureza != null ? String(r.sitio_natureza) : null,
+      sitio_sobreposicao_pct:
+        r.sitio_sobreposicao_pct != null ? Number(r.sitio_sobreposicao_pct) : null,
+      assent_id: r.assent_id != null ? Number(r.assent_id) : null,
+      assent_nome: r.assent_nome != null ? String(r.assent_nome) : null,
+      assent_distancia_km: r.assent_distancia_km != null ? Number(r.assent_distancia_km) : null,
+      assent_sobreposicao_pct:
+        r.assent_sobreposicao_pct != null ? Number(r.assent_sobreposicao_pct) : null,
+    })
+  }
+  const tahByProcessoNumero = new Map<string, TahStatusRow>()
+  for (const r of tahR.rows) {
+    const num = String(r.processo_numero ?? '').trim()
+    if (!num || r.pct_pago == null) continue
+    tahByProcessoNumero.set(num, {
+      pct_pago: Number(r.pct_pago),
+      qtd_pagamentos: Number(r.qtd_pagamentos),
+      qtd_nao_pagos: Number(r.qtd_nao_pagos),
+    })
+  }
+  console.log(`[s31] Caches carregados em ${Date.now() - t0}ms (extras=${extrasByProcessoId.size}, tah=${tahByProcessoNumero.size})`)
+  return {
+    configByAba,
+    subByUpper,
+    cptByUf,
+    incentivoB7ByUf,
+    linhasBndes,
+    extrasByProcessoId,
+    tahByProcessoNumero,
+  }
 }
 
 const massCaches = await buildMassCaches()
@@ -79,7 +136,7 @@ const massCaches = await buildMassCaches()
 const sql = `SELECT p.id::text AS id FROM processos p
   LEFT JOIN scores s ON s.processo_id = p.id
   WHERE p.ativo_derivado = TRUE AND p.geog IS NOT NULL
-  AND (s.scores_fonte IS NULL OR s.scores_fonte <> 's31_v3_20260427')
+  AND (s.scores_fonte IS NULL OR s.scores_fonte <> 's31_v5_20260503')
   ORDER BY p.id LIMIT $1`
 const BATCH = 1000
 const CONCURRENCY = 8

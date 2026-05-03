@@ -2007,6 +2007,24 @@ export async function buildReportData(
           : [],
     ),
 
+    territorial_extras: (() => {
+      const x = api.territorial_extras
+      if (!x) return null
+      return {
+        assent_nome: x.assent_nome != null ? String(x.assent_nome) : null,
+        assent_distancia_km:
+          x.assent_distancia_km != null &&
+          Number.isFinite(Number(x.assent_distancia_km))
+            ? Number(x.assent_distancia_km)
+            : null,
+        assent_sobreposicao_pct:
+          x.assent_sobreposicao_pct != null &&
+          Number.isFinite(Number(x.assent_sobreposicao_pct))
+            ? Number(x.assent_sobreposicao_pct)
+            : null,
+      }
+    })(),
+
     sede: sedeFromAnaliseTerritorial(analise),
 
     capag_nota: capagNota,

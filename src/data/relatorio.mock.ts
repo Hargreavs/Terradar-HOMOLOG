@@ -150,6 +150,8 @@ export interface DadosTerritoriais {
   /** Fase INCRA (titulação etc.) vindas da análise territorial. */
   fase_assentamento_incr?: string | null
   distancia_assentamento_km?: number | null
+  /** % sobreposição assent INCRA (`processos_territorial_extras`; 100 ≈ ≤50 m). */
+  assent_sobreposicao_pct?: number | null
 }
 
 /** Alias documental (Config-Scores / prompts territoriais). */

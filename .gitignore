@@ -31,6 +31,7 @@ tmp/
 data/
 node_modules/
 s31_assentamentos/
+geo-credentials/
 .env
 .env.local
 # Notas do Cursor (efemeras)

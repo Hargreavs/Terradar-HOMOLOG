@@ -78,7 +78,7 @@ import { useTerritorialAmbiental } from '../../hooks/useTerritorialAmbiental'
 import { useScoreBreakdown } from '../../hooks/useScoreBreakdown'
 import { formatNumeroPt } from '../../lib/scoreBreakdownFormat'
 import { formatDateBR } from '../../lib/territorialAmbientalDisplay'
-import { type TipoAreaSensivel, textoCorDistS31 } from '../../lib/distanciaCor'
+import { type TipoAreaSensivel, textoCorDistS31, labelAssentamentoIngraAreasSensiveis } from '../../lib/distanciaCor'
 import { biomaMultiplicadorS31, corMultiplicadorBioma, textoMultiplicadorBioma } from '../../lib/biomaS31'
 import {
   isPlaceholderEstrategiaNacional,
@@ -632,7 +632,6 @@ const DOT_TI = '#D4785A'
 const DOT_UC = '#4A8C5E'
 const DOT_APP = '#6BAF7B'
 const DOT_QUILOMBOLA = '#B8785C'
-const DOT_ASSENTAMENTO = '#A78BFA'
 /** Ausência positiva (sem TI na região monitorada). */
 const DOT_AUSENCIA_POSITIVA = '#1D9E75'
 
@@ -2514,20 +2513,18 @@ export function RelatorioCompleto({
     territorial.nome_quilombola_proximo ?? territorial.nome_quilombola
 
   const useAssentamentoDistancia =
-    territorial.distancia_assentamento_km != null &&
-    !Number.isNaN(Number(territorial.distancia_assentamento_km))
+    (territorial.nome_assentamento_proximo?.trim() ?? '') !== '' ||
+    (territorial.distancia_assentamento_km != null &&
+      !Number.isNaN(Number(territorial.distancia_assentamento_km))) ||
+    (territorial.assent_sobreposicao_pct != null &&
+      Number.isFinite(Number(territorial.assent_sobreposicao_pct)))
 
   const distanciaAssentamentoKmRaw = territorial.distancia_assentamento_km
   const nomeAssentamentoBaseRaw = territorial.nome_assentamento_proximo
 
   const nomeAssentamentoExibicaoCard =
     nomeAssentamentoBaseRaw != null && String(nomeAssentamentoBaseRaw).trim() !== ''
-      ? territorial.fase_assentamento_incr != null &&
-        String(territorial.fase_assentamento_incr).trim() !== ''
-        ? `Assentamento INCRA: ${String(nomeAssentamentoBaseRaw).trim()} (${String(
-            territorial.fase_assentamento_incr,
-          ).trim()})`
-        : `Assentamento INCRA: ${String(nomeAssentamentoBaseRaw).trim()}`
+      ? `${String(nomeAssentamentoBaseRaw).trim()} (Assentamento INCRA)`
       : 'Assentamento INCRA'
 
   const distanciaSedeKm =
@@ -3650,12 +3647,13 @@ export function RelatorioCompleto({
                 <div aria-hidden style={separadorInsetTerritorio} />
                 {useAssentamentoDistancia ? (
                   (() => {
-                    const akm = Number(distanciaAssentamentoKmRaw)
-                    const dqA = textoCorDistS31(
-                      'ASSENTAMENTO',
-                      akm,
-                      akm <= 0.001,
-                    )
+                    const akm =
+                      distanciaAssentamentoKmRaw != null &&
+                      !Number.isNaN(Number(distanciaAssentamentoKmRaw))
+                        ? Number(distanciaAssentamentoKmRaw)
+                        : null
+                    const pct = territorial.assent_sobreposicao_pct ?? null
+                    const dqA = labelAssentamentoIngraAreasSensiveis(akm, pct)
                     return (
                       <div
                         style={{
@@ -3679,7 +3677,7 @@ export function RelatorioCompleto({
                               width: 8,
                               height: 8,
                               borderRadius: '50%',
-                              backgroundColor: DOT_ASSENTAMENTO,
+                              backgroundColor: dqA.bulletColor,
                               flexShrink: 0,
                             }}
                           />
