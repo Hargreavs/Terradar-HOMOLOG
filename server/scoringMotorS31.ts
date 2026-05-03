@@ -1,6 +1,6 @@
 /**
- * S31 v3 - Risk + OS motor (Node + postgres.js + config_scores).
- * Modelo: S31_REFATOR_FINAL_RISK_OPP_v3.md
+ * S31 v5 - Risk + OS motor (Node + postgres.js + config_scores).
+ * v5: territorial extras (sítio IPHAN + assentamento INCRA) + TAH regulatório. Modelo base v4.
  */
 import './env'
 import postgres, { type JSONValue } from 'postgres'
@@ -163,9 +163,9 @@ function getSql() {
       prepare: false,
       ssl: /supabase|amazonaws/i.test(dbUrl) ? 'require' : false,
       connection: {
-        statement_timeout: '60000',
-        idle_in_transaction_session_timeout: '60000',
-        application_name: 'batch-scores-v4',
+        statement_timeout: 60_000,
+        idle_in_transaction_session_timeout: 60_000,
+        application_name: 'batch-scores-s31-v5',
       },
     })
   }
@@ -196,8 +196,8 @@ export function getSqlBatch() {
       max_lifetime: 60 * 30,
       ssl: /supabase|amazonaws/i.test(batchDbUrl) ? 'require' : false,
       connection: {
-        statement_timeout: '60000',
-        idle_in_transaction_session_timeout: '60000',
+        statement_timeout: 60_000,
+        idle_in_transaction_session_timeout: 60_000,
         application_name: 'batch-scores-direct',
       },
     })
@@ -252,6 +252,27 @@ export type LayerRow = {
   sobreposicao_pct: number | null
 }
 
+/** Linha 1:1 de `processos_territorial_extras` (batch territorial). */
+export type LayerExtrasRow = {
+  sitio_id: number | null
+  sitio_nome: string | null
+  sitio_distancia_km: number | null
+  sitio_tipo: string | null
+  sitio_natureza: string | null
+  sitio_sobreposicao_pct: number | null
+  assent_id: number | null
+  assent_nome: string | null
+  assent_distancia_km: number | null
+  assent_sobreposicao_pct: number | null
+}
+
+/** Agregado `tah_pagamentos` por processo (ANM). */
+export type TahStatusRow = {
+  pct_pago: number
+  qtd_pagamentos: number
+  qtd_nao_pagos: number
+}
+
 export type SubData = {
   gap_pp: number | null
   preco_brl: number | null
@@ -268,6 +289,10 @@ export type S31MassCaches = {
   cptByUf: Map<string, number>
   incentivoB7ByUf: Map<string, number | null>
   linhasBndes: Array<{ minerais_elegiveis?: string | null; linha?: string | null }>
+  /** Opcional: mapa por `processo_id` (uuid string) para batch sem N+1. */
+  extrasByProcessoId?: Map<string, LayerExtrasRow>
+  /** Opcional: agregado TAH por `processo_numero`. */
+  tahByProcessoNumero?: Map<string, TahStatusRow>
 }
 
 let sessionMassCaches: S31MassCaches | null = null
@@ -553,11 +578,11 @@ export function dimGeologico(
 export async function dimAmbiental(
   p: ProcessoMotorRow,
   ls: LayerRow[],
-  options?: { returnSubfatores?: boolean; sql?: ReturnType<typeof postgres> },
+  extras: LayerExtrasRow | null,
+  options?: { returnSubfatores?: boolean },
 ): Promise<number | DimensaoOutput> {
   const want = !!options?.returnSubfatores
   const subs: SubfatorOutput[] = []
-  const s = options?.sql ?? getSql()
   const t1 = ls.find(ti)
   const q1 = ls.find(qx)
   const ucp = ls.filter(ucpi)
@@ -705,31 +730,31 @@ export async function dimAmbiental(
     })
   }
 
-  // Usa coluna geog precomputada (4326) + GIST em geo_sitios_arqueologicos — evita ST_Transform por linha
-  if (p.geog != null) {
-    const d0 = (await s`
-      SELECT MIN(ST_Distance(p.geog, s.geog)) / 1000 AS d
-      FROM processos p
-      CROSS JOIN geo_sitios_arqueologicos s
-      WHERE p.id = ${p.id}
-        AND ST_DWithin(p.geog, s.geog, 5000)
-    `) as { d: string | null }[]
-    const dk = d0[0]?.d != null ? Number(d0[0].d) : null
-    let dkPts = 0
-    if (dk != null && Number.isFinite(dk)) {
-      if (dk <= 1) dkPts = 30
-      else if (dk <= 5) dkPts = 15
+  // Sítio (IPHAN): lei `processos_territorial_extras` — mesma régua de faixas que geo_sitios (v4).
+  if (extras?.sitio_distancia_km != null) {
+    const dKm = Number(extras.sitio_distancia_km)
+    if (Number.isFinite(dKm)) {
+      const nome = extras.sitio_nome?.trim() || 'sítio arqueológico'
+      let dkPts = 0
+      let lim = ''
+      if (dKm <= 1) {
+        dkPts = 30
+        lim = '≤1 km'
+      } else if (dKm <= 5) {
+        dkPts = 15
+        lim = '≤5 km'
+      }
+      if (dkPts > 0)
+        pushDelta({
+          nome: 'Sítio arqueológico',
+          fonte: 'IPHAN/processos_territorial_extras',
+          label: classifyLabelRisk(dkPts),
+          texto: `${nome} a ${fmtKm(dKm)} km (${lim}).`,
+          valor: dkPts,
+          peso_pct: 1,
+          valor_bruto: dkPts,
+        })
     }
-    if (dkPts > 0 && dk != null)
-      pushDelta({
-        nome: 'Sítios arqueológicos próximos',
-        fonte: 'IPHAN/geo_sitios_arqueologicos',
-        label: classifyLabelRisk(dkPts),
-        texto: `Sítio arqueológico a ${fmtKm(dk)} km (≤ ${dkPts === 30 ? '1' : '5'} km).`,
-        valor: dkPts,
-        peso_pct: 1,
-        valor_bruto: dkPts,
-      })
   }
 
   const ap = p.app_overlap_pct
@@ -860,18 +885,33 @@ export async function dimAmbiental(
   return out
 }
 
-/** Hierarquia TI/quilombola/assentamento e gradiente de distância (Mudança 10).
- *  Proximidade a assentamento continua pela flag territorial; camada dedicada pode ser ligada depois.
- */
-function cmu_v2(p: ProcessoMotorRow, ls: LayerRow[]) {
+/** Sobreposição assent INCRA em `processos_territorial_extras` (PG pode devolver string/decimal). */
+function assentamentoSobrepoeEmExtras(extras: LayerExtrasRow | null): boolean {
+  const raw = extras?.assent_sobreposicao_pct
+  if (raw == null) return false
+  const n = Number(raw)
+  return Number.isFinite(n) && n >= 99.5
+}
+
+/** Hierarquia TI/quilombola/assentamento e gradiente de distância (v5: assentamento via extras). */
+function cmu_v2(p: ProcessoMotorRow, ls: LayerRow[], extras: LayerExtrasRow | null) {
   if (p.amb_ti_sobrepoe) return 95
   if (p.amb_quilombola_sobrepoe) return 90
-  if (p.amb_assentamento_sobrepoe) return 80
+
+  if (assentamentoSobrepoeEmExtras(extras)) return 80
+
   const dTi = mine(ls, ti)
   const dQx = mine(ls, qx)
   if (dTi < 2 || dQx < 2) return 85
   if (dTi < 5 || dQx < 5) return 65
-  if (p.amb_assentamento_2km) return 60
+
+  const assentDistKm =
+    extras?.assent_distancia_km != null && Number.isFinite(Number(extras.assent_distancia_km))
+      ? Number(extras.assent_distancia_km)
+      : null
+  // 0 km com pct≠100 cai aqui: não usar faixa ≤2 km (evita 60 quando sobrepõe mas dist arredondou a 0).
+  if (assentDistKm != null && assentDistKm > 0 && assentDistKm <= 2) return 60
+
   if (dTi < 10 || dQx < 10) return 40
   if (dTi < 20 || dQx < 20) return 20
   return 5
@@ -904,9 +944,10 @@ export function dimSocial(
   ls: LayerRow[],
   cptUf: number,
   cptMunicipio: string | null,
+  extras: LayerExtrasRow | null,
   options?: { returnSubfatores?: boolean },
 ): number | DimensaoOutput {
-  const c1 = cmu_v2(p, ls)
+  const c1 = cmu_v2(p, ls, extras)
   const c2 = Math.round(0.5 * idh0(p.idh_municipio) + 0.5 * pib0(p.pib_pc_municipio))
   const c3 = scoreCptSocial(cptUf, cptMunicipio)
   const c4 = dns(p.densidade_demografica)
@@ -1029,6 +1070,45 @@ export function dimSocial(
 
   ]
 
+  if (options?.returnSubfatores && extras) {
+    const distKm =
+      extras.assent_distancia_km != null && Number.isFinite(Number(extras.assent_distancia_km))
+        ? Number(extras.assent_distancia_km)
+        : null
+    const sobrep = assentamentoSobrepoeEmExtras(extras)
+    const nome = extras.assent_nome?.trim() || 'Assentamento INCRA'
+
+    let texto: string
+    let valorPontos: number
+
+    if (sobrep) {
+      texto = `${nome} (sobreposição)`
+      valorPontos = 80
+    } else if (distKm != null && distKm <= 2) {
+      texto = `${nome} a ${fmtKm(distKm)} km (≤2 km)`
+      valorPontos = 60
+    } else if (distKm != null && distKm <= 10) {
+      texto = `${nome} a ${fmtKm(distKm)} km (zona distante)`
+      valorPontos = 0
+    } else if (distKm != null) {
+      texto = `${nome} a ${fmtKm(distKm)} km (sem impacto)`
+      valorPontos = 0
+    } else {
+      texto = 'Sem dado de assentamento'
+      valorPontos = 0
+    }
+
+    sf.push({
+      nome: 'Assentamento INCRA',
+      label: 'Vulnerabilidade institucional',
+      texto,
+      valor: valorPontos,
+      peso_pct: null,
+      valor_bruto: valorPontos,
+      fonte: 'INCRA / processos_territorial_extras',
+    })
+  }
+
   const adj = valor - sumW
 
   if (Math.abs(adj) > 1e-6) {
@@ -1076,6 +1156,8 @@ export function dimRegul(
 
   alertas: AlertaDirecionadoRow[],
 
+  tah: TahStatusRow | null,
+
   options?: { returnSubfatores?: boolean },
 
 ): number | DimensaoOutput {
@@ -1100,7 +1182,9 @@ export function dimRegul(
 
   const cp = capagScore(p.capag_nota)
 
-  let v = sp * 0.25 + sc * 0.2 + sa * 0.2 + st * 0.1 + sa2 * 0.1 + cp * 0.15
+  const tahRaw = scoreTahInadimplencia(tah)
+
+  let v = sp * 0.25 + sc * 0.2 + sa * 0.2 + st * 0.1 + sa2 * 0.1 + cp * 0.15 + tahRaw
 
   if (sa >= 80 && sa2 >= 80) v = Math.max(v, 90)
   else if (sc >= 95 || sa >= 90) v = Math.max(v, 85)
@@ -1122,7 +1206,9 @@ export function dimRegul(
 
   const p6 = cp * 0.15
 
-  const sumP = p1 + p2 + p3 + p4 + p5 + p6
+  const p7 = tahRaw
+
+  const sumP = p1 + p2 + p3 + p4 + p5 + p6 + p7
 
   const adj = valor - sumP
 
@@ -1130,6 +1216,16 @@ export function dimRegul(
     alertas.length === 0
       ? 'Nenhum alerta DOU direto (citação explícita ou CNPJ) ligado a este processo no Radar IA na janela vigente.'
       : `Alertas DOU diretos: ${alertas.length} evento(s); índice composto ${fmtKm(sa2)} com decaimento temporal por categoria.`
+
+  const tahTexto =
+    tah == null
+      ? 'Sem registro TAH'
+      : tah.pct_pago >= 100
+        ? `TAH 100% paga (${tah.qtd_pagamentos} pagamento${tah.qtd_pagamentos === 1 ? '' : 's'})`
+        : `TAH ${tah.pct_pago.toFixed(1)}% paga · ${tah.qtd_nao_pagos} pendente${tah.qtd_nao_pagos === 1 ? '' : 's'}`
+
+  const tahLabel =
+    tahRaw === 0 ? 'Em dia' : tahRaw <= 10 ? 'Atraso recente' : tahRaw <= 25 ? 'Inadimplência relevante' : 'Inadimplência grave'
 
   const sf: SubfatorOutput[] = [
 
@@ -1238,6 +1334,24 @@ export function dimRegul(
       peso_pct: 0.15,
 
       valor_bruto: cp,
+
+    },
+
+    {
+
+      nome: 'Inadimplência TAH',
+
+      fonte: 'ANM / tah_pagamentos',
+
+      label: tahLabel,
+
+      texto: tahTexto,
+
+      valor: p7,
+
+      peso_pct: 1,
+
+      valor_bruto: tahRaw,
 
     },
 
@@ -1725,6 +1839,127 @@ export async function loadLayers(
     SELECT tipo, nome, distancia_km, sobreposicao_pct FROM territorial_layers WHERE processo_id = ${id}
   `) as LayerRow[]
 }
+
+export async function loadExtras(
+  id: string,
+  sql?: ReturnType<typeof postgres>,
+): Promise<LayerExtrasRow | null> {
+  if (sessionMassCaches?.extrasByProcessoId) {
+    return sessionMassCaches.extrasByProcessoId.get(id) ?? null
+  }
+  const s = sql ?? getSql()
+  const rows = await s<LayerExtrasRow[]>`
+    SELECT
+      sitio_id, sitio_nome, sitio_distancia_km, sitio_tipo, sitio_natureza, sitio_sobreposicao_pct,
+      assent_id, assent_nome, assent_distancia_km, assent_sobreposicao_pct
+    FROM processos_territorial_extras
+    WHERE processo_id = ${id}::uuid
+  `
+  return rows[0] ?? null
+}
+
+export async function loadTahStatus(
+  numero: string,
+  sql?: ReturnType<typeof postgres>,
+): Promise<TahStatusRow | null> {
+  if (!numero?.trim()) return null
+  const key = numero.trim()
+  if (sessionMassCaches?.tahByProcessoNumero) {
+    return sessionMassCaches.tahByProcessoNumero.get(key) ?? null
+  }
+  const s = sql ?? getSql()
+  const rows = await s<
+    { pct_pago: string | null; qtd_pagamentos: string | number; qtd_nao_pagos: string | number }[]
+  >`
+    SELECT
+      ROUND(100.0 * SUM(COALESCE(valor_pago, 0)) / NULLIF(SUM(COALESCE(valor_total, 0)), 0), 2) AS pct_pago,
+      COUNT(*)::int AS qtd_pagamentos,
+      COUNT(*) FILTER (WHERE COALESCE(valor_pago, 0) = 0 OR valor_pago IS NULL)::int AS qtd_nao_pagos
+    FROM tah_pagamentos
+    WHERE processo_numero = ${key}
+  `
+  if (!rows[0] || rows[0].pct_pago == null) return null
+  return {
+    pct_pago: Number(rows[0].pct_pago),
+    qtd_pagamentos: Number(rows[0].qtd_pagamentos),
+    qtd_nao_pagos: Number(rows[0].qtd_nao_pagos),
+  }
+}
+
+/**
+ * Pré-carrega mapas de extras territoriais e TAH para batch (evita N+1 em `loadExtras` / `loadTahStatus`).
+ */
+export async function buildS31ExtrasTahMapsOnly(
+  sql: ReturnType<typeof postgres> = getSqlBatch(),
+): Promise<{
+  extrasByProcessoId: Map<string, LayerExtrasRow>
+  tahByProcessoNumero: Map<string, TahStatusRow>
+}> {
+  const [extrasRows, tahRows] = await Promise.all([
+    sql<Record<string, unknown>[]>`
+      SELECT processo_id::text AS pid,
+        sitio_id, sitio_nome, sitio_distancia_km, sitio_tipo, sitio_natureza, sitio_sobreposicao_pct,
+        assent_id, assent_nome, assent_distancia_km, assent_sobreposicao_pct
+      FROM processos_territorial_extras
+    `,
+    sql<
+      {
+        processo_numero: string
+        pct_pago: string | null
+        qtd_pagamentos: string | number
+        qtd_nao_pagos: string | number
+      }[]
+    >`
+      SELECT processo_numero,
+        ROUND(100.0 * SUM(COALESCE(valor_pago, 0)) / NULLIF(SUM(COALESCE(valor_total, 0)), 0), 2) AS pct_pago,
+        COUNT(*)::int AS qtd_pagamentos,
+        COUNT(*) FILTER (WHERE COALESCE(valor_pago, 0) = 0 OR valor_pago IS NULL)::int AS qtd_nao_pagos
+      FROM tah_pagamentos
+      GROUP BY processo_numero
+      HAVING SUM(COALESCE(valor_total, 0)) > 0
+    `,
+  ])
+  const extrasByProcessoId = new Map<string, LayerExtrasRow>()
+  for (const r of extrasRows) {
+    const pid = String(r.pid ?? '')
+    if (!pid) continue
+    extrasByProcessoId.set(pid, {
+      sitio_id: r.sitio_id != null ? Number(r.sitio_id) : null,
+      sitio_nome: r.sitio_nome != null ? String(r.sitio_nome) : null,
+      sitio_distancia_km: r.sitio_distancia_km != null ? Number(r.sitio_distancia_km) : null,
+      sitio_tipo: r.sitio_tipo != null ? String(r.sitio_tipo) : null,
+      sitio_natureza: r.sitio_natureza != null ? String(r.sitio_natureza) : null,
+      sitio_sobreposicao_pct:
+        r.sitio_sobreposicao_pct != null ? Number(r.sitio_sobreposicao_pct) : null,
+      assent_id: r.assent_id != null ? Number(r.assent_id) : null,
+      assent_nome: r.assent_nome != null ? String(r.assent_nome) : null,
+      assent_distancia_km: r.assent_distancia_km != null ? Number(r.assent_distancia_km) : null,
+      assent_sobreposicao_pct:
+        r.assent_sobreposicao_pct != null ? Number(r.assent_sobreposicao_pct) : null,
+    })
+  }
+  const tahByProcessoNumero = new Map<string, TahStatusRow>()
+  for (const r of tahRows) {
+    const num = String(r.processo_numero ?? '').trim()
+    if (!num || r.pct_pago == null) continue
+    tahByProcessoNumero.set(num, {
+      pct_pago: Number(r.pct_pago),
+      qtd_pagamentos: Number(r.qtd_pagamentos),
+      qtd_nao_pagos: Number(r.qtd_nao_pagos),
+    })
+  }
+  return { extrasByProcessoId, tahByProcessoNumero }
+}
+
+/** Penalidade 0–40 sobre inadimplência TAH (v5 Regulatório). */
+function scoreTahInadimplencia(tah: TahStatusRow | null): number {
+  if (!tah) return 0
+  const pct = tah.pct_pago
+  if (pct >= 100) return 0
+  if (pct >= 90) return 10
+  if (pct >= 50) return 25
+  return 40
+}
 export async function loadSub(
   n: string | null,
   sql?: ReturnType<typeof postgres>,
@@ -1856,7 +2091,7 @@ export async function runS31MotorAndPersist(
   sessionMassCaches = opts.massCaches ?? null
   const wantSub = opts.returnSubfatores === true
   const persist = opts.persist === true && !wantSub
-  const sfDefault = 's31_v4_20260430'
+  const sfDefault = 's31_v5_20260503'
   const sfRaw = opts.scoresFonte ?? sfDefault
   if (
     typeof sfRaw !== 'string' ||
@@ -1877,6 +2112,8 @@ export async function runS31MotorAndPersist(
   let cfe: number
   let bnd: boolean
   let alertas: AlertaDirecionadoRow[]
+  let extras: LayerExtrasRow | null
+  let tah: TahStatusRow | null
   try {
   p = await loadProcesso(processoId, sMotor)
   if (!p) throw new Error('Processo nao encontrado: ' + processoId)
@@ -1884,7 +2121,7 @@ export async function runS31MotorAndPersist(
     const u = p.uf.trim()
     if (sessionMassCaches.incentivoB7ByUf.has(u)) p.incentivo_b7 = sessionMassCaches.incentivoB7ByUf.get(u) ?? null
   }
-  ;[ls, sub, cpt, cptMun, cfg, aut, cfe, bnd, alertas] = await Promise.all([
+  ;[ls, sub, cpt, cptMun, cfg, aut, cfe, bnd, alertas, extras, tah] = await Promise.all([
     loadLayers(processoId, sMotor),
     loadSub(p.substancia, sMotor),
     loadCpt(p.uf, sMotor),
@@ -1894,14 +2131,16 @@ export async function runS31MotorAndPersist(
     loadCfem(p.numero, sMotor),
     loadBndes(p.substancia, sMotor),
     loadAlertasDirecionados(processoId, sMotor),
+    loadExtras(processoId, sMotor),
+    loadTahStatus(p.numero, sMotor),
   ])
   const dgR = dimGeologico(p, cfg, cfe, { returnSubfatores: wantSub })
   const dg = typeof dgR === 'number' ? dgR : dgR.valor
-  const daR = await dimAmbiental(p, ls, { returnSubfatores: wantSub, sql: sMotor })
+  const daR = await dimAmbiental(p, ls, extras, { returnSubfatores: wantSub })
   const da = typeof daR === 'number' ? daR : daR.valor
-  const dsR = dimSocial(p, ls, cpt, cptMun, { returnSubfatores: wantSub })
+  const dsR = dimSocial(p, ls, cpt, cptMun, extras, { returnSubfatores: wantSub })
   const ds = typeof dsR === 'number' ? dsR : dsR.valor
-  const drR = dimRegul(p, aut, alertas, { returnSubfatores: wantSub })
+  const drR = dimRegul(p, aut, alertas, tah, { returnSubfatores: wantSub })
   const dr = typeof drR === 'number' ? drR : drR.valor
   const sa2Alertas = sa2_v2(alertas)
   let risk = dg * 0.25 + da * 0.3 + ds * 0.25 + dr * 0.2

@@ -227,6 +227,15 @@ export interface ReportData {
   mapa_base64: string
   layers: LayerData[]
   infraestrutura: InfraData[]
+  /**
+   * Assentamento INCRA a partir de `processos_territorial_extras` (fonte do motor S31 v5).
+   * Quando presente, sobrescreve distância/nome derivados só de `territorial_layers`.
+   */
+  territorial_extras?: {
+    assent_nome: string | null
+    assent_distancia_km: number | null
+    assent_sobreposicao_pct: number | null
+  } | null
   /** Sede municipal + distância (`fn_territorial_analysis`); opcional para PDF/UI. */
   sede?: {
     nome: string

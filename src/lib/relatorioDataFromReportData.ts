@@ -305,6 +305,26 @@ function territorialFromReport(
     distancia_ferrovia_operacional_km = df
   }
 
+  let assent_sobreposicao_pct: number | null = null
+  const tex = rd.territorial_extras
+  if (tex) {
+    if (
+      tex.assent_sobreposicao_pct != null &&
+      Number.isFinite(Number(tex.assent_sobreposicao_pct))
+    ) {
+      assent_sobreposicao_pct = Number(tex.assent_sobreposicao_pct)
+    }
+    if (tex.assent_nome != null && String(tex.assent_nome).trim() !== '') {
+      nome_assentamento_proximo = String(tex.assent_nome).trim()
+    }
+    if (
+      tex.assent_distancia_km != null &&
+      Number.isFinite(Number(tex.assent_distancia_km))
+    ) {
+      distancia_assentamento_km = Number(tex.assent_distancia_km)
+    }
+  }
+
   return {
     distancia_ti_km,
     nome_ti_proxima,
@@ -368,6 +388,7 @@ function territorialFromReport(
     nome_assentamento_proximo,
     fase_assentamento_incr,
     distancia_assentamento_km,
+    assent_sobreposicao_pct,
   }
 }
 

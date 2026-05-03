@@ -5,7 +5,7 @@
  * Helpers do motor clássico (`computeAllScores`, `buildDimensoes`, etc.) mantidos aqui até deprecação futura.
  *
  * Uso:
- *   npx tsx server/scripts/batch-scores.ts --numeros "..." [--force] [--scores-fonte s31_v3_20260428] [--sample-size N]
+ *   npx tsx server/scripts/batch-scores.ts --numeros "..." [--force] [--scores-fonte s31_v5_20260503] [--sample-size N]
  *
  * Requer `.env` / `.env.local` com SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY.
  */
@@ -14,7 +14,12 @@ import os from 'node:os'
 import path from 'node:path'
 import { supabase } from '../supabase'
 import { type ScoreInput, type ScoreResult } from '../scoreEngine'
-import { getSqlBatch, runS31MotorAndPersist } from '../scoringMotorS31'
+import {
+  buildS31ExtrasTahMapsOnly,
+  getSqlBatch,
+  runS31MotorAndPersist,
+  type S31MassCaches,
+} from '../scoringMotorS31'
 import {
   getCapag,
   getFiscal,
@@ -806,7 +811,12 @@ function hasManualRiskScore(
   return typeof rs === 'number' && !Number.isNaN(rs)
 }
 
-async function runOne(numero: string, force: boolean, scoresFonte: string) {
+async function runOne(
+  numero: string,
+  force: boolean,
+  scoresFonte: string,
+  massCaches?: S31MassCaches,
+) {
   const processo = (await getProcesso(numero)) as Record<string, unknown>
   const id = processo.id != null ? String(processo.id) : ''
   if (!id) {
@@ -827,6 +837,7 @@ async function runOne(numero: string, force: boolean, scoresFonte: string) {
     persist: true,
     scoresFonte,
     sqlClient: getSqlBatch(),
+    massCaches,
   })
 
   const rb = result.risk_breakdown
@@ -873,7 +884,7 @@ async function main() {
   const scoresFonte =
     typeof scoresFonteRaw === 'string' && scoresFonteRaw.trim()
       ? scoresFonteRaw.trim()
-      : 's31_v3_20260428'
+      : 's31_v5_20260503'
 
   const modoAll = flags.all === true
   const skipExisting = flags['skip-existing'] === true
@@ -881,16 +892,16 @@ async function main() {
 
   if (numerosExplicitosInput.length === 0 && !modoAll) {
     console.error(
-      'Uso: npx tsx server/scripts/batch-scores.ts --numero "864.016/2026" [--force] [--scores-fonte s31_v3_20260428]',
+      'Uso: npx tsx server/scripts/batch-scores.ts --numero "864.016/2026" [--force] [--scores-fonte s31_v5_20260503]',
     )
     console.error(
-      '   ou: npx tsx server/scripts/batch-scores.ts --numeros "857.854/1996,850.280/1991" --force --scores-fonte s31_v3_20260428 [--sample-size N]',
+      '   ou: npx tsx server/scripts/batch-scores.ts --numeros "857.854/1996,850.280/1991" --force --scores-fonte s31_v5_20260503 [--sample-size N]',
     )
     console.error(
-      '   ou: npx tsx server/scripts/batch-scores.ts --all --force --scores-fonte s31_v3_20260428',
+      '   ou: npx tsx server/scripts/batch-scores.ts --all --force --scores-fonte s31_v5_20260503',
     )
     console.error(
-      '   ou: npx tsx server/scripts/batch-scores.ts --all --skip-existing --force --scores-fonte s31_v3_20260428   (retoma)',
+      '   ou: npx tsx server/scripts/batch-scores.ts --all --skip-existing --force --scores-fonte s31_v5_20260503   (retoma)',
     )
     process.exit(1)
   }
@@ -972,6 +983,24 @@ async function main() {
     let pulados = 0
     let erros = 0
 
+    let batchMassCaches: S31MassCaches | undefined
+    if (modoAll || numerosExplicitos.length > 1) {
+      log('[batch-scores] Pré-carregando processos_territorial_extras + tah_pagamentos (mapas em memória)...')
+      const maps = await buildS31ExtrasTahMapsOnly(getSqlBatch())
+      batchMassCaches = {
+        configByAba: {},
+        subByUpper: new Map(),
+        cptByUf: new Map(),
+        incentivoB7ByUf: new Map(),
+        linhasBndes: [],
+        extrasByProcessoId: maps.extrasByProcessoId,
+        tahByProcessoNumero: maps.tahByProcessoNumero,
+      }
+      log(
+        `[batch-scores] Mapas: extras=${maps.extrasByProcessoId.size} linhas, tah=${maps.tahByProcessoNumero.size} processos`,
+      )
+    }
+
     /** Metas só para texto do heartbeat (% / média). */
     let totalHeartbeat: number | null = null
 
@@ -984,7 +1013,7 @@ async function main() {
             return
           }
           try {
-            await runOne(numero, force, scoresFonte)
+            await runOne(numero, force, scoresFonte, batchMassCaches)
             processados++
 
             if (processados % 1000 === 0) {

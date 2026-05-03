@@ -100,6 +100,12 @@ export interface ProcessoCompleto {
   fiscal_municipio: Record<string, unknown> | null
   incentivos_uf: Record<string, unknown> | null
   linhas_bndes: Record<string, unknown>[] | null
+  /** Registro 1:1 `processos_territorial_extras` (assentamento INCRA + sítio no motor). */
+  territorial_extras?: {
+    assent_nome: string | null
+    assent_distancia_km: number | null
+    assent_sobreposicao_pct: number | null
+  } | null
   /** Pendências ativas via RPC `fn_pendencias_processo`. Array vazio se sem match ou falha. */
   pendencias: Pendencia[]
 }

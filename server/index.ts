@@ -296,6 +296,7 @@ app.get('/api/processo', async (req, res) => {
       fiscalMun,
       incentivosUfRaw,
       pendenciasRpc,
+      territorialExtrasRow,
     ] = await Promise.all([
       getScores(processoId),
       getTerritoralLayers(processoId),
@@ -313,7 +314,29 @@ app.get('/api/processo', async (req, res) => {
       getFiscal(municipioIbge),
       getIncentivosUf(String(proc.uf ?? '')),
       supabase.rpc('fn_pendencias_processo', { p_numero: numero }),
+      processoId
+        ? supabase
+            .from('processos_territorial_extras')
+            .select(
+              'assent_nome, assent_distancia_km, assent_sobreposicao_pct',
+            )
+            .eq('processo_id', processoId)
+            .maybeSingle()
+        : Promise.resolve({ data: null as unknown, error: null }),
     ])
+
+    if (territorialExtrasRow.error) {
+      console.warn(
+        `[/api/processo] territorial_extras: ${territorialExtrasRow.error.message}`,
+      )
+    }
+    const territorial_extras = territorialExtrasRow.error
+      ? null
+      : (territorialExtrasRow.data as {
+          assent_nome: string | null
+          assent_distancia_km: number | null
+          assent_sobreposicao_pct: number | null
+        } | null)
 
     const linhasBndesData = await getLinhasBndes(
       Boolean(
@@ -430,6 +453,7 @@ app.get('/api/processo', async (req, res) => {
         },
         mercado,
         analise_territorial: analise,
+        territorial_extras,
         fiscal_municipio: fiscalMun,
         incentivos_uf: incentivosUfRaw,
         linhas_bndes: linhasBndesData,
