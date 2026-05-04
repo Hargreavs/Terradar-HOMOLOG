@@ -1,22 +1,51 @@
 # .gitlab-ci.yml
+#
+# Pipelines TERRADAR:
+#  - radar:        ingest DOU + classificação Claude (existente)
+#  - worker_s31:   recálculo incremental de scores stale (NOVO)
+#
+# Sobre schedules:
+#   1. Radar IA a cada 4 horas (existente)
+#      Cron: 0 9,23 * * 1-5  (seg-sex, 9h e 23h BRT)
+#      Variables: (nenhuma)
+#      → Aciona job `radar_ingestao_classificacao`
+#      → APÓS radar terminar, automaticamente aciona `worker_s31_pos_radar` (needs)
+#
+#   2. Worker S31 horário (criada mas DESATIVADA)
+#      Cron: 0 * * * *  (toda hora cheia)
+#      Variables: WORKER_TRIGGER=cron_hourly
+#      → Aciona SOMENTE `worker_s31_cron_horario` (paraquedas — atualmente desativado)
+#
+# Variáveis de CI/CD necessárias (em Settings → CI/CD → Variables):
+#   - VITE_DATABASE_URL          (já existe — pooler 6543)
+#   - DATABASE_URL_BATCH         (já existe — direct 5432, ideal pra batch sem too-many-clients)
+#   - VITE_SUPABASE_URL          (já existe)
+#   - SUPABASE_SERVICE_ROLE_KEY  (já existe)
+#   - ANTHROPIC_API_KEY          (já existe — usado por radar:classificar)
 
 stages:
   - radar
+  - worker_s31
 
+# ──────────────────────────────────────────────────────────────────────
+# JOB 1 — Radar (ingest DOU + classificação) — MANTIDO ORIGINAL
+# Trigger atual: schedule "Radar IA a cada 4 horas" → 0 9,23 * * 1-5
+# (segunda a sexta, 9h e 23h BRT)
+# ──────────────────────────────────────────────────────────────────────
 radar_ingestao_classificacao:
   stage: radar
   image: node:20-bookworm-slim
-  
+
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_PIPELINE_SOURCE == "web"
-  
+
   timeout: 25 minutes
-  
+
   before_script:
     - apt-get update -qq && apt-get install -y -qq tzdata ca-certificates >/dev/null
     - npm ci
-  
+
   script:
     - export TZ='America/Sao_Paulo'
     - export NODE_OPTIONS='--dns-result-order=ipv4first'
@@ -31,3 +60,62 @@ radar_ingestao_classificacao:
     - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     - echo "📊 RESUMO RADAR"
     - npx tsx server/scripts/radar/resumoRadarCi.ts
+
+# ──────────────────────────────────────────────────────────────────────
+# JOB 2 — Worker S31 incremental (push pós-radar) — NOVO
+# Trigger: roda APÓS radar_ingestao_classificacao na MESMA pipeline.
+# Cobre os scores marcados stale pelo DOU (eventos aplicados nesta execução).
+# ──────────────────────────────────────────────────────────────────────
+worker_s31_pos_radar:
+  stage: worker_s31
+  image: node:20-bookworm-slim
+  needs:
+    - job: radar_ingestao_classificacao
+      artifacts: false
+
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+  timeout: 30 minutes
+
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq tzdata ca-certificates >/dev/null
+    - npm ci
+
+  script:
+    - export TZ='America/Sao_Paulo'
+    - export NODE_OPTIONS='--dns-result-order=ipv4first'
+    # Worker usa direct connection (5432) pra evitar "too many clients" no pooler
+    - export DATABASE_URL="${DATABASE_URL_BATCH:-$VITE_DATABASE_URL}"
+    - export DATABASE_URL_BATCH="${DATABASE_URL_BATCH:-$VITE_DATABASE_URL}"
+    - export SUPABASE_URL="$VITE_SUPABASE_URL"
+    - echo "🔄 Worker S31 incremental (pós-radar)"
+    - npx tsx server/scripts/worker-score-stale.ts --max-duration 25
+
+# ──────────────────────────────────────────────────────────────────────
+# JOB 3 — Worker S31 incremental (cron horário independente) — DESATIVADO
+# Schedule "Worker S31 horário" está criada mas marcada Inactive.
+# Pra ativar: marcar Activated na schedule (Variables WORKER_TRIGGER=cron_hourly já configurada).
+# ──────────────────────────────────────────────────────────────────────
+worker_s31_cron_horario:
+  stage: worker_s31
+  image: node:20-bookworm-slim
+
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $WORKER_TRIGGER == "cron_hourly"
+
+  timeout: 60 minutes
+
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq tzdata ca-certificates >/dev/null
+    - npm ci
+
+  script:
+    - export TZ='America/Sao_Paulo'
+    - export NODE_OPTIONS='--dns-result-order=ipv4first'
+    - export DATABASE_URL="${DATABASE_URL_BATCH:-$VITE_DATABASE_URL}"
+    - export DATABASE_URL_BATCH="${DATABASE_URL_BATCH:-$VITE_DATABASE_URL}"
+    - export SUPABASE_URL="$VITE_SUPABASE_URL"
+    - echo "🔄 Worker S31 incremental (cron horário)"
+    - npx tsx server/scripts/worker-score-stale.ts --max-duration 55
